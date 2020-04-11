@@ -2,7 +2,8 @@
 title: "Preliminary Results"
 author: "Zoey Werbin"
 date: "4/10/2020"
-output: html_document
+output: rmarkdown::github_document
+
 ---
 
 ```{r setup, include=FALSE}
