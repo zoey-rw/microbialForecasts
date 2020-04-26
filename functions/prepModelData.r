@@ -1,4 +1,14 @@
-prepModelData <- function(weather, pH, rank.df, j=1){
+
+# Read in covariate data 
+# cov <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/EE509_model_covariates.rds")
+# weather <- cov[[1]]
+# plot.preds <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")[[1]]
+# d <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/groupAbundances_EE509.rds")
+# rank.df <- d[[1]] # Subsetting bacterial phyla
+# rank.df$dates <- gsub("2016", "2015", rank.df$dates) # Replacing 2015 with 2016 to avoid a huge gap in dataset.
+# model.dat <- prepModelData(weather, plot.preds, rank.df, j=1) 
+
+prepModelData <- function(weather, plot.preds, rank.df, j=1){
 
 abun <- rank.df[, j, drop=F]
   
@@ -25,32 +35,30 @@ site.truth <- merge(site.truth, weather, all.x=T, all.y=F) %>% arrange(dateID, s
 # Calculate plot mean abundance values to check our model results against.
 plot.truth <- dat %>% group_by(siteID, plotID, dateID) %>%  
   summarize(plot_mean = mean(y, na.rm=T)) %>% arrange(dateID, siteID, plotID)
+
 # Merge with plot-level covariates
-plot.truth <- merge(plot.truth, plot_pH, all.x=T, all.y=F)  %>% arrange(dateID, siteID, plotID) 
+plot.truth <- merge(plot.truth, plot.preds, all.x=T, all.y=F)  %>% arrange(dateID, siteID, plotID) 
 
 # create temperature covariate matrix
 temp.cov <- site.truth %>% 
   dplyr::select(-c(monthly_precip,site_mean)) %>% 
   pivot_wider(names_from = dateID, values_from = monthly_temp) %>% 
-  dplyr::select(-c(siteID)) %>% scale(scale=FALSE) %>% as.matrix()
+  dplyr::select(-c(siteID)) %>% scale(scale=TRUE) %>% as.matrix()
 
 # create temperature covariate matrix
 precip.cov <- site.truth %>% 
   dplyr::select(-c(monthly_temp,site_mean)) %>% 
   pivot_wider(names_from = dateID, values_from = monthly_precip) %>% 
-  dplyr::select(-c(siteID)) %>% scale(scale=FALSE) %>% as.matrix()
-
-if (any(plot.truth$siteID == "CPER" & is.na(plot.truth$pH))) plot.truth[plot.truth$siteID == "CPER" & is.na(plot.truth$pH),]$pH <- 6.37  
-if (any(plot.truth$siteID == "STER" & is.na(plot.truth$pH)))plot.truth[plot.truth$siteID == "STER" & is.na(plot.truth$pH),]$pH <- 6.39  
-if (any(plot.truth$siteID == "DSNY" & is.na(plot.truth$pH)))plot.truth[plot.truth$siteID == "DSNY" & is.na(plot.truth$pH),]$pH <- 3.50  
-if (any(plot.truth$siteID == "OSBS" & is.na(plot.truth$pH)))plot.truth[plot.truth$siteID == "OSBS" & is.na(plot.truth$pH),]$pH <- 3.95
-if (any(plot.truth$siteID == "HARV" & is.na(plot.truth$pH)))plot.truth[plot.truth$siteID == "HARV" & is.na(plot.truth$pH),]$pH <- 3.46
+    dplyr::select(-c(siteID)) %>% scale(scale=TRUE) %>% as.matrix()
 
 # create pH covariate matrix
-pH.plot <- plot.truth %>% dplyr::select(-c(plot_mean)) %>% 
-  pivot_wider(names_from = dateID, values_from = pH)
-pH.cov <- as.numeric(scale(pH.plot$`201306`, scale=F))
-names(pH.cov) <- pH.plot$plotID
+# pH.plot <- plot.truth %>% dplyr::select(-c(plot_mean,pC,cn,pN)) %>% 
+#   pivot_wider(names_from = dateID, values_from = pH)
+# pH.cov <- as.numeric(scale(pH.plot$`201306`, scale=F))
+# names(pH.cov) <- pH.plot$plotID
+temp <- plot.truth[plot.truth$dateID=="201306",]
+plot.covs <- temp %>% dplyr::select(c(pH,pC,cn,pN)) %>% scale(scale=TRUE) %>% as.matrix()
+rownames(plot.covs) <- temp$plotID
 
 # Reformat y values so that each column is one date.
 y <- dat %>% pivot_wider(names_from = dateID, values_from = y) %>% 
@@ -60,5 +68,5 @@ y <- dat %>% pivot_wider(names_from = dateID, values_from = y) %>%
 y <- y[rowSums(!is.na(y))>0,]
 dat <- dat[!is.na(dat$y),]
 
-return(list(dat, y, temp.cov, precip.cov, pH.cov, as.factor(pH.plot$siteID), plot.truth, site.truth))
+return(list(dat, y, temp.cov, precip.cov, plot.covs, as.factor(temp$siteID), plot.truth, site.truth))
 }

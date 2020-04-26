@@ -10,13 +10,12 @@ library(RColorBrewer)
 source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepModelData.r")
 
 ## Read in model
-mod.list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/phylum_bacJAGS.rds")
+mod.list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/phylum_bacJAGS1-10.rds")
 #mod.list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/phylum_funJAGS.rds")
 
 ## Read in covariate data 
 cov <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/EE509_model_covariates.rds")
 weather <- cov[[1]]
-plot_pH <- cov[[2]]
 
 # Read in the microbial abundance data
 d <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/groupAbundances_EE509.rds")
@@ -32,13 +31,14 @@ time.t = 1:45    ## total time
 time1 = 1:25       ## calibration period
 time2 = 26:45   ## forecast period
 N.cols <- brewer.pal(4, "Set2") ## set colors
-Nmc = 1000
+Nmc = 300
 NT <- 20
-ngibbs <- 1000
+ngibbs <- 300
 npred <- 25
 
 pl.out <- list()
-
+k <- 1
+j <- 1
 rank.df <- d[[k]]
 rank.df$dates <- gsub("2016", "2015", rank.df$dates)
 
@@ -48,16 +48,23 @@ pl.rank <- list()
   pmod <- mod.list[[j]]
 
   # Get prediction data
-  model.dat <- prepModelData(weather, plot_pH, rank.df, j=j) # Combine using custom function
+
+ 
+  model.dat <- prepModelData(weather, plot.preds, rank.df, j=1) # Combine using custom function
+  dat <- model.dat[[1]]
+  y <- model.dat[[2]]
+  plot.cov <- model.dat[[5]]
+  plot_out <- pmod$summary
   plot.truth <- model.dat[[7]]
   site.truth <- model.dat[[8]]
-  pH.cov <- model.dat[[5]]
-  plot_out <- pmod$summary
+  
+  
   # Get observed values
   obs <- plot_out[grep(paste0("plot_mean[",plot,","), rownames(plot_out),fixed=T),]$truth
   
   # Extract parameter estimates from model
-  mfit = pmod$JAGS$mcmc[[1]]
+  #mfit = pmod$JAGS$mcmc[[1]]
+  mfit = pmod$mcmc[[1]]
   pred.cols = grep("plot_mean[",colnames(mfit),fixed=TRUE)
   params   = mfit[,-pred.cols]
   prow = sample.int(nrow(params),Nmc,replace=TRUE)
@@ -71,7 +78,9 @@ pl.rank <- list()
   temp.fcast <- temp.cper[time2]
   precip.cal <- precip.cper[time1]
   precip.fcast <- precip.cper[time2]
-  pH <- pH.cov[plot]
+  pH <- plot.cov[plot.name,1]
+  pC <- plot.cov[plot.name,2]
+  CN <- plot.cov[plot.name,3]
   
   # Pull out posterior samples
   site_effect <- params[,grep(paste0("site_effect[",site,"]"), colnames(params),fixed=T)]
@@ -80,9 +89,11 @@ pl.rank <- list()
   beta_precip       <- params[,grep("beta_precip",colnames(params))]
   beta_temp         <- params[,grep("beta_temp",colnames(params))]
   beta_pH           <- params[,grep("beta_pH",colnames(params))]
+  beta_pC           <- params[,grep("beta_C$",colnames(params))]
+  beta_CN           <- params[,grep("beta_CN",colnames(params))]
   plot_var          <- sqrt(1/params[,grep("plot_var",colnames(params))])
   tau               <- params[,grep("tau",colnames(params))]
-  time_effect       <- params[,grep("time_effect",colnames(params))]
+  time_effect       <-  params[,grep(paste0("time_effect[", site,","), colnames(params),fixed=T)]
   time_var       <- sqrt(1/params[,grep("time_var",colnames(params))])
   random_time_effect <- rnorm(1500, 0, time_var) 
 
@@ -92,7 +103,7 @@ pl.rank <- list()
   plot.cal <- sapply(plot.cal.ci[2,], function (x) rbeta(500, mean(tau) * x, mean(tau) * (1 - x)))
   plot.cal.pi <- apply(plot.cal,2,quantile,c(0.025,0.5,0.975))
   
-  plot(time.t,time.t,type='n',ylim=c(0,1),ylab="Relative Abundance", xlab = "Time", main = paste(colnames(rank.df)[j], "at plot:", plot.name))
+  plot(time.t,time.t,type='n',ylim=c(0,.6),ylab="Relative Abundance", xlab = "Time", main = paste(colnames(rank.df)[j], "at plot:", plot.name))
   ecoforecastR::ciEnvelope(time1,plot.cal.pi[1,],plot.cal.pi[3,],col=col.alpha("lightGreen",0.6))
   ecoforecastR::ciEnvelope(time1,plot.cal.ci[1,],plot.cal.ci[3,],col=col.alpha("lightBlue",0.8))
   lines(time1,plot.cal.ci[2,],col="blue")
@@ -114,7 +125,7 @@ pl.rank <- list()
   ICprev <- plot.cal.ci[2,25] # initialize
   for(g in 1:ngibbs){
   for(time in 1:20){
-    inv.plot_mean <-  beta_IC[g]*ICprev + beta_precip[g]*precip.fcast[time] + beta_temp[g]*temp.fcast[time] + beta_pH[g]*pH + site_effect[g] + plot_effect[g] + random_time_effect[g]
+    inv.plot_mean <- beta_IC[g]*logit(ICprev) + beta_precip[g]*precip.fcast[time] + beta_temp[g]*temp.fcast[time] + beta_pH[g]*pH + beta_pC[g]*pC + beta_CN[g]*CN + plot_effect[g] + random_time_effect[g] #+ site_effect[g] 
     ycred.fcast[g,time] <- invlogit(inv.plot_mean)
     
     alpha <-  ycred.fcast[g,time]*tau[g]
@@ -138,3 +149,66 @@ pl.rank <- list()
 mtext("a)", side = 3, cex = 2, at = c(0), line = 1)
 mtext("b)", side = 3, cex = 2, at = c(0), line = 1)
 mtext("c)", side = 3, cex = 2, at = c(0), line = 1)
+
+
+
+
+
+
+
+
+
+ypred.cal <- matrix(NA,nrow=Nmc,ncol=25)
+ycred.cal <- matrix(NA,nrow=Nmc,ncol=25)
+ICprev <- mean(plotpreds[,1])
+for(g in 1:ngibbs){
+  ycred.cal[g,1] <- mean(plotpreds[,1])
+  ypred.cal[g,1] <- mean(plotpreds[,1])
+  for(time in 2:25){
+    inv.plot_mean <-  beta_IC[g]*logit(ICprev) + beta_precip[g]*precip.cal[time] + beta_temp[g]*temp.cal[time] + beta_pH[g]*pH #+ site_effect[g] + 
+      plot_effect[g] + time_effect[g, time]
+    ycred.cal[g,time] <- invlogit(inv.plot_mean)
+    
+    alpha <-  ycred.cal[g,time]*tau[g]
+    beta <- (1- ycred.cal[g,time])*tau[g]
+    
+    ypred.cal[g,time] <- rbeta(1, alpha, beta)
+    ICprev <- ycred.cal[g,time]
+  }
+}
+
+cal.ci <- apply(ycred.cal,2,quantile,c(0.025,0.5,0.975))
+cal.pi <- apply(ypred.cal,2,quantile,c(0.025,0.5,0.975))
+plot(time.t,time.t,type='n',ylim=c(0,.6),ylab="Relative Abundance", xlab = "Time", main = paste(colnames(rank.df)[j], "at plot:", plot.name))
+ecoforecastR::ciEnvelope(time1,cal.pi[1,],cal.pi[3,],col=col.alpha("lightGreen",0.6))
+ecoforecastR::ciEnvelope(time1,cal.ci[1,],cal.ci[3,],col=col.alpha("lightBlue",0.8))
+lines(time1,cal.ci[2,],col="blue")
+
+
+
+
+
+
+ypred.cal <- matrix(NA,nrow=Nmc,ncol=25)
+ycred.cal <- matrix(NA,nrow=Nmc,ncol=25)
+ICprev <- mean(plotpreds[,1])
+ic <- .11
+for(g in 1:ngibbs){
+  for(time in 2:25){
+    inv.plot_mean <-  ic*logit(ICprev) +#mean(beta_IC)*logit(ICprev) +
+      mean(beta_precip)*precip.cal[time] + mean(beta_temp)*temp.cal[time] + mean(beta_pH)*pH + mean(plot_effect) + mean(time_effect[, time]) #+ mean(site_effect)
+    ycred.cal[,time] <- invlogit(inv.plot_mean)
+    
+    alpha <-  ycred.cal[,time]*mean(tau)
+    beta <- (1- ycred.cal[,time])*mean(tau)
+    
+    ypred.cal[,time] <- rbeta(1, alpha, beta)
+    ICprev <- ycred.cal[,time]
+  }
+}
+
+cal.ci <- ycred.cal
+plot(time.t,time.t,type='n',ylim=c(0,.6),ylab="Relative Abundance", xlab = "Time", main = paste(colnames(rank.df)[j], "at plot:", plot.name))
+#ecoforecastR::ciEnvelope(time1,cal.pi[1,],cal.pi[3,],col=col.alpha("lightGreen",0.6))
+ecoforecastR::ciEnvelope(time1,cal.ci[1,],cal.ci[3,],col=col.alpha("lightBlue",0.8))
+lines(time1,cal.ci[2,],col="blue")

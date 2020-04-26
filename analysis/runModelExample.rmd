@@ -12,40 +12,38 @@ knitr::opts_chunk$set(echo = TRUE)
 For my EE509 project, I created models to describe fluctuations in soil microbial relative abundances. Soil microbes control many of the Earth's biogeochemical processes, and we currently have limited understanding of how the soil microbiome changes over time. I focus on taxa from two major groups - bacteria and fungi - which each play important roles in decomposition, nitrogen cycling, etc. In this Rmarkdown, we will fit my model to a single group, but for my full analysis (summarized in `PrelimResults.rmd`), I fit this model to 60 different groups.
 
 First, we load libraries and a couple of custom scripts:
-```{r}
+```{r, echo=FALSE}
 library(rjags)
 library(runjags)
 library(dplyr)
 library(arm) #for invlogit function
 library(tidyr)
 library(ggplot2)
+library(ecoforecastR)
 source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepModelData.r")
+source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepModelData2.r")
 
 # Read in covariate data 
 cov <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/EE509_model_covariates.rds")
 weather <- cov[[1]]
-plot_pH <- cov[[2]]
+plot.preds <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")[[1]]
 
 # Read in the microbial abundance data
 d <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/groupAbundances_EE509.rds")
-```
-
-Next, we subset to one particular group (Acidobacteria) and format the data for analysis. Microbial abundance (our response variable) is measured for a soil core, and there are a few soil cores that are replicates for a given plot. About 5-10 plots are in a site, and there are five sites across the country. The dataset therefore has 1095 soil cores, 67 plots, and 5 sites. 
-
-```{r}
+# ```
+# 
+# Next, we subset to one particular group (Acidobacteria) and format the data for analysis. Microbial abundance (our response variable) is measured for a soil core, and there are a few soil cores that are replicates for a given plot. About 5-10 plots are in a site, and there are five sites across the country. The dataset therefore has 1095 soil cores, 67 plots, and 5 sites. 
+# 
+# ```{r}
 rank.df <- d[[1]] # Subsetting bacterial phyla
 rank.df$dates <- gsub("2016", "2015", rank.df$dates) # Replacing 2015 with 2016 to avoid a huge gap in dataset.
-model.dat <- prepModelData(weather, plot_pH, rank.df, j=1) # Combine using custom function
+model.dat <- prepModelData(weather, plot.preds, rank.df, j=1) # Combine using custom function
 dat <- model.dat[[1]]
 y <- model.dat[[2]]
-temp.cov <- model.dat[[3]]
-precip.cov <- model.dat[[4]]
-pH.cov <- model.dat[[5]]
-
-plot_site <- model.dat[[6]]
-plot.truth <- model.dat[[7]]
-site.truth <- model.dat[[8]]
+time.cov <- model.dat[[3]]
+space.cov <- model.dat[[4]]
+plot_site <- model.dat[[5]]
+plot.truth <- model.dat[[6]]
 
 # Create data object.
 data <- list(y = as.matrix(y), 
@@ -55,41 +53,45 @@ data <- list(y = as.matrix(y),
              N.date = length(unique(dat$dateID)),
              plot_site = droplevels(as.factor(plot_site)),
              plotID = droplevels(as.factor(dat$plotID)),
-             temp = temp.cov,
-             precip = precip.cov,
-             pH = pH.cov
+             time.cov = time.cov,
+             space.cov = space.cov
 )
-```
-
-Let's take a look at the data we're using. We have temperature and precipitation data for each site and each month, and pH values for each plot. Covariates have been mean-centered. Y values range from 0 to 1 (closed interval).
-```{r}
-temp.cov[,1:5]
-
-precip.cov[,1:5]
-
-head(pH.cov)
-
-head(dat); dim(dat)
-```
-
-Now, let's look at and fit our model. The JAGS code has a data model at the core level, because each core is a replicate for one plot. This data is drawn from the beta distribution, with a logit link function to prevent any values outside of 0 or 1. The process model, with the environmental covariates, is at the plot level. We have random effects for each site, each plot, and each time point. 
-
-```{r}
+# ```
+# 
+# Let's take a look at the data we're using. We have temperature and precipitation data for each site and each month, and pH values for each plot. Covariates have been mean-centered. Y values range from 0 to 1 (closed interval).
+# ```{r}
+# temp.cov[,1:5]
+# 
+# precip.cov[,1:5]
+# 
+# head(pH.cov)
+# 
+# head(dat); dim(dat)
+# ```
+# 
+# Now, let's look at and fit our model. The JAGS code has a data model at the core level, because each core is a replicate for one plot. This data is drawn from the beta distribution, with a logit link function to prevent any values outside of 0 or 1. The process model, with the environmental covariates, is at the plot level. We have random effects for each site, each plot, and each time point. 
+# 
+# ```{r}
 model_string <- " model{
 
 #### Core-level observations ####
 for (t in 1:N.date){
   for (i in 1:N.core){
-    y[i,t] ~ dbeta(alpha[i,t], beta[i,t]) ## Data model: core observations are a function of alpha and beta
-    alpha[i,t] <- plot_mean[plotID[i],t] * tau   
-    beta[i,t]  <- (1-plot_mean[plotID[i],t]) * tau 
+      y[i,t] ~ dbeta(shape1[plotID[i],t], shape2[plotID[i],t]) ## Data model: core observations drawn from alpha/beta
   }
 }
 
 #### Plot means - Process model ####
 for (i in 1:N.plot){
-  for (t in 2:N.date){
-    logit(plot_mean[i,t]) <-  beta_IC*plot_mean[i,t-1] + beta_precip*precip[plot_site[i],t] + beta_temp*temp[plot_site[i],t] + beta_pH*pH[i] + site_effect[plot_site[i]] + plot_effect[i] + time_effect[t]
+  for (t in 2:N.date){ 
+    logit(plot_mean[i,t]) <-  beta[1]*logit(plot_mean[i,t-1]) + 
+                              beta[2]*time.cov[i,t,2] + beta[3]*time.cov[i,t,1] + 
+                              inprod(beta[4:6], space.cov[i,1:3]) +
+                              plot_effect[i] + time_effect[plot_site[i],t]
+
+    # Convert plot mean into parameters for beta distribution
+    shape1[i,t] <- plot_mean[i,t] * tau   
+    shape2[i,t]  <- (1-plot_mean[i,t]) * tau 
   }
 }
 
@@ -97,22 +99,22 @@ for (i in 1:N.plot){
 
 for (i in 1:N.site){
   site_effect[i] ~ dnorm(0,site_var)  # Prior on site random effects
+  for (t in 1:N.date){
+    time_effect[i,t] ~ dnorm(0, time_var) # Prior on time random effects
+  }
 }
 
 for (i in 1:N.plot){
-  plot_mean[i,1] ~ dbeta(1,3)  # Prior on plot means for first date 
-  plot_effect[i] ~ dnorm(0, plot_var) # Prior on plot random effects
-}
-
-for (t in 1:N.date){
-  time_effect[t] ~ dnorm(0, time_var) # Prior on time random effects
+  plot_effect[i] ~ dnorm(site_effect[plot_site[i]], plot_var) # Prior on plot random effects
+  plot_mean[i,1] ~ dbeta(1,3)             # Prior on plot means for first date 
+  shape1[i,1] <- plot_mean[i,1] * tau      # alpha for first date
+  shape2[i,1]  <- (1-plot_mean[i,1]) * tau  # beta for first date
 }
 
 # Coefficient priors
-beta_IC ~ dnorm(0,0.2)
-beta_temp ~ dnorm(0,.2)
-beta_pH ~ dnorm(0,.2)
-beta_precip ~ dnorm(0,.2)
+for(i in 1:6){
+    beta[i] ~ dnorm(0,0.0001)
+  }
 
 # Variance priors
 tau ~ dgamma(1,.1) 
@@ -121,17 +123,17 @@ site_var ~ dgamma(1,.1)
 time_var ~ dgamma(1,.1) 
 }"
 
-monitor <- c("beta_IC","beta_temp","beta_precip","beta_pH","tau",
+monitor <- c("beta","tau","site_var","time_var",
              "plot_var","plot_mean","site_effect","plot_effect","time_effect")
 
 pmod <- run.jags(model_string,
                  data = data,
-                 adapt = 500,
-                 burnin = 500,
-                 sample = 500,
-                 n.chains = 3,
-                 thin = 5,
-                 method = "rjparallel",
+                 adapt = 200,
+                 burnin = 2000,
+                 sample = 2000,
+                 n.chains = 5,
+                 thin = 3,
+                 method = "parallel",
                  jags = "/share/pkg.7/jags/4.3.0/install/bin/jags",
                  monitor = monitor)
 

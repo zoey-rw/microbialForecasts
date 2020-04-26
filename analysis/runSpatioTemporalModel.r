@@ -23,7 +23,7 @@ for (k in c(1,6)){
   rank.df <- d[[k]]
   rank.df$dates <- gsub("2016", "2015", rank.df$dates)
   #rank.df <- rank.df[grepl("2013", rownames(rank.df)),]
-  n.groups <- ifelse(grepl("fun|bac", names(d)[[k]]), 5, 1)
+#  n.groups <- ifelse(grepl("fun|bac", names(d)[[k]]), 5, 1)
   out <- list()
   
   #for (j in 1:n.groups){ # Specifies the group (e.g. Acidobacteria)
@@ -55,33 +55,35 @@ for (k in c(1,6)){
     
     #### Core-level observations ####
     for (t in 1:N.date){
-    for (i in 1:N.core){
-    y[i,t] ~ dbeta(alpha[i,t], beta[i,t]) ## Data model: core observations are a function of alpha and beta
-    alpha[i,t] <- plot_mean[plotID[i],t] * tau   
-    beta[i,t]  <- (1-plot_mean[plotID[i],t]) * tau 
-    }
+      for (i in 1:N.core){
+        y[i,t] ~ dbeta(alpha[plotID[i],t], beta[plotID[i],t]) ## Data model: core observations are a function of alpha and beta
+      }
     }
     
     # Plot means - Process model
     for (i in 1:N.plot){
-    for (t in 2:N.date){
-    logit(plot_mean[i,t]) <-  beta_IC*plot_mean[i,t-1] + site_effect[plot_site[i]] + plot_effect[i] + time_effect[t]
-    }
+      for (t in 2:N.date){
+        logit(plot_mean[i,t]) <-  beta_IC*logit(plot_mean[i,t-1]) + site_effect[plot_site[i]] + plot_effect[i] + time_effect[t]
+        alpha[i,t] <- plot_mean[i,t] * tau   
+        beta[i,t]  <- (1-plot_mean[i,t]) * tau 
+      }
     }
     
     #### Priors ####
     
     for (i in 1:N.site){
-    site_effect[i] ~ dnorm(0,site_var)  # prior on site random effects
+      site_effect[i] ~ dnorm(0,site_var)  # prior on site random effects
     }
     
     for (i in 1:N.plot){
-    plot_mean[i,1] ~ dbeta(1,3)  # Plot means for first date
-    plot_effect[i] ~ dnorm(0, plot_var) # prior on plot random effects
+      plot_mean[i,1] ~ dbeta(1,3)  # Plot means for first date
+      alpha[i,1] ~ dlnorm(0,1)  # Plot alpha for first date
+      beta[i,1] ~ dlnorm(0,1)  # Plot beta for first date
+      plot_effect[i] ~ dnorm(0, plot_var) # prior on plot random effects
     }
     
     for (t in 1:N.date){
-    time_effect[t] ~ dnorm(0, time_var) # prior on time random effects
+      time_effect[t] ~ dnorm(0, time_var) # prior on time random effects
     }
     
     beta_IC ~ dnorm(0,0.2)
@@ -98,9 +100,9 @@ for (k in c(1,6)){
                      data = data,
                      adapt = 1000,
                      burnin = 1000,
-                     sample = 1500,
+                     sample = 3000,
                      n.chains = 3,
-                     thin = 5,
+                     thin = 10,
                      #method = "rjparallel",
                      method = "parallel",
                      jags = "/share/pkg.7/jags/4.3.0/install/bin/jags",
