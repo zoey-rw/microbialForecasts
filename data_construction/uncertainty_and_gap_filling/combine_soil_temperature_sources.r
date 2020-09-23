@@ -11,11 +11,11 @@ NEON_temp_monthly <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_fore
 
 # Read in daymet daily/weekly/monthly air temp 
 daymet_monthly <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/daymet_monthly.rds")
-daymet_monthly <- daymet_monthly %>% filter(!dateID %in% c(201301, 201302, 201303, 201304, 201305))
+daymet_monthly <- daymet_monthly %>% filter(!dateID %in% c(201301, 201302, 201303, 201304, 201305)) %>% dplyr::rename(month = dateID)
 
 
-NEON_temp_monthly$dateID <- gsub("-","",NEON_temp_monthly$month)
-monthly <- merge(NEON_temp_monthly, daymet_monthly, by = c("siteID", "dateID"), all=T)
+NEON_temp_monthly$month <- gsub("-","",NEON_temp_monthly$month)
+monthly <- merge(NEON_temp_monthly, daymet_monthly, by = c("siteID", "month"), all=T)
 
 # NEON_temp_wide <- NEON_temp_monthly %>% pivot_wider(id_cols = dateID, 
 #                                                     names_from = siteID, 
@@ -33,7 +33,7 @@ sites <- unique(avail.site.months$siteID)
 thisyear <- cbind.data.frame(siteID = unique(sites), month = "2020-09", date = "2020-09-01") # gap fill until present
 avail.site.months <- rbind.data.frame(avail.site.months, thisyear) %>% 
   group_by(siteID) %>% padr::pad() %>% # ignore error, it's probably within the padr package
-  mutate(month = substr(date, 1, 7))
+  mutate(month = gsub("-","",substr(date, 1, 7)))
 
 
 ##### 3. FIT CALIBRATION MODELS, CONVERT DATA, ESTIMATE UNCERTAINTIES FOR each site x source #####
@@ -41,13 +41,6 @@ avail.site.months <- rbind.data.frame(avail.site.months, thisyear) %>%
 
 # Merge sources together into a main data frame
 sources_merged <- merge(avail.site.months, monthly, all.x=T)
-
-
-
-
-
-
-
 
 
 
@@ -95,3 +88,5 @@ ggsave(p, filename = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/fig
 
 # Plots look alright: 
 # Uncertainty is low for all sites. Daymet trends look incredibly similar to NEON trends.
+
+saveRDS(soil.temperature.out, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/monthly_soil_temperature.rds")

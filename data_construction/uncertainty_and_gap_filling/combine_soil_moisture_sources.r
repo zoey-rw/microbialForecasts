@@ -149,9 +149,13 @@ all_sources_merged <- merge(SMV_neon_merged, smos, by = c("siteID", "month"), al
   p <- ggplot(soil.moisture.out, aes(x = date, y = moisture, color = source)) + 
     geom_point(show.legend = F) + facet_wrap(~siteID, nrow = 8) + 
     geom_errorbar(aes(ymin=low,ymax=hi),alpha=0.3) + theme_minimal() + theme (legend.position = c(0.7, 0.04)) +
-    guides(color = guide_legend(nrow = 1, byrow = TRUE, override.aes = list(size = 5, alpha = 1)))
+    guides(color = guide_legend(nrow = 1, byrow = TRUE, override.aes = list(size = 5, alpha = 1))) + ylab("Soil moisture")
   p
 
+  ggsave(p, filename = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/figures/soil_moisture_calibration.png", device = "png", width = 15, height = 12, units = "in")
+  
 # Plots look alright: 
 # Uncertainty increases for sites with less NEON data.
 # As expected, worse data sources have larger uncertainties.
+  
+  saveRDS(soil.moisture.out, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/monthly_soil_moisture.rds")
