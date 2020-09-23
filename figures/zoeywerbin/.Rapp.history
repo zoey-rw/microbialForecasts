@@ -1,5 +1,0 @@
-category <- c("Aircraft", "Flight number", "Merge type", "Revision")
-value <- c("c130","1","60s","R1")
-df(category, value)
-data.frame(category, value)
-data.frame(category, value, value)

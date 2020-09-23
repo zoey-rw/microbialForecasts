@@ -1,1 +1,0 @@
-ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
