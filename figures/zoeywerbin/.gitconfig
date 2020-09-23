@@ -1,0 +1,10 @@
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+	required = true
+[user]
+	name = Zoey Werbin
+	email = zoeywerbin@gmail.com
+[core]
+	excludesfile = /Users/zoeywerbin/.gitignore_global

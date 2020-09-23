@@ -1,0 +1,514 @@
+git status
+git add functions/ data_construction/
+git commit -m "scripts for processing ITS sequence data from 2013-2014, visualizing data"
+git push
+git pull upstream master
+cd SOaP/
+git status
+git commit -m "pulling in data construction from other members"
+git push
+git mv Demo_GeneratingCHM_CPER.R data_construction/NEON_covariates/
+git mv Demo_GeneratingCHM_DSNY.R data_construction/NEON_covariates/
+git mv Demo_GeneratingCHM_HARV.R data_construction/NEON_covariates/
+git mv Demo_GeneratingCHM_OSBS.R data_construction/NEON_covariates/
+git mv Demo_GeneratingCHM_STER.R data_construction/NEON_covariates/
+git mv ObtainingAndCalculatingTheLocatingUnitAreaOfEachPlot.R data_construction/NEON_covariates/
+git mv VisualizingMeanCHM_AllSites.R data_construction/NEON_covariates/
+git mv daymet_SOaP.R data_construction/other_covariates/
+git mv worldClim_SOaP.R data_construction/other_covariates/
+git mc NEON_soil_phys_iterate.R data_construction/NEON_covariates/
+git mv NEON_soil_phys_iterate.R data_construction/NEON_covariates/
+git mv NEON_soil_chm_visualization.R data_construction/NEON_covariates/
+git mv NEON_soil_phys_visualization.R data_construction/NEON_covariates/
+git mv NEON_soil_visualization.R data_construction/
+git mv soil_chm_RQ_iterate.R data_construction/NEON_c
+git mv data_construction/NEON_c soil_chm_RQ_iterate.R
+git mv soil_chm_RQ_iterate.R data_construction/NEON_covariates/
+git mv data_construction/NEON_soil_visualization.R data_construction/NEON_covariates/
+git commit -m "reorganized repo into data construction directories"
+git push
+cd SOaP/
+git status
+git add data_construction/NEON_covariates/NEON_soil_phys_iterate.R
+git add data_construction/NEON_covariates/NEON_soil_visualization.R
+git add data_construction/NEON_covariates/soil_chm_RQ_iterate.R
+git mv data_construction/NEON_covariates/soil_chm_RQ_iterate.R data_construction/NEON_covariates/NEON_soil_chem_iterate.R
+mkdir old
+git mv data_construction/NEON_covariates/NEON_soil_phys_visualization.R old
+git mv data_construction/NEON_covariates/NEON_soil_chm_visualization.R old
+git status
+git commit -m "condensed visualization scripts for NEON soil data"
+git push
+git mv data_construction/NEON_covariates/NEON_soil_chm_visualization.R old
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@scc5.bu.edu
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+git pull upstream master
+ssh -Y -l buyin zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787[A
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+pwd
+git stash
+git pull upstream master
+git stash
+git pull upstream master
+git pull origin master
+git mv data_construction/sequence_processing/01_download_ITS_metadata.r old/
+git mv data_construction/sequence_processing/01b_explore_ITS_missing_data.r old/
+git mv data_construction/sequence_processing/02_clean_ITS_sequences.r old/
+git mv data_construction/sequence_processing/03_visualize_ITS_data.R old/
+git mv data_construction/sequence_processing/ data_construction/microbial_data
+git status
+git commit -m "renaming folder to reflect the shift from using sequencing data to abundance data"
+git push
+git mv PlotLevelCovariate.R data_construction/
+git mv GeneratingSiteLevelMeanCHM_AllFiveSites.R  data_construction/
+git mv Calibration_phase1.Rmd old/
+git commit -m "moving scripts from main directory to sub-directories"
+git push
+git mv data data_construction/
+git mv data/ data_construction/data
+git status
+git add data/README.txt 
+git commit -m "adding empty data folder"
+git push
+git mv data_construction/PlotLevelCovariate.R data_construction/NEON_covariates/
+git mv data_construction/GeneratingSiteLevelMeanCHM_AllFiveSites.R data_construction/NEON_covariates/
+git mv data_construction/NEON_covariates/NEON_soil_visualization.R data_construction/covariate_visualization.R
+git commit -m "more reorganizing, and updating Readme.txt"
+git push
+git pull upstream master
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+git pull upstream master
+git status
+git push
+plot(summaryapcrop$age_mid, summaryapcrop$allp, col = "gray48", type = "n", xlim = c(550, 0), xlab = "Millions of years ago (mya)", ylab = "B1 value")
+scp -r user@your.server.example.com:/path/to/foo ~/
+scp -r zrwerbin@scc5.bu.edu:SOaP/data/climate_ensembles.rds /Users/zoeywerbin
+ls
+cd Downloads/lotus_pipeline/
+perl autoInstall.pl
+pwd
+cd /de
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+geo.make(state = 25, 
+plot.run() N.IPD.ci = apply(N.IPD,2,quantile,c(0.025,0.5,0.975), na.rm=TRUE)
+ecoforecastR::ciEnvelope(time2,N.IPD.ci[1,],N.IPD.ci[3,],col=col.alpha(N.cols[3],trans))
+NN
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+git stash
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+git status
+cd NEFI_Project-Drift-Zoey/
+cd ..
+ssh -Y zrwerbin@pecan2.bu.edu
+ts_loop
+substract.n-end_2014
+pwd
+git pull
+git status
+git checkout -b zoey-rw-master master
+git pull https://github.com/zoey-rw/SOaP.git master
+git checkout master
+git merge --no-ff zoey-rw-master
+git commit "merge repos"
+git status
+git add old/initial_forecast_milestone.Rmd
+git commit -m "trying to resolve conflicts in unused file"
+git push
+git pull upstream master
+git add README.md 
+git commit -m "will this resolve merge conflict?"
+git push
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+scp -r zrwerbin@scc5.bu.edu:/usr3/graduate/zrwerbin/NEFI_microbe/climate_ensembles /Users/zoeywerbin
+scp -r zrwerbin@scc5.bu.edu:/usr3/graduate/zrwerbin/NEFI_microbe/climate_ensembles.rds /Users/zoeywerbin
+scp -r zrwerbin@scc5.bu.edu:/usr3/graduate/zrwerbin/SOaP/data/climate_ensembles.rds /Users/zoeywerbin/SOaP/data/
+scp -r zrwerbin@scc5.bu.edu:/usr3/graduate/zrwerbin/SOaP/data/climate_ensembles2.rds /Users/zoeywerbin/SOaP/data/
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@pecan2.bu.edu
+cd NEFI_Project-Drift-Zoey/
+cd ..
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu
+ssh -Y zrwerbin@scc5.bu.edu
+ssh -Y zrwerbin@scc5.bu.edu
+ssh -Y zrwerbin@scc5.bu.edu
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+rsync -av ssh /projectnb/talbot-lab-data/NEFI_data/16S/scc_gen/ zrwerbin@pecan2.bu.edu:/fs/data3/caverill/NEFI_data/16S/scc_gen/
+ssh -Y zrwerbin@scc5.bu.edu
+ssh -Y zrwerbin@scc5.bu.edu
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu
+ssh -Y zrwerbin@scc1.bu.edu
+ssh -Y zrwerbin@scc4.bu.edu
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu
+ssh -Y zrwerbin@scc1.bu.edu
+ssh -Y zrwerbin@scc2.bu.edu
+ssh zrwerbin@scc5.bu.edu
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -Lqrsh 7777:localhost:8787
+ssh -Yqrsh zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Yqsh zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+vim  ~/.Xresourcesources
+xrdb -merge ~/.Xdefaults
+ija ;2D;2D;2D;2D;2D
+find / -name Xdefaults 2>/dev/null -print
+man X
+echo $MANPATH
+ls
+touch ~/.Xresources
+ls
+cd ~/.Xresources 
+vim  ~/.Xresources
+xrdb -merge ~/.Xresources
+vim  ~/.Xresources
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+vim  ~/.Xresources
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+vim  ~/.Xresources
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+python
+file ~/Downloads/41564_2017_62_MOESM6_ESM.csv
+file ~/Downloads/41564_2017_62_MOESM6_ESM.zip
+file ~/Downloads/41564_2017_62_MOESM6_ESM (1).zip
+file ~/Downloads/41564_2017_62_MOESM6_ESMx.zip
+zip
+unzip /Users/zoeywerbin/Downloads/41564_2017_62_MOESM6_ESMx.zip
+file /Users/zoeywerbin/Downloads/41564_2017_62_MOESM6_ESM.csv
+file /Users/zoeywerbin/Downloads/41564_2017_62_MOESM6_ESM 2.csv
+file /Users/zoeywerbin/Downloads/41564_2017_62_MOESM6_ESM2.csv
+unzip /Users/zoeywerbin/Downloads/41564_2017_62_MOESM6_ESM2.csv
+file __MACOSX/._Rameriz_etal_SeqMatched.csv
+unzip /Users/zoeywerbin/Downloads/41564_2017_62_MOESM7_ESM.zip
+unzip /Users/zoeywerbin/Downloads/41564_2017_62_MOESM7_ESM.csv
+unzip /Users/zoeywerbin/Downloads/41564_2017_62_MOESM7_ESM.csv
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+chmod 777
+ls
+cd RKQ_ex4/
+chmod 777
+chmod -r 777
+chmod -r 777 RKQ_ex4
+chmod -r 777 RKQ_ex4/
+ls
+chmod -r 777 README.md 
+chmod 777
+cd ..
+chmod 777 RKQ_ex4/ -r
+chmod 777 RKQ_ex4
+chmod 777 RKQ_ex4 -r
+chmod 777 RKQ_ex4 
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8888
+ssh -Y zrwerbin@geo.bu.edu -L 8080:localhost:8888
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 8080:localhost:8888
+ssh -Y zrwerbin@geo.bu.edu -L 8080:localhost:8888
+ssh -Y zrwerbin@geo.bu.edu -L 8080:localhost:8888
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@geo.bu.edu -L 8080:localhost:8888
+ssh -Y zrwerbin@geo.bu.edu -L 8080:localhost:8888
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+  quota -s
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 9999:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 9999:localhost:9000
+ssh -Y zrwerbin@geo.bu.edu -L 9999:localhost:8000
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+python3
+python
+pip install textgenrnn
+pip install textgenrnn
+/Users/zoeywerbin/Downloads/grakn-core-all-mac-1.5.7/grakn ; exit;
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@gescc2u.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc1.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc1.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc1.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc1.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc1.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc1.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@pecan2.bu.edu
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc1.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc1.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc1.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc1.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc1.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu 
+ssh -Y zrwerbin@geo.bu.edu 
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc5.bu.edu -L 7777:localhost:8787
+ps -aux | 7777
+ps -au | 7777
+ps | 7777
+ps | 8787
+ps | grep 
+ps | grep 7777
+ps | grep 7777
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787

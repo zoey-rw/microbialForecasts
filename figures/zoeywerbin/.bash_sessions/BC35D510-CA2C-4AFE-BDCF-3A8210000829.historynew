@@ -1,0 +1,5 @@
+cd ~/Downloads/
+jupyter nbconvert --to html --execute metadata_wrangle.ipynb --output wrangle.html
+brew cask install jupyter-notebook-viewer
+jupyter nbconvert --to html --execute metadata_wrangle.ipynb --output wrangle.html
+qlmanage -r

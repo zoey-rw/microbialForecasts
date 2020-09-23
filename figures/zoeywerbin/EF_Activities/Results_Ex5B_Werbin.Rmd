@@ -1,0 +1,299 @@
+---
+title: "Ex5B_results"
+author: "Zoey Werbin"
+date: "3/3/2019"
+output: html_document
+---
+
+# Exercise 5B: Bayesian Regression using Gibbs Sampling 
+
+```{r,echo=FALSE}
+## Settings
+library(rjags)
+library(coda)
+```
+
+In this exercise we evaluate an MCMC's ability to recover the “true” parameters of the model, for both a univariate and multivariate model. We first simulate data from known parameters. 
+```{r}
+### Part 1: simulate data from a known model
+n <- 100  			## define the sample size
+b0 <- 10				## define the intercept
+b1 <- 2					## define the slope
+beta <- matrix(c(b0,b1),2,1)		## put “true” regression parameters in a matrix
+sigma <- 4				## define the standard deviation
+```
+Now let's create our design matrix and multiply it by our covariate matrix. We'll save it as a list.
+```{r}
+x1 <- runif(n,0,20)
+x <- cbind(rep(1,n),x1)
+y <- rnorm(n,x%*%beta,sigma)
+data <- list(x = x1, y = y, n = n)
+```
+
+Here we specify the model, priors, and initial conditions.
+```{r}
+univariate_regression <- "
+model{
+
+  beta ~ dmnorm(b0,Vb)  	## multivariate Normal prior on vector of regression params
+  prec ~ dgamma(s1,s2)    ## prior precision
+
+  for(i in 1:n){
+	  mu[i] <- beta[1] + beta[2]*x[i]   	## process model
+	  y[i]  ~ dnorm(mu[i],prec)		        ## data model
+  }
+}
+"
+
+## specify priors
+data$b0 <- as.vector(c(0,0))      ## regression beta means
+data$Vb <- solve(diag(10000,2))   ## regression beta precisions
+data$s1 <- 0.1                    ## error prior n/2
+data$s2 <- 0.1                    ## error prior SS/2
+
+## initial conditions
+nchain = 3
+inits <- list()
+for(i in 1:nchain){
+ inits[[i]] <- list(beta = rnorm(2,0,5), prec = runif(1,1/100,1/20))
+}
+```
+
+
+Compile and initialize the model:
+```{r}
+j.model   <- jags.model(file = textConnection(univariate_regression),
+                             data = data,
+                             inits = inits,
+                             n.chains = nchain)
+```
+
+Use the coda.samples function to sample from the posterior:
+
+```{r}
+var.out   <- coda.samples (model = j.model,
+                            variable.names = c("beta","prec"),
+                                n.iter = 2000)
+```
+
+
+
+## Task 1: Evaluate model for convergence.
+* Evaluate the MCMC chain for convergence. Include relevant diagnostics and plots. Determine and remove burnin e.g. ```var.burn <- window(var.out,start=burnin)```
+* Report parameter summary table and plot marginal distributions
+* Describe and explain the parameter covariances that you observe in the pairs plot and parameter correlation matrix.
+* Compare the summary statistics for the Bayesian regression model to those from the classical regression:  summary(lm( y ~ x1 )).  This should include a comparison of the means and uncertainties of **all 3 model parameters**
+* Compare the fit parameters to the “true” parameters we used to generate the pseudo-data.  How well does the statistical analysis recover the true model?
+```{r}
+# Assess model convergence:
+gelman.diag(var.out)
+```
+Values of 1 for all parameters - model has converged.
+
+Next, let's assess the burn-in. 
+```{r}
+GBR <- gelman.plot(var.out)
+```
+Removing about 800 iterations should be good. Let's also check the effective sample sizes.
+```{r}
+burnin = 800                                ## determine convergence
+var.out <- window(var.out,start=burnin)  ## remove burn-in
+
+acfplot(var.out) # autocorrelation plot
+effectiveSize(var.out) # check effective sample sizes
+
+```
+These values are higher than our 2000 samples, so let's get some extra samples.
+
+```{r}
+var.out2 <- coda.samples(j.model,variable.names = c("beta","prec"),5000)
+#var.out2 <- var.out
+```
+
+Now we can calculate summary stats.
+```{r}
+summary(var.out2)
+```
+
+Let's also check the trace plots.
+```{r}
+plot(var.out2)
+```
+
+```{r}
+## convert to matrix
+var.mat      <- as.matrix(var.out2)
+
+## Pairwise scatter plots & correlation
+pairs(var.mat)	## pairs plot to evaluate parameter correlation
+cor(var.mat)    ## correlation matrix among model parameters
+
+```
+Looks like our slope and intercept are closely correlated, which makes sense because they are both descriptors of the same line. Neither are correlated with the precision, which is good; the precision should be random, otherwise assumptions of non-heteroskedasticity may be violated.
+
+
+Now let's compare these results to those of a classical regression:
+
+```{r}
+summary(lm( y ~ x1 ))
+```
+The classical regression model estimated the slope as 1.988, the intercept as 9.605, and the standard error on the slope is .067. These are very similar to the values returned by our Bayesian model: slope of 1.988, intercept of 9.602, and precision of .077.
+
+Both the classical model and the Bayesian model accurately recovered the "true" parameters used to generate the data (slope = 2, intercept = 10, precision = 1/sd^2 = .0625). The classical model was slightly more accurate with respect to the precision estimate.
+
+
+#  Task 2
+
+Extend your univariate regression model to a multivariate regression.
+
+* Show the JAGS and R code used.
+* Include relevant convergence diagnostics and plots. 
+* Report parameter summary table. 
+* Plot marginal and pairwise joint distributions. Indicate 'true' parameters on the plots
+* Compare the fit parameters to the “true” parameters we used to generate the pseudo-data.  How well does the statistical analysis recover the true model?
+
+```{r}
+xpred <- 0:20
+plot(x1,y)
+for(i in 1:10){
+  lines(xpred, var.mat[i,"beta[1]"] + var.mat[i,"beta[2]"]*xpred)
+}
+```
+
+```{r}
+## credible and prediction intervals
+nsamp <- 5000
+samp <- sample.int(nrow(var.mat),nsamp)
+xpred <- 0:20  					## sequence of x values we're going to
+npred <- length(xpred)				##      make predictions for
+ypred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for predictive interval
+ycred <- matrix(0.0,nrow=nsamp,ncol=npred)	## storage for credible interval
+```
+
+Next we'll set up a loop where we'll calculate the expected value of y at each x for each pair of regression parameters and then add additional random error from the data model.  When looping through the posterior MCMC we'll want to account for any burn-in period and thinning.
+
+```{r}
+for(g in seq_len(nsamp)){
+  theta = var.mat[samp[g],]
+  ycred[g,] <- theta["beta[1]"] + theta["beta[2]"]*xpred
+  ypred[g,] <- rnorm(npred,ycred[g,],1/sqrt(theta["prec"]))
+}
+
+ci <- apply(ycred,2,quantile,c(0.025,0.5,0.975))  ## credible interval and median
+pi <- apply(ypred,2,quantile,c(0.025,0.975))		## prediction interval
+
+plot(x1,y,cex=0.5,xlim=c(0,20),ylim=c(0,50))
+lines(xpred,ci[1,],col=3,lty=2)	## lower CI
+lines(xpred,ci[2,],col=3,lwd=3)	## median
+lines(xpred,ci[3,],col=3,lty=2)	## upper CI
+lines(xpred,pi[1,],col=4,lty=2)	## lower PI
+lines(xpred,pi[2,],col=4,lty=2)	## upper PI
+abline(b0,b1)				## true model
+```
+Here we simulate data using known parameters.
+```{r}
+### Part 1: simulate data from a known model
+n <- 250  			## define the sample size
+b0 <- 10				## define the intercept
+b1 <- 2					## define slope1
+b2 <- -4        ## define slope2
+b3 <- 0.5       ## define interaction
+beta <- matrix(c(b0,b1,b2,b3),4,1)		## put “true” regression parameters in a matrix
+sigma <- 4				## define the standard deviation
+x1 <- runif(n,0,20)
+x2 <- runif(n,0,15)
+x <- cbind(rep(1,n),x1,x2,x1*x2)
+y <- rnorm(n,x%*%beta,sigma)
+```
+
+Pass data to the model, and run the model.
+```{r}
+#mod <- model.matrix(~ x1 * x2)
+data <- list(x = x, y = y, n = n)
+
+multivariate_regression <- "
+model{
+
+  beta ~ dmnorm(b0,Vb)  	## multivariate Normal prior on vector of regression params
+  prec ~ dgamma(s1,s2)    ## prior precision
+
+  for(i in 1:n){
+	  mu[i] <- beta[1] + beta[2]*x[i,2] + beta[3]*x[i,3] + beta[4]*x[i,4]  	## process model
+	  y[i]  ~ dnorm(mu[i],prec)		        ## data model
+  }
+}
+"
+
+## specify priors
+data$b0 <- as.vector(c(0,0,0,0))      ## regression beta means
+data$Vb <- solve(diag(10000,4))   ## regression beta precisions
+data$s1 <- 0.1                    ## error prior n/2
+data$s2 <- 0.1                    ## error prior SS/2
+
+## initial conditions
+nchain = 3
+inits <- list()
+for(i in 1:nchain){
+ inits[[i]] <- list(beta = rnorm(4,0,5), prec = runif(1,1/100,1/20))
+}
+
+j.model   <- jags.model(file = textConnection(multivariate_regression),
+                             data = data,
+                             inits = inits,
+                             n.chains = nchain)
+```
+```{r}
+var.out   <- coda.samples (model = j.model,
+                            variable.names = c("beta","prec"),
+                                n.iter = 5000)
+```
+```{r}
+# Assess model convergence:
+gelman.diag(var.out)
+```
+Values of 1 for all parameters - model has converged.
+
+Next, let's assess the burn-in. 
+```{r}
+GBR <- gelman.plot(var.out)
+```
+Removing about 800 iterations should be good, though 500 may have been enough. Let's also check the effective sample sizes.
+```{r}
+burnin = 800                                ## determine convergence
+var.out <- window(var.out,start=burnin)  ## remove burn-in
+
+acfplot(var.out) # autocorrelation plot
+effectiveSize(var.out) # check effective sample sizes
+
+```
+These values are a bit higher than our 2000 iterations. Let's take some more samples.
+
+```{r}
+var.out2 <- coda.samples(j.model,variable.names = c("beta","prec"),4000)
+```
+
+
+Now let's check the trace plots.
+```{r}
+plot(var.out2)
+```
+These chains look well-mixed. Now let's assess parameter correlation.
+
+```{r}
+
+## convert to matrix
+var.mat      <- as.matrix(var.out2)
+
+## Pairwise scatter plots & correlation
+pairs(var.mat)	## pairs plot to evaluate parameter correlation
+cor(var.mat)    ## correlation matrix among model parameters
+```
+
+Here we see that once again, our precision is uncorrelated with our other parameters. There are high (>.73) correlations between each slope or interaction parameter. This makes sense because they are sampled simultaneously and describe the same line. The precision values hover evenly around the 'true' values.
+
+Finally, we can calculate summary stats.
+```{r}
+summary(var.out2)
+```
+This model didn't do a great job at estimating the intercept - it reported a mean of 8.7, while our 'known' value was 10 - but it's less than 0.3 off for all other terms. That's fine.
+

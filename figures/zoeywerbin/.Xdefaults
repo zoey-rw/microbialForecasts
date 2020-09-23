@@ -1,0 +1,4 @@
+xterm*Background: #effffb
+xterm*faceName: monaco
+xTerm*scrollBar:        true
+xterm*faceSize: 13

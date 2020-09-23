@@ -1,0 +1,21 @@
+//Dtc
+
+pi = 3.141592653589793;
+e = 2.718281828459045;
+function exportHeader()
+{
+    // This function is called to obtain a header for exported data
+    local magic = "#DataThief";
+    local file = parameter("imageFile");
+    local when = toDate(currentTime(), "EEEE d-MMM-yyyy h:mm:ss a");
+    return magic + " " + file + " " + when;
+} 
+
+function DataThief()
+{
+    // This function is called every time DataTHief is started
+    // startTime is supposed to be global
+    startTime = currentTime();
+} 
+
+startTime = 0;

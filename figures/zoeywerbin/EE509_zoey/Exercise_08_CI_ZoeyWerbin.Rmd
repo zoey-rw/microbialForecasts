@@ -1,0 +1,359 @@
+---
+title: "Lab 08 - Interval Estimation and model selection"
+author: "EE 509"
+output: html_document
+---
+
+The objective for this lab is to apply the frequentist tools for generating confidence and predictive intervals and for selecting among models. In the course of this lab we will revisit some of the case studies we presented earlier in the semester when we were focused on point estimation.
+
+## Case Study: Lab 4 pine cones data
+
+In Lab 4 we investigated the effect that elevated CO2 has on tree reproduction by fitting a nonlinear model that accounted for both tree reproductive maturation and overall tree fecundity.  In that Lab we performed a Likelihood Ratio Test that showed that CO2 did have a significant effect on tree reproduction.  In this lab we will complete this analysis by estimating confidence intervals on the model parameters, as well as model confidence and predictive intervals, using bootstrap methods.  We will also compare the results of the LRT with model selection using AIC.
+
+As a reminder, our model had included tree size, as measured by stem diameter (dia), as the primary covariate.  This model had two parts.  First, tree reproductive maturation was modeled as a probit function, $\theta = probit(x \vert b_0,b_1)$, that described the probability that a tree was reproductive.  Second, the function $g = a_0x^2$ described the fecundity in terms of the number of pine cones produced conditional on the tree being reproductive.  Recall that in order to account for observation error (observing no cones on a tree that is mature) we had to fit both models simultaneously.
+
+We'll pick up from where we were at the end of Lab 4 by loading up the the state of the R workspace at the end of that lab:
+ 
+```{r}
+load("data/Lab8.RData")
+```
+
+At this point we had fit the pine cone count data to the whole data set (out), to just the ambient CO2 data (out.amb) and to just the elevated CO2 data (out.elev).
+
+###  AIC vs Likelihood Ratio Test
+
+Begin by calculating the AIC for the two models.  We had previously stored the negative log likelihoods in a vector named lnL that contained the values for (combined, amb, elev).  To estimate AIC we need to know the total number of parameters for each model.  For the model that analyzes the combined data there are 3 parameters, a0, b0, and b1.  Because we did not use a Normal likelihood there's not an additional variance parameter that needs to be estimated.  The model that treats ambient and elevated CO2 as separate treatments thus has 6 parameters.
+
+** Lab Report Task 1**
+Compare the AICs for the two models, interpret the results for this test, and compare with the results from the LRT previously performed.
+
+```{r}
+# AIC formula: -2(log-likelihood) + 2p
+aic.combined <- -2*lnL[[1]] + (2*6) # 6 parameters
+aic.amb <- -2*lnL[[2]] + (2*3) # 3 parameters
+aic.elev <- -2*lnL[[3]] + (2*3) # 3 parameters
+
+#print values
+aic.combined
+aic.amb
+aic.elev
+```
+
+The AIC is lowest for the combined model, despite having double the number of parameters, so it must represent a substantially better fit.
+
+Our previous likelihood ratio test result and p-value was saved in our data object:
+
+```{r}
+# Likelihood ratio was 48.58
+LR 
+
+# P-value was very very small
+pval 
+```
+In the likelihood ratio from the previous lab, the more complex model (with elevated/ambient treatments) performed better. This is consistent with our AIC test above.
+
+## Bootstrapped Interval Estimates
+
+Next, let's calculate the bootstrap confidence and predictive intervals.  This begins by setting up variables that control the sampling and storage for the output.  All of the code to follow for calculating bootstrapped intervals is very similar to the code we've used in the last two labs to generate interval estimates from MCMC output.  One important difference is that since all of the bootstrap estimates are independent we can generally get away with a smaller sample size because there is no issue of autocorrelation or burn-in.  The other important difference is in how we are treating the data and the parameters – in the bootstrap we're generating random DATA while in the MCMC the data are fixed but the parameters are random.
+
+**For your report, make sure to set nboot to an appropriate number of replicates**
+ 
+```{r}
+## bootstrap
+nboot <- 5000  			## number of bootstrap samples
+npred <- 31				## number of X values you predict for
+dseq  <- seq(0,30,length=npred)		## diameter sequence
+mle   <- matrix(NA,nrow=nboot,ncol=3)	## storage for parameter estimates
+conf.mat  <- matrix(NA,nrow=nboot,ncol=npred)	## storage for maturation CI
+conf.cone <- matrix(NA,nrow=nboot,ncol=npred)	## storage for fecundity CI
+pred.mat   <- matrix(NA,nrow=nboot,ncol=npred)	## storage for predictive maturation
+pred.cone <- matrix(NA,nrow=nboot,ncol=npred)	## storage for predictive fecundity
+```
+
+Next we'll specify the data set that we'll be sampling from.  In this case we'll begin by constructing interval estimates for the ambient CO2 data
+
+```{r}
+## Ambient
+dia.t   <- b$diam[tmt=="AMB"]   ## tree diameters
+cones.t <- (b$c00 > 0)         ## whether cones are present
+cones.t <- cones[tmt=="AMB"]
+ncone.t <- b$c00[tmt=="AMB"]    ## number of cones
+```
+
+Next is the main bootstrap loop.  There are a number of steps to this process as we'll be generating both the parameters CI and the model CI and PI in one large loop.  In the first part we define the resampled data set, making sure to sample so that we keep all xy pairs of data together.  Next we'll fit the model to the resampled data using numerical optimization and store those parameters.  After that we'll calculate the mean model prediction given the most recent set of parameters in order to calculate the model confidence interval.  Finally we'll simulate pseudodata from the model to calculate the model predictive interval.
+
+```{r,echo=FALSE}
+likfit = function(param,dia,ncone){
+  a0 = param[1]
+  b0 = param[2]
+  b1 = param[3]
+  cones = ncone > 0
+
+  ## trees with cones
+  dia.cone  = dia[cones > 0]                ##find just the trees with cones
+  g.cone = a0 * dia.cone^2			## Fecundity fnc - g(x)
+  theta.cone    = pnorm(dia.cone,b0,b1,log.p=TRUE) 	## maturation probit
+  prob.cone = theta.cone + dpois(ncone[cones],g.cone,log=TRUE)
+  
+  ##trees with zero counts 
+  dia.zero  = dia[cones == 0]
+  g.zero = a0 * dia.zero^2
+  theta.zero    = pnorm(dia.zero,b0,b1)   	##maturation probit
+  prob.zero = log((1-theta.zero) + theta.zero*dpois(0,g.zero))
+
+  return(-sum(prob.cone,prob.zero))
+}
+```
+ 
+```{r}
+for(i in 1:nboot){
+  if(i%%100 == 0) print(i)  					## progress indicator
+  samp <- sample(length(dia.t),replace=T)		##Sample row indices 
+  out.boot <- optim(param,likfit,method="L-BFGS-B",	## fit model to sample
+                    lower=c(0.001,10,1),upper=c(1,30,30),dia=dia.t[samp],ncone=ncone.t[samp])
+  mle[i,] <- out.boot$par					## store parameters
+}
+```
+
+Once we've generated the bootstrap sample we'll want to begin by looking at the parameter level estimates.  Lets first calculate the confidence intervals for each parameter using “quantile” and then use a pairs plot to assess parameter correlations.
+ 
+```{r}
+colnames(mle) = c("a0","b0","b1")
+a0.ci <- quantile(mle[,1],c(0.025,0.975))
+b0.ci <- quantile(mle[,2],c(0.025,0.975))
+b1.ci <- quantile(mle[,3],c(0.025,0.975))
+pairs(mle)
+```
+
+Next, construct density plots for each of these parameters and add both the MLE and the confidence intervals.
+ 
+```{r}
+## density plots
+plot(density(mle[,1],width=0.005),type='l',xlim=c(0,0.05),ylim=c(0,120))
+abline(v=a0.ci,lty=2)
+abline(v=a0[2])
+```
+
+**Lab Report Task 2**
+Generate density and CI plots for all 3 model parameters.  Include three figures and a table of parameter estimates, standard errors, and CI.
+
+```{r}
+plot(density(mle[,2],width=0.005),type='l')
+abline(v=b0.ci,lty=2)
+abline(v=b0[2])
+
+plot(density(mle[,3],width=0.005),type='l')
+abline(v=b1.ci,lty=2)
+abline(v=b1[2])
+```
+In the density plots above, a higher number of iterations would smooth the trends more, but we see an overall reasonable density curve.
+
+```{r}
+out.df <- data.frame(ci_low = c(a0.ci[1], b0.ci[1], b1.ci[1]), 
+                     ci_high = c(a0.ci[2], b0.ci[2], b1.ci[2]),
+                     param = c(a0[2], b0[2], b1[2]),
+                     se = c(sd(mle[,1])/sqrt(nboot), sd(mle[,2])/sqrt(nboot), sd(mle[,3])/sqrt(nboot)))
+print(out.df)
+```
+### Model Intervals
+
+Let’s now move on to constructing the model confidence intervals and predictive intervals.  Since we have two process models for this analysis we'll start with the intervals on the maturation model. First, we'll want to generate the Monte Carlo predictions, and generate the CI and PI from the full distribution of predictions.
+
+```{r}
+for(i in 1:nboot){
+  conf.mat[i,]  <- pnorm(dseq,mle[i,2],mle[i,3])        ## store model | parms
+  pred.mat[i,]  <- rbinom(npred,1,conf.mat[i,])  
+}
+ci.mat <- apply(conf.mat,2,quantile,c(0.025,0.5,0.975))
+pi.mat <- apply(pred.mat,2,quantile,c(0.025,0.975)) 
+```
+
+Finally, lets plot the model confidence and predictive intervals and compare them to the data
+```{r}
+## fecundity plot
+cones = b$c00 > 0
+plot(b$diam,cones,col = b$tmt,ylim=c(0,1))
+lines(dseq,ci.mat[2,],col=2,lwd=3)   ## median model
+lines(dseq,ci.mat[1,],col=2,lty=2,lwd=3)	## 95% CI
+lines(dseq,ci.mat[3,],col=2,lty=2,lwd=3)
+lines(dseq,pi.mat[1,],col=3,lty=2,lwd=3)	## 95% PI
+lines(dseq,pi.mat[2,],col=3,lty=2,lwd=3)
+```
+
+
+
+**Lab Report Task 3** 
+Generate and plot the confidence and predictive interval for the full fecundity process model (which combines both maturation and fecundity|maturation). Include the observed data in the plot and interpret both this plot and the maturation plot in your lab report.
+
+
+```{r}
+theta.cone <- matrix(NA,nrow=nboot,ncol=npred)
+g.cone <-  matrix(NA,nrow=nboot,ncol=npred)
+for(i in 1:nboot){
+  theta.cone[i,]  <- pnorm(dseq, mle[i,2], mle[i,3])        ## store model | parms
+  g.cone[i,] <-  mle[i,1]*dseq^2 ## fecundity prediction
+  conf.cone[i,] <- theta.cone[i,]*g.cone[i,] ## theta (maturation probability) * fecundity prediction
+  pred.cone[i,] <- rpois(npred,conf.cone[i,]) ## poisson observation model
+}
+```
+
+Next we'll want to generate the CI and PI from the full distribution of predictions
+```{r}
+ci.cone <- apply(conf.cone,2,quantile,c(0.025,0.5,0.975))
+pi.cone <- apply(pred.cone,2,quantile,c(0.025,0.975)) 
+```
+
+Finally, lets plot the model confidence and predictive intervals and compare them to the data
+```{r}
+## fecundity plot
+plot(dia, ncone, ylim=c(0,60))
+lines(dseq,ci.cone[2,],col=2,lwd=3)   ## median model
+lines(dseq,ci.cone[1,],col=2,lty=2,lwd=3)	## 95% CI
+lines(dseq,ci.cone[3,],col=2,lty=2,lwd=3)
+lines(dseq,pi.cone[1,],col=3,lty=2,lwd=3)	## 95% PI
+lines(dseq,pi.cone[2,],col=3,lty=2,lwd=3)
+```
+In the plot above, the credible interval is in red and the narrower predictive interval is in green. At first glance, the predictive interval does not seem to capture a full 95% of observed data points, but that is probably just because all the zero-values are hard to see (and would fall within the open predictive interval). Still, the predictive interval excludes all the observations of cones that exceed ~25 counts.
+
+**Lab Report Task 4**
+Repeat the bootstrap analysis for the elevated CO2 treatment.  Include the figures and tables from tasks 2 & 3 for the elevated plots as well as a final plot that compares the model confidence intervals between the elevated and ambient data on one figure.
+
+
+```{r}
+## bootstrap storage matrices
+mle.elev   <- matrix(NA,nrow=nboot,ncol=3)	## storage for parameter estimates
+conf.mat.elev  <- matrix(NA,nrow=nboot,ncol=npred)	## storage for maturation CI
+conf.cone.elev <- matrix(NA,nrow=nboot,ncol=npred)	## storage for fecundity CI
+pred.mat.elev   <- matrix(NA,nrow=nboot,ncol=npred)	## storage for predictive maturation
+pred.cone.elev <- matrix(NA,nrow=nboot,ncol=npred)	## storage for predictive fecundity
+```
+
+In this case we'll construct interval estimates for the elevated CO2 data.
+
+```{r}
+## Elevated
+dia.t.elev   <- b$diam[tmt=="CO2"]   ## tree diameters
+cones.t.elev <- (b$c00 > 0)         ## whether cones are present
+cones.t.elev <- cones[tmt=="CO2"]
+ncone.t.elev <- b$c00[tmt=="CO2"]    ## number of cones
+```
+
+Redo bootstrap:
+```{r}
+for(i in 1:nboot){
+  if(i%%100 == 0) print(i)  					## progress indicator
+  samp <- sample(length(dia.t.elev),replace=T)		##Sample row indices 
+  out.boot.elev <- optim(param,likfit,method="L-BFGS-B",	## fit model to sample
+                    lower=c(0.001,10,1),upper=c(1,30,30),dia=dia.t.elev[samp],ncone=ncone.t.elev[samp])
+  mle.elev[i,] <- out.boot.elev$par					## store parameters
+}
+```
+Look at pairs plot to assess parameter correlations:
+ 
+```{r}
+colnames(mle.elev) = c("a0","b0","b1")
+a0.ci <- quantile(mle.elev[,1],c(0.025,0.975))
+b0.ci <- quantile(mle.elev[,2],c(0.025,0.975))
+b1.ci <- quantile(mle.elev[,3],c(0.025,0.975))
+pairs(mle.elev)
+```
+Here we see strong correlations between our b0 and b1 parameters, which is similar to what we observed in the ambient dataset (though slightly less pronounced here). 
+
+Next, we construct density plots for each of these parameters and add both the MLE and the confidence intervals:
+```{r}
+## density plots
+plot(density(mle.elev[,1],width=0.005),type='l',xlim=c(0,0.05),ylim=c(0,120))
+abline(v=a0.ci,lty=2)
+abline(v=mean(mle.elev[,1]))
+
+plot(density(mle.elev[,2],width=0.005),type='l')
+abline(v=b0.ci,lty=2)
+abline(v=mean(mle.elev[,2]))
+
+plot(density(mle.elev[,3],width=0.005),type='l')
+abline(v=b1.ci,lty=2)
+abline(v=mean(mle.elev[,3]))
+
+out.df <- data.frame(ci_low = c(a0.ci[1], b0.ci[1], b1.ci[1]), 
+                     ci_high = c(a0.ci[2], b0.ci[2], b1.ci[2]),
+                     param = c(mean(mle.elev[,1]), mean(mle.elev[,2]), mean(mle.elev[,3])),
+                     se = c(sd(mle.elev[,1])/sqrt(nboot), sd(mle.elev[,2])/sqrt(nboot), sd(mle.elev[,3])/sqrt(nboot)))
+print(out.df)
+```
+
+
+## Model intervals - elevated CO2 case
+
+Let’s now move on to constructing the model confidence intervals and predictive intervals.  Since we have two process models for this analysis we'll start with the intervals on the maturation model. First, we'll want to generate the Monte Carlo predictions, and generate the CI and PI from the full distribution of predictions:
+
+```{r}
+for(i in 1:nboot){
+  conf.mat.elev[i,]  <- pnorm(dseq,mle.elev[i,2],mle.elev[i,3])        ## store model | parms
+  pred.mat.elev[i,]  <- rbinom(npred,1,conf.mat.elev[i,])  
+}
+
+ci.mat.elev <- apply(conf.mat.elev,2,quantile,c(0.025,0.5,0.975))
+pi.mat.elev <- apply(pred.mat.elev,2,quantile,c(0.025,0.975)) 
+```
+
+Finally, lets plot the model confidence and predictive intervals and compare them to the data:
+ 
+```{r}
+## fecundity plot
+cones = b$c00 > 0
+plot(b$diam,cones,col = b$tmt,ylim=c(0,1))
+lines(dseq,ci.mat.elev[2,],col=2,lwd=3)   ## median model
+lines(dseq,ci.mat.elev[1,],col=2,lty=2,lwd=3)	## 95% CI
+lines(dseq,ci.mat.elev[3,],col=2,lty=2,lwd=3)
+lines(dseq,pi.mat.elev[1,],col=3,lty=2,lwd=3)	## 95% PI
+lines(dseq,pi.mat.elev[2,],col=3,lty=2,lwd=3)
+```
+
+## Fecundity plot - elevated CO2 case
+ 
+Bootstrap from elevated CO2 data:
+```{r}
+theta.cone.elev <- matrix(NA,nrow=nboot,ncol=npred)
+g.cone.elev <-  matrix(NA,nrow=nboot,ncol=npred)
+for(i in 1:nboot){
+  theta.cone.elev[i,]  <- pnorm(dseq,mle.elev[i,2],mle.elev[i,3])        ## store model | parms
+  g.cone.elev[i,] <-  mle.elev[i,1]*dseq^2
+  conf.cone.elev[i,] <- theta.cone.elev[i,]*g.cone.elev[i,]
+  pred.cone.elev[i,] <- rpois(npred,conf.cone.elev[i,]) ## poisson observation model
+}
+```
+
+Next we'll want to generate the CI and PI from the full distribution of predictions
+```{r}
+ci.cone.elev <- apply(conf.cone.elev,2,quantile,c(0.025,0.5,0.975))
+pi.cone.elev <- apply(pred.cone.elev,2,quantile,c(0.025,0.975)) 
+```
+
+Finally, lets plot the model confidence and predictive intervals and compare them to the data
+```{r}
+## fecundity plot
+plot(dia.t.elev, ncone.t.elev, ylim=c(0,60))
+lines(dseq,ci.cone.elev[2,],col=2,lwd=3)   ## median model
+lines(dseq,ci.cone.elev[1,],col=2,lty=2,lwd=3)	## 95% CI
+lines(dseq,ci.cone.elev[3,],col=2,lty=2,lwd=3)
+lines(dseq,pi.cone.elev[1,],col=3,lty=2,lwd=3)	## 95% PI
+lines(dseq,pi.cone.elev[2,],col=3,lty=2,lwd=3)
+```
+In the elevated CO2 case, the predictive interval gets closer to our observations of high cone counts.
+
+
+## Final final figure
+
+Finally, lets plot the model confidence and predictive intervals and compare them to the data
+```{r}
+## fecundity plot
+plot(ncone~dia)
+lines(dseq,ci.cone.elev[2,],col=2,lwd=3)   ## median model
+lines(dseq,ci.cone.elev[1,],col=2,lty=2,lwd=3)	## 95% CI
+lines(dseq,ci.cone.elev[3,],col=2,lty=2,lwd=3)
+lines(dseq,ci.cone[2,],col=1,lwd=3)   ## median model
+lines(dseq,ci.cone[1,],col=1,lty=2,lwd=3)	## 95% CI
+lines(dseq,ci.cone[3,],col=1,lty=2,lwd=3)
+```
+
+In the plot above, the red lines represent the credible interval for elevated-CO2 and the black represents the CI for ambient CO2. As expected, we see that the elevated CO2 treatment results in higher fecundity overall, when accounting for maturation probability.

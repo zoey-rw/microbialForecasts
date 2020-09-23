@@ -1,0 +1,36 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+Here's script #4 of GE585 phenology analysis 
+
+```{r}
+## Master script for phenology analysis
+
+## Load required functions
+if(file.exists("01_download.phenocam.R")) source("01_download.phenocam.R")
+if(file.exists("02_plot.phenocam.R"))     source("02_plot.phenocam.R")
+if(file.exists("03_logistic.R"))          source("03_logistic.R")
+
+## Download phenology data
+URL = "http://phenocam.sr.unh.edu/data/archive/uiefprairie/ROI/uiefprairie_GR_0001_1day.csv"
+prairie.pheno <- download.phenocam(URL)
+
+## Plot overall phenology data
+plot.phenocam(prairie.pheno)
+
+## Create and visualize subset of data for leaf out
+spring = as.Date(c("2015-01-01","2015-06-01"))
+dat = subset(prairie.pheno,date > spring[1] & date < spring[2], select=c(date,gcc_mean,gcc_std))
+plot.phenocam(dat)
+
+## Fit logistic model
+dat$doy = as.POSIXlt(dat$date)$yday
+par = c(0.33,0.11,-10,0.1)
+fit = fit.logistic(dat,par)
+
+## Visualize model and data
+plot.phenocam(dat)
+lines(dat$date,pred.logistic(fit$par,dat$doy),col=2)
+```
+

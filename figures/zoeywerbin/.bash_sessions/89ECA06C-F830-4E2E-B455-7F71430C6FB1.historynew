@@ -1,0 +1,6 @@
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@geo.bu.edu -L 7777:localhost:8787

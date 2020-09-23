@@ -1,0 +1,12 @@
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ls
+cd Downloads/grakn-core-all-mac-1.5.7/grakn 
+cd Downloads/grakn-core-all-mac-1.5.7/
+ls
+graken
+grakn
+ls
+grakn console --keyspace social_network --file schema.gql
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
+ssh -Y zrwerbin@scc2.bu.edu -L 7777:localhost:8787
