@@ -45,57 +45,9 @@ smv_month_long <- smv_month %>% pivot_longer(cols = 3:17)
 saveRDS(smv_month, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/DAAC_SMV/monthly_SMV_allsites.rds")
 
 
-
-#### 2. GET NEON MOISTURE DATA ####
-neon <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/NEONSoilMois_monthly_allsites.rds")
-neon <- neon %>% mutate(neon_mean = simpleMean*100)
-
-#### 3. GET NEON SITES WHERE WE HAVE MICROBES ####
-# get list of site/dates where we have microbial data
-microb.avail = Z10::dp.avail("DP1.10108.001")
-avail.site.months <- microb.avail %>% 
-  unnest(months) %>% unnest(site) %>% rename(siteID = site, month = months) %>% 
-  mutate(date = as.Date(paste0(month, "-01"))) 
-
-sites <- unique(avail.site.months$siteID)
-thisyear <- cbind.data.frame(siteID = unique(sites), month = "2020-09", date = "2020-09-01")
-avail.site.months <- rbind.data.frame(avail.site.months, thisyear) %>% 
-  group_by(siteID) %>% padr::pad() %>% 
-  mutate(month = substr(date, 1, 7))
-
-# library(ggplot2)
-# long_merged <- merge(neon, smv_month_long) %>% filter(!name %in% c("mean_SCAN_r","mean_SCAN_s","min_SCAN_r", "min_SCAN_s", "max_SCAN_r","max_SCAN_s","max_GRACE_s","min_GRACE_s"))
-# ggplot(long_merged) + geom_point(aes(x = neon_mean, y = value, color = siteID),show.legend = F) + facet_wrap(~name, drop = T) + geom_abline()
-
-
-# order: take SCAN values if there's a SCAN site, otherwise SMAP values
-smv_month$SMV_val <- ifelse(!is.na(smv_month$min_SCAN_r),
-                            smv_month$min_SCAN_r,
-                            ifelse(!is.na(smv_month$mean_SMAP_s),
-                                   smv_month$mean_SMAP_s,
-                                   NA))
-                                    # ifelse(!is.na(smv_month$mean_GRACE_s),
-                                    #        smv_month$mean_GRACE_s, NA)))
-
-# Merge things together
-merged <- merge(neon, smv_month, all=T)
-merged$final_val <- ifelse(!is.na(merged$neon_mean), 
-                           merged$neon_mean, merged$SMV_val)
-merged <- merge(avail.site.months, merged, all.x=T)
-
-# Look at which sites we have missing data for.
-need <- list()
-for (s in 1:length(sites)){
-  site_df <- merged[merged$siteID==sites[[s]],]
-  if (table(is.na(site_df$final_val))[2] > 1) {
-    need <- append(need, sites[[s]])
-  print(sites[[s]]); print(s);
-  print(table(is.na(site_df$final_val)))
-cat("\n\n\n")  }
-}
-
-
-dsny_mine <- merged[merged$siteID=="DSNY",]
+####################################
+## unused/abandoned code below ##
+####################################
 
 
 # Get data from nearby SCAN sites when possible?
