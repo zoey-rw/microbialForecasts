@@ -1,1 +1,18 @@
 # ignore any log files
+*.log
+/log/*
+/tmp/*
+
+# ignore any "old" directories
+*/old/
+/old/*
+old
+
+# ignore qsub files for batch jobs
+q_*
+qsub*
+
+# ignore development scripts
+development/*
+/development/
+development
