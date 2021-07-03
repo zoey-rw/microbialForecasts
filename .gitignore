@@ -17,3 +17,8 @@ qsub*
 development/*
 /development/
 development
+
+# ignore raw data
+data/clean/*
+data/clean
+data/*
