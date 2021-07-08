@@ -94,8 +94,7 @@ run_MCMC <- function(k = 17,
 	myMCMC <- buildMCMC(conf = cModel, monitors = c("beta","sigma","rho",
 																									"site_effect","intercept"),
 											monitors2 = c("plot_rel"), useConjugacy = F,
-											control = list(scale = 1, adaptInterval=2000
-																		 , clearNimbleFunctionsAfterCompiling = T))
+											control = list(scale=.1))
 	compiled <- compileNimble(myMCMC, project = cModel, resetFunctions = T)
 
 	
@@ -155,7 +154,7 @@ params = data.frame(group = rep(1:n.groups, 4),
 # Create function that calls run_MCMC for each uncertainty scenario
 run_scenarios <- function(j) {
 	print(params[j,])
-	out <- run_MCMC(k = params$group[[j]], iter = 20000, burnin = 15000, thin = 5, 
+	out <- run_MCMC(k = params$group[[j]], iter = 275000, burnin = 200000, thin = 10, 
 									test=F, 
 									temporalDriverUncertainty = params$temporalDriverUncertainty[[j]], 
 									spatialDriverUncertainty = params$spatialDriverUncertainty[[j]])
@@ -180,30 +179,30 @@ run_scenarios <- function(j) {
 # 
 
 library(doParallel)
-cl <- makeCluster(28, type="PSOCK", outfile="")
+cl <- makeCluster(36, type="PSOCK", outfile="")
 registerDoParallel(cl)
 
 
 # #### Latter two scenarios
 out.path <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/samples_fg_min3_part2_1.rds")
-output.list = foreach(j=199:232,
-											.export=c("run_scenarios","params","run_MCMC"),
+output.list = foreach(j=199:264,
 											.errorhandling = 'pass') %dopar% {
 	run_scenarios(j)
+	return()										
 }
-saveRDS(output.list, out.path)
-
-
-
-out.path <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/samples_fg_min3_part2_2.rds")
-output.list = foreach(j=233:264, 
-											#.export=c("run_scenarios","params","run_MCMC"), 
-											.errorhandling = 'pass') %dopar% {
-												run_scenarios(j)
-											}
-saveRDS(output.list, out.path)
-
-
+# saveRDS(output.list, out.path)
+# 
+# 
+# 
+# out.path <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/samples_fg_min3_part2_2.rds")
+# output.list = foreach(j=233:264, 
+# 											#.export=c("run_scenarios","params","run_MCMC"), 
+# 											.errorhandling = 'pass') %dopar% {
+# 												run_scenarios(j)
+# 											}
+# saveRDS(output.list, out.path)
+# 
+# 
 
 
 

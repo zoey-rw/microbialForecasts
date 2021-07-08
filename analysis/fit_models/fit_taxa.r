@@ -84,12 +84,20 @@ Rmodel <- nimbleModel(code = nimbleModLong,
 # Compile model
 cModel <- compileNimble(Rmodel)
 
-# Configure & compile MCMC
-myMCMC <- buildMCMC(conf = cModel, monitors = c("beta","sigma","site_effect","intercept", "rho"),
-													monitors2 = c("plot_rel"), useConjugacy = F)
-compiled <- compileNimble(myMCMC, project = cModel, resetFunctions = T)
-	
 
+
+## set options to make history accessible
+# nimbleOptions(buildInterfacesForCompiledNestedNimbleFunctions = TRUE)
+# nimbleOptions(MCMCsaveHistory = TRUE)
+
+# Configure & compile MCMC
+mcmcConf <- configureMCMC(cModel, monitors = c("beta","sigma","site_effect","intercept", "rho"),
+													monitors2 = c("plot_rel"), useConjugacy = F, control = c(scale = .1))
+myMCMC <- buildMCMC(mcmcConf)
+# myMCMC <- buildMCMC(conf = cModel, monitors = c("beta","sigma","site_effect","intercept", "rho"),
+# 													monitors2 = c("plot_rel"), useConjugacy = F)
+compiled <- compileNimble(myMCMC, project = Rmodel, resetFunctions = TRUE)
+	
 # Remove large objects due to data usage
 # rm(model.dat, d, rank.df)
 # gc()
@@ -97,6 +105,14 @@ compiled <- compileNimble(myMCMC, project = cModel, resetFunctions = T)
 # Sample from MCMC
 samples <- runMCMC(compiled, niter = iter, nburnin = burnin, 
 									 nchains = 3, samplesAsCodaMCMC = T, thin = thin)
+
+# samplerConfList <- mcmcConf$getSamplers()
+# mcmcConf$printSamplers(executionOrder = TRUE)
+# idx <- 3
+# ## Now access the history information:
+# compiled$samplerFunctions[[idx]]$getScaleHistory()
+# compiled$samplerFunctions[[idx]]$getAcceptanceHistory()
+
 samples2 <- rm.NA.mcmc(samples$samples2)
 samples <- rm.NA.mcmc(samples$samples)
 
@@ -133,8 +149,8 @@ params = data.frame(group = rep(1:n.groups, 2),
 # Create function that calls run_MCMC for each uncertainty scenario
 run_scenarios <- function(j) {
 	print(params[j,])
-	out <- run_MCMC(k = params$group[[j]], iter = 100000, burnin = 80000, thin = 5, 
-									test=T, 
+	out <- run_MCMC(k = params$group[[j]], iter = 150000, burnin = 750000, thin = 10, 
+									test=F, 
 									temporalDriverUncertainty = params$temporalDriverUncertainty[[j]], 
 									spatialDriverUncertainty = params$spatialDriverUncertainty[[j]])
 	return(out)
