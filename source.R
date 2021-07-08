@@ -3,6 +3,17 @@
 library(nimble)
 
 
+
+
+rbind.named.dfs <- function(df.list){ 
+	# solution from https://stackoverflow.com/questions/15162197/combine-rbind-data-frames-and-create-column-with-name-of-original-data-frames
+	dfs <- df.list[sapply(df.list, function(x) !is.null(dim(x)))]
+	all.out <- cbind.data.frame(do.call(rbind,dfs), 
+															name = rep(names(dfs), vapply(dfs, nrow, numeric(1))))
+	return(all.out)
+}
+
+
 interval_transform <- function(x,C = ncol(x), N = nrow(x)){
 	        out <- (x * (N - 1) + (1/C)) / N
      return(out)
@@ -85,14 +96,14 @@ initsFun <- function(constants){
 												dim = c(constants$N.plot, constants$N.spp, constants$N.date))
 	beta_init <- matrix(rep(rep(0, constants$N.beta), constants$N.spp), constants$N.spp, constants$N.beta)
 	rho_init <- rep(0, constants$N.spp)
-	sigma_init <- rep(.1, constants$N.spp)
+	sigma_init <- rep(1, constants$N.spp)
 	intercept_init <- rep(.3, constants$N.spp)
 	Ex_init <- plot_mu_init
 	mois_est <- constants$mois
 	temp_est <- constants$temp
 	pH_est <- constants$pH
 	pC_est <- constants$pC
-	sig_init <- .1
+	sig_init <- 1
 	
 	if (constants$N.spp == 1){ # For diversity models 
 		plot_mu_init <- matrix(rnorm(constants$N.plot * constants$N.date,
@@ -108,6 +119,7 @@ initsFun <- function(constants){
 			sig = sig_init,
 			beta = beta_init,
 			rho = rho_init,
+			core_sd = 1,
 			sigma = sigma_init,
 			site_effect = site_effect_init,
 			Ex = plot_mu_init,
@@ -174,7 +186,7 @@ nimbleMod_shannon <- nimbleCode({
 	
 	# Observation model (cores ~ plot means)
 	for(i in 1:N.core){
-			y[i,1] ~ dnorm(plot_mu[plot_num[i],timepoint[i]], sd = 1)
+		y[i,1] ~ dnorm(plot_mu[plot_num[i],timepoint[i]],  core_sd)
 	}
 	
 	# Process model
@@ -192,11 +204,11 @@ nimbleMod_shannon <- nimbleCode({
 				beta[4]*pC_est[p,1] +
 				beta[5]*nspp[p,t] +
 				beta[6]*rc_grass[p,t] +
-			#	beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
+				#	beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
 				site_effect[plot_site_num[p]] +
 				intercept
 			# Add process error, sigma
-			plot_mu[p,t] ~ dnorm(Ex[p,t], sd = sigma)
+			plot_mu[p,t] ~ dnorm(Ex[p,t], sigma)
 		}
 	}
 	
@@ -217,33 +229,36 @@ nimbleMod_shannon <- nimbleCode({
 		} 
 	}
 	
-	# Using 40th time point (values are constant over time)
+	# Add spatial uncertainty (values are constant over time)
 	if(spatialDriverUncertainty) {
 		for(p in 1:N.plot){
-				pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
-				pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
+			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
+			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
 		}
 	} else {
 		for(p in 1:N.plot){
-				pH_est[p,1] <- pH[p,1]
-				pC_est[p,1] <- pC[p,1]
+			pH_est[p,1] <- pH[p,1]
+			pC_est[p,1] <- pC[p,1]
 		}
 	}
 	
-	rho ~ dnorm(0, sd = 3)
-	sigma ~ dgamma(.1, .1)
-	intercept ~ dgamma(.1, .1)
+	rho ~ dnorm(0, sd = 1)
+	#core_sd ~ dinvgamma(3, .5)
+	core_sd ~ dgamma(.1, 1)
+	sigma ~ dgamma(.5, .1)
+	#	intercept ~ dgamma(.1, .1)
+	intercept ~ dnorm(0, sd = 3)
 	
 	# Priors for covariates:
 	for (n in 1:N.beta){
-		beta[n] ~ dnorm(0, sd = 3)
+		beta[n] ~ dnorm(0, sd = 1)
 	}
 	# Priors for site effects----
 	for(k in 1:N.site){
-		site_effect[k] ~ dnorm(0, sd = sig)
+		site_effect[k] ~ dnorm(0,  sig)
 	}
 	# Priors for site effect variance ----
-	sig ~ dgamma(3,1)
+	sig ~ dgamma(.5,1)
 	
 }) #end NIMBLE model.
 
