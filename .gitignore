@@ -22,3 +22,7 @@ development
 data/clean/*
 data/clean
 data/*
+
+
+# ignore figures
+figures/*

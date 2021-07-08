@@ -4,7 +4,7 @@
 iter <- 1000
 burnin <- 500
 thin <- 1
-test = F
+test = T
 group = "16S"
 temporalDriverUncertainty <- TRUE
 spatialDriverUncertainty <- TRUE
@@ -14,6 +14,7 @@ run_MCMC <- function(group = "ITS",
 														 burnin = 500,
 														 thin = 1,
 														 test = F,
+										 n.chains = 3,
 														 out.path = "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_samples_min5.rds",
 														 temporalDriverUncertainty = TRUE,
 														 spatialDriverUncertainty = TRUE,
@@ -79,12 +80,22 @@ run_MCMC <- function(group = "ITS",
 												inits = initsFun(constants))
 	cModel <- compileNimble(Rmodel)
 	
+	
+	nimbleOptions(buildInterfacesForCompiledNestedNimbleFunctions = TRUE)
+	nimbleOptions(MCMCsaveHistory = TRUE)
+	
+	
 	# Configure & compile MCMC
-	myMCMC <- buildMCMC(cModel,monitors = c("beta","sigma","site_effect","intercept","rho"),
-											 monitors2 = c("plot_mu"), useConjugacy = F, 
-											 control = list(#scale = 1, adaptInterval=50, 
-											 							 adaptive=F))
-	compiled <- compileNimble(myMCMC, project = cModel, resetFunctions = T)
+	mcmcConf <- configureMCMC(cModel, monitors = c("beta","sigma","site_effect","intercept", "rho"),
+														monitors2 = c("plot_mu"), useConjugacy = F, control = c(
+															adaptInterval=50, 
+															# adaptFactorExponent= .5, 
+															# scale = .5, 
+															multivariateNodesAsScalars = T
+															))
+	myMCMC <- buildMCMC(mcmcConf)
+	compiled <- compileNimble(myMCMC, project = Rmodel, resetFunctions = TRUE)
+
 	
 	
 	# Remove large objects due to data usage
@@ -92,10 +103,23 @@ run_MCMC <- function(group = "ITS",
 	# gc()
 	
 	# Run MCMC
+	iter = 20000
+	n.chains <- 5
+	burnin=0
 	samples.out <- runMCMC(compiled, niter = iter,
-												 nchains = 3, nburnin = burnin,
+												 nchains = n.chains, nburnin = burnin,
 												 samplesAsCodaMCMC = T, thin = thin)
 	
+	plot(samples.out$samples)
+	
+	mcmcConf$printSamplers("beta")
+	mcmcConf$printSamplers("site_effect")
+	
+	idx <- 1
+	scaleHist <- compiled$samplerFunctions[[idx]]$getScaleHistory()
+	acceptHist <- compiled$samplerFunctions[[idx]]$getAcceptanceHistory()
+	plot(scaleHist, acceptHist)
+	nimble:::clearCompiled(cModel)
 	# Process and summarize outputs
 	samples2 <- rm.NA.mcmc(samples.out$samples2)
 	samples <- rm.NA.mcmc(samples.out$samples)
@@ -121,7 +145,7 @@ run_MCMC <- function(group = "ITS",
 
 
 pacman::p_load(reshape2, parallel, nimble, coda, tidyverse) 
-# Read in the microbial abundance data and covariates
+
 # Create parameters to pass	
 params = data.frame(index = 1:8,
 										scenario = c("no_uncertainty_ITS", "spatial_uncertainty_ITS",
@@ -134,79 +158,75 @@ params = data.frame(index = 1:8,
 
 # Create function that calls run_MCMC for each uncertainty scenario
 run_scenarios <- function(j) {
-	out <- run_MCMC(group = params$group[[j]], iter = 150000, burnin = 100000, thin = 10, 
+	out <- run_MCMC(group = params$group[[j]], iter = 300000, burnin = 200000, thin = 10, 
 									test=F, 
 									temporalDriverUncertainty = params$temporalDriverUncertainty[[j]], 
 									spatialDriverUncertainty = params$spatialDriverUncertainty[[j]])
-	return(out)
+	saveRDS(out, paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_",params$scenario[[j]],".rds"))
+	return()
 }
 
 # Create cluster and pass it everything in the workspace
 # cl <- makeCluster(8, outfile="")
 # clusterExport(cl, ls())
-# 
-# # Run for all functional groups, in parallel (via PSOCK)
-# output.list <- parLapply(cl, 1:8, run_scenarios)
-out.path <- "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_samples_min3.rds"
 
 library(doParallel)
-cl <- makeCluster(4, type="PSOCK", outfile="")
+cl <- makeCluster(8, type="PSOCK", outfile="")
 registerDoParallel(cl)
 
 # Only running the full driver uncertainty and zero driver uncertainty
-output.list = foreach(j=c(1,4,5,8), #.export=c("run_scenarios","params","run_MCMC"), 
+#output.list = foreach(j= 1:8,
+output.list = foreach(j=c(2:4,7:8), #.export=c("run_scenarios","params","run_MCMC"),
 											.errorhandling = 'pass') %dopar% {
 	print(params[j,])
 	run_scenarios(j)
 }
-saveRDS(output.list, out.path)
-
-sample.list <- lapply(output.list, "[[", 1)
-param.summary.list <- lapply(output.list, "[[", 2)
-metadata.list <- lapply(output.list, "[[", 3)
-plot.summary.list <- lapply(output.list, "[[", 4)
-
-names(sample.list) <- params$scenario[c(1,4,5,8)]
-names(param.summary.list) <- params$scenario[c(1,4,5,8)]
-names(metadata.list) <- params$scenario[c(1,4,5,8)]
-names(plot.summary.list) <- params$scenario[c(1,4,5,8)]
-
-saveRDS(list(sample.list = sample.list,
-						 param.summary.list = param.summary.list, 
-						 metadata.list = metadata.list,
-						 plot.summary.list = plot.summary.list),
-						 				out.path)
-
-stopCluster(cl)
-
-
-
-
-# no_uncertainty_ITS <- run_MCMC(group = "ITS", iter = 1000, burnin = 500, test=F, 
-# 													 temporalDriverUncertainty = F, 
-# 													 spatialDriverUncertainty = F)
-# spatial_uncertainty_ITS <- run_MCMC(group = "ITS", iter = 1000, burnin = 500, test=F, 
-# 															 temporalDriverUncertainty = F, 
-# 															 spatialDriverUncertainty = T)
-# full_uncertainty_ITS <- run_MCMC(group = "ITS", iter = 1000, burnin = 500, test=F, 
-# 																		temporalDriverUncertainty = T, 
-# 																		spatialDriverUncertainty = T)
-# saveRDS(list(no_uncertainty_ITS = no_uncertainty_ITS,
-# 						 spatial_uncertainty_ITS = spatial_uncertainty_ITS,
-# 						 full_uncertainty_ITS = full_uncertainty_ITS),
-# 				"/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_ITS_samples_min3.rds")
+# saveRDS(output.list, out.path)
 # 
-# no_uncertainty_16S <- run_MCMC(group = "ITS", iter = 1000, burnin = 500, test=T, 
-# 															 temporalDriverUncertainty = F, 
-# 															 spatialDriverUncertainty = F)
+# sample.list <- lapply(output.list, "[[", 1)
+# param.summary.list <- lapply(output.list, "[[", 2)
+# metadata.list <- lapply(output.list, "[[", 3)
+# plot.summary.list <- lapply(output.list, "[[", 4)
 # 
-# spatial_uncertainty_16S <- run_MCMC(group = "ITS", iter = 1000, burnin = 500, test=T, 
-# 																		temporalDriverUncertainty = F, 
-# 																		spatialDriverUncertainty = T)
-# full_uncertainty_16S <- run_MCMC(group = "ITS", iter = 1000, burnin = 500, test=T, 
-# 																 temporalDriverUncertainty = T, 
-# 																 spatialDriverUncertainty = T)
+# # For only two scenarios
+# # names(sample.list) <- params$scenario[c(1,4,5,8)]
+# # names(param.summary.list) <- params$scenario[c(1,4,5,8)]
+# # names(metadata.list) <- params$scenario[c(1,4,5,8)]
+# # names(plot.summary.list) <- params$scenario[c(1,4,5,8)]
+# names(sample.list) <- params$scenario
+# names(param.summary.list) <- params$scenario
+# names(metadata.list) <- params$scenario
+# names(plot.summary.list) <- params$scenario
+# 
+# saveRDS(list(sample.list = sample.list,
+# 						 param.summary.list = param.summary.list,
+# 						 metadata.list = metadata.list,
+# 						 plot.summary.list = plot.summary.list),
+# 						 				out.path)
+# 
+# stopCluster(cl)
 
 
+
+
+
+# Multichain version for just the full uncertainty scenarios
+
+# out.path <- "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_samples_multichain.rds"
+# 
+# library(doParallel)
+# cl <- makeCluster(8, type="PSOCK", outfile="")
+# registerDoParallel(cl)
+# 
+# # Only running the full driver uncertainty and zero driver uncertainty
+# output.list = foreach(j= c(rep(4, 4), rep(8,4)),
+# 											#output.list = foreach(j=c(1,4,5,8), #.export=c("run_scenarios","params","run_MCMC"),
+# 											.errorhandling = 'pass') %dopar% {
+# 												print(params[j,])
+# 												out <- run_scenarios(j)
+# 												saveRDS(out, out.path)
+# 												
+# 											}
+# saveRDS(output.list, out.path)
 
 
