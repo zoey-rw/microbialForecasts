@@ -1,22 +1,26 @@
 
 ## Overview
 
-This analysis uses state-space hierarchical models to explore spatio-temporal trends in the diversity and relative abundances of soil microbes. Dozens of microbial groups are modeled at the plot level, with hundreds of plots located within dozens of NEON sites across the United States. 
+This analysis uses state-space hierarchical models to explore spatio-temporal variation across the soil microbiomes of the United States. Model/forecast types:
+- Relative abundance (taxonomic groups)
+- Relative abundance (functional groups)
+- Shannon diversity 
+
+Models are constructed separately for fungi (ITS sequences) and for bacteria (16S sequences). Response variables are modeled at the plot (20m x 20m) level, with three soil cores taken as replicates. ~2000 soil cores come from 18 sites across the United States (NEON), each site sampled multiple times per year.
 
 ## Main directories:
-
 
 ### data_construction
 Scripts for downloading and preparing covariate and microbial data from NEON and other sources.
 
 ### analysis
-Scripts for fitting and analyzing Bayesian state-space models in the NIMBLE language. Code for phylogenetic analysis of bacterial genera is in "phylogeny/".
+Scripts for fitting and analyzing Bayesian state-space models in the NIMBLE language. 
 
 ### shinyapp/ 
-For visualizing forecasts of specific microbial forecasts, parameter estimates, and model convergence diagnostics.
+For visualizing forecasts of specific microbial forecasts, parameter estimates, and model convergence diagnostics. (never finished debugging this, sorry)
 
 ### figures/
-Output folder for all figures.
+Output folder for some figures but not many
 
 ### data/ 
-Contains reference data, raw data, model_outputs, and model inputs ("clean/"). Raw data and model outputs are not pushed to GitHub.
+Reference data, raw data, model_outputs, and model inputs ("clean/"). Raw data and model outputs are not pushed to GitHub.
