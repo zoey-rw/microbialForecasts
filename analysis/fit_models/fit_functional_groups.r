@@ -23,37 +23,30 @@ run_MCMC <- function(k = 17,
 														 test = F,
 														 temporalDriverUncertainty = TRUE,
 														 spatialDriverUncertainty = TRUE,
+														scenario = NULL,
 														 ...) {
 	pacman::p_load(reshape2, parallel, nimble, coda, tidyverse) 
-	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepDirichletData.r")
+	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepFunctionalData.r")
 	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 	
-	# Set model run parameters 
-	# iter <- 200
-	# burnin <- 100
-	# thin <- 1
-
 	# Read in microbial abundances
 	d <- c(readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_16S_2021.rds"), 
 				 readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS_2021.rds"))
 	
-	# Only keep functional groups
+	# Only keep functional groups; subset to one rank.
 	ranks.keep <- names(d)
 	ranks.keep <- ranks.keep[!grepl("bac|fun$", ranks.keep)]
-	
-	# Subset to one rank.
 	rank.name <- ranks.keep[k]
 	rank.df <- d[[rank.name]] 
 	
 	# Reduce size for testing
 	if (test == T) {
 		rank.df <- rank.df %>% arrange(siteID, plotID, dateID)
-		
 		rank.df = rank.df[1:500,]
 	}
 	
 	# Prep model inputs/outputs.
-	model.dat <- prepModelData(rank.df = rank.df, min.prev = 3)
+	model.dat <- prepFunctionalData(rank.df = rank.df, min.prev = 3)
 
 	# create data object
 	constants <- list(N.plot =  length(unique(model.dat$plotID)), 
@@ -79,30 +72,35 @@ run_MCMC <- function(k = 17,
 										plot_start = model.dat[["plot_start"]],
 										plot_index = model.dat[["plot_index"]],
 										site_start = model.dat[["site_start"]],
-										N.beta = 6,
-										alpha0 =  rep(0, ncol(model.dat$y)))
+										N.beta = 6)
 	truth <- model.dat$truth.plot.long # for output.
-
+	
+	initsList <- initsFun(constants)
+	initsList$beta <- initsList$beta[1,]
+	initsList$rho <- initsList$rho[1]
+	initsList$plot_mu <-  matrix(rep(.55, constants$N.plot*constants$N.date), constants$N.plot, constants$N.date)
+	initsList$Ex <-  matrix(rep(.55, constants$N.plot*constants$N.date), constants$N.plot, constants$N.date)
+	initsList$sigma <- .1
+	initsList$core_sd <- .1
+	initsList$site_effect <- rep(.1, constants$N.site)
+	
+	
 	## Configure & compile model
-	Rmodel <- nimbleModel(code = nimbleModLong, 
+	Rmodel <- nimbleModel(code = nimbleModFunctional, 
 												constants = constants, 
 												data = list(y=model.dat$y), 
-												inits = initsFun(constants)) # Set initial values using function
-	cModel <- compileNimble(Rmodel)
+												inits = initsList) # Set initial values using function
 	
+#	Rmodel$checkConjugacy()
+	cModel <- compileNimble(Rmodel)
 	# Configure & compile MCMC
-	myMCMC <- buildMCMC(conf = cModel, monitors = c("beta","sigma","rho",
-																									"site_effect","intercept"),
-											monitors2 = c("plot_rel"), useConjugacy = F,
-											control = list(scale=.1))
+	myMCMC <- buildMCMC(conf = cModel, monitors = c("beta","sigma","rho","sig",
+																									"site_effect"), monitors2 = c("plot_mu"))
 	compiled <- compileNimble(myMCMC, project = cModel, resetFunctions = T)
 
-	
 	# Remove large objects due to data usage
-	rm(model.dat, d, prepModelData, rank.df)
-	gc()
-
-	
+	# rm(model.dat, d, prepModelData, rank.df); gc()
+	 
 	# Sample from MCMC
 	samples <- runMCMC(compiled, niter = iter, nburnin = burnin, 
 										 nchains = 3, samplesAsCodaMCMC = T, thin = thin)
@@ -121,11 +119,8 @@ run_MCMC <- function(k = 17,
 							param_summary = param_summary, 
 							metadata = metadata, 
 							plot_summary = plot_summary)
-	
-	out.path <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/samples_", rank.name, "_min3_10tax.rds")
+	out.path <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/samples_", rank.name, "_", scenario,".rds")
 	saveRDS(out, out.path)
-	
-	
 	return(out)
 }
 
@@ -154,16 +149,14 @@ params = data.frame(group = rep(1:n.groups, 4),
 # Create function that calls run_MCMC for each uncertainty scenario
 run_scenarios <- function(j) {
 	print(params[j,])
-	out <- run_MCMC(k = params$group[[j]], iter = 275000, burnin = 200000, thin = 10, 
+	out <- run_MCMC(k = params$group[[j]], iter = 60000, burnin = 20000, thin = 3, 
 									test=F, 
 									temporalDriverUncertainty = params$temporalDriverUncertainty[[j]], 
-									spatialDriverUncertainty = params$spatialDriverUncertainty[[j]])
+									spatialDriverUncertainty = params$spatialDriverUncertainty[[j]], 
+									scenario = params$scenario[[j]])
 	return(out)
 }
 
-# Create cluster and pass it everything in the workspace
-# cl <- makeCluster(24, outfile="")
-# clusterExport(cl, ls())
 
 #### First two secnarios
 # out.path <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/samples_fg_min3_part1.rds")
@@ -176,16 +169,31 @@ run_scenarios <- function(j) {
 # # Run for all functional groups, in parallel (via PSOCK)
 # output.list <- parLapply(cl, c(133:264), run_scenarios)
 # saveRDS(output.list, out.path)
-# 
+
 
 library(doParallel)
-cl <- makeCluster(36, type="PSOCK", outfile="")
+cl <- makeCluster(12, type="PSOCK", outfile="")
+#cl <- makeCluster(8, type="PSOCK", outfile="")
 registerDoParallel(cl)
 
+#output.list <- run_scenarios(200)
+
+
+d <- c(readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_16S_2021.rds"), 
+			 readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS_2021.rds"))
+ranks.keep <- names(d)
+ranks.keep <- ranks.keep[!grepl("bac|fun$", ranks.keep)]
+
+params <- cbind(params, ranks = rep(ranks.keep, 4))
+
+# get missing scenarios for re-running
+missing_scenarios <- read.csv("missing_scenarios.csv")
+params$specific <- paste(params$ranks, params$scenario)
+missing_scenarios$specific <- paste(missing_scenarios$scenario, missing_scenarios$rank.name)
+to_rerun <- params[params$specific %in% missing_scenarios$specific,]$group
 
 # #### Latter two scenarios
-out.path <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/samples_fg_min3_part2_1.rds")
-output.list = foreach(j=199:264,
+output.list = foreach(j=to_rerun,
 											.errorhandling = 'pass') %dopar% {
 	run_scenarios(j)
 	return()										
