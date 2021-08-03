@@ -1,11 +1,11 @@
 # Running shannon diversity model with different NA values
-
+# 
 
 iter <- 1000
 burnin <- 500
 thin <- 1
-test = T
-group = "16S"
+test = F
+group = "ITS"
 temporalDriverUncertainty <- TRUE
 spatialDriverUncertainty <- TRUE
 
@@ -14,36 +14,26 @@ run_MCMC <- function(group = "ITS",
 														 burnin = 500,
 														 thin = 1,
 														 test = F,
-										 n.chains = 3,
-														 out.path = "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_samples_min5.rds",
+															n.chains = 3,
 														 temporalDriverUncertainty = TRUE,
-														 spatialDriverUncertainty = TRUE,
-										 scenario = NULL,
-										 ...
-														 ) {
-
-	
+														 spatialDriverUncertainty = TRUE) {
 	pacman::p_load(reshape2, parallel, lubridate, nimble, coda, tidyverse) 
-	
 	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepDiversityData.r")
+	 
 	
-	if (group == "ITS"){
-		div_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S.rds")
-	} else if (group == "16S") {
-			div_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds")
-	}
+	div_in = switch(group,
+									"ITS" = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds"),
+									"16S" = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S.rds"))
 	
 	rank.df = div_in$cal
-	
+	rank.df$Shannon <- scale(rank.df$Shannon, scale = F)
 	if (test == T) {
 	rank.df = rank.df[1:500,]
 	}
 	
 	# Custom function for organizing model data.
 	model.dat <- prepDivData(rank.df = rank.df, min.prev = 3)
-	
-	# mo <- month(as.Date(paste0(colnames(model.dat$mois), "01"), format="%Y%m%d"))
 	constants <- list(N.plot =  length(unique(model.dat$plotID)), 
 										N.spp = ncol(model.dat$y), 
 										N.core = nrow(model.dat$y), 
@@ -67,64 +57,43 @@ run_MCMC <- function(group = "ITS",
 										plot_start = model.dat[["plot_start"]],
 										plot_index = model.dat[["plot_index"]],
 										site_start = model.dat[["site_start"]],
-										
 										N.beta = 6)
-										# y_sin = scale(sin((2*pi*mo)/12), center = F), # specific to diversity models
-										# y_cos = scale(cos((2*pi*mo)/12), center = F), # specific to diversity models
-										# N.beta = 8)
 	truth <- model.dat$truth.plot.long # for output.
 	
 	# Configure & compile model
-	Rmodel <- nimbleModel(code = nimbleMod_shannon,
+	Rmodel <- nimbleModel(code = nimbleMod_shannon_nolog,
 												constants = constants, data = list(y=model.dat$y),
 												inits = initsFun(constants))
 	cModel <- compileNimble(Rmodel)
 	
-	
-	nimbleOptions(buildInterfacesForCompiledNestedNimbleFunctions = TRUE)
-	nimbleOptions(MCMCsaveHistory = TRUE)
-	
+	# nimbleOptions(buildInterfacesForCompiledNestedNimbleFunctions = TRUE)
+	# nimbleOptions(MCMCsaveHistory = TRUE)
+	nimbleOptions(multivariateNodesAsScalars = TRUE)
 	
 	# Configure & compile MCMC
-	mcmcConf <- configureMCMC(cModel, monitors = c("beta","sigma","site_effect","intercept", "rho"),
-														monitors2 = c("plot_mu"), useConjugacy = F, control = c(
-															adaptInterval=50, 
-															# adaptFactorExponent= .5, 
-															# scale = .5, 
-															multivariateNodesAsScalars = T
-															))
+	mcmcConf <- configureMCMC(cModel, monitors = c("beta","sigma","site_effect",#"intercept", 
+																								 "rho","sig","core_sd"),
+														monitors2 = c("plot_mu"))
 	myMCMC <- buildMCMC(mcmcConf)
 	compiled <- compileNimble(myMCMC, project = Rmodel, resetFunctions = TRUE)
-
-	
 	
 	# Remove large objects due to data usage
-	# rm(model.dat, div_in, rank.df)
-	# gc()
+	# rm(model.dat, div_in, rank.df); gc()
 	
-	# Run MCMC
-	iter = 20000
-	n.chains <- 5
-	burnin=0
 	samples.out <- runMCMC(compiled, niter = iter,
 												 nchains = n.chains, nburnin = burnin,
 												 samplesAsCodaMCMC = T, thin = thin)
-	
-	plot(samples.out$samples)
-	
-	mcmcConf$printSamplers("beta")
-	mcmcConf$printSamplers("site_effect")
-	
-	idx <- 1
-	scaleHist <- compiled$samplerFunctions[[idx]]$getScaleHistory()
-	acceptHist <- compiled$samplerFunctions[[idx]]$getAcceptanceHistory()
-	plot(scaleHist, acceptHist)
-	nimble:::clearCompiled(cModel)
+	# plot(samples.out$samples)
+	# mcmcConf$printSamplers("beta")
+	# mcmcConf$printSamplers("site_effect")
+	# idx <- 1
+	# scaleHist <- compiled$samplerFunctions[[idx]]$getScaleHistory()
+	# acceptHist <- compiled$samplerFunctions[[idx]]$getAcceptanceHistory()
+	# nimble:::clearCompiled(cModel)
 	# Process and summarize outputs
 	samples2 <- rm.NA.mcmc(samples.out$samples2)
 	samples <- rm.NA.mcmc(samples.out$samples)
-	
-	plot(samples)
+	# plot(samples)
 	param_summary <- summary(samples)
 	plot_summary <- summary(samples2)
 
@@ -132,8 +101,7 @@ run_MCMC <- function(group = "ITS",
 	metadata <- list(niter = iter,
 									 nburnin = burnin,
 									 thin = thin,
-									 model_data = truth,
-									 forecast_issue_time = Sys.Date())
+									 model_data = truth)
 	
 	cat(paste0("Diversity model fit for run: ", group)) 
 	out <- list(samples = samples, 
@@ -158,11 +126,11 @@ params = data.frame(index = 1:8,
 
 # Create function that calls run_MCMC for each uncertainty scenario
 run_scenarios <- function(j) {
-	out <- run_MCMC(group = params$group[[j]], iter = 300000, burnin = 200000, thin = 10, 
+	out <- run_MCMC(group = params$group[[j]], iter = 150000, burnin = 50000, thin = 5, 
 									test=F, 
 									temporalDriverUncertainty = params$temporalDriverUncertainty[[j]], 
 									spatialDriverUncertainty = params$spatialDriverUncertainty[[j]])
-	saveRDS(out, paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_",params$scenario[[j]],".rds"))
+	saveRDS(out, paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_",params$scenario[[j]],".rds"))
 	return()
 }
 
@@ -171,12 +139,17 @@ run_scenarios <- function(j) {
 # clusterExport(cl, ls())
 
 library(doParallel)
-cl <- makeCluster(8, type="PSOCK", outfile="")
+# cl <- makeCluster(8, type="PSOCK", outfile="")
+# cl <- makeCluster(4, type="PSOCK", outfile="")
+cl <- makeCluster(2, type="PSOCK", outfile="")
 registerDoParallel(cl)
 
 # Only running the full driver uncertainty and zero driver uncertainty
-#output.list = foreach(j= 1:8,
-output.list = foreach(j=c(2:4,7:8), #.export=c("run_scenarios","params","run_MCMC"),
+# output.list = foreach(j= c(3,4,5,6),
+output.list = foreach(j= c(7:8),
+											
+#output.list = foreach(j= c(1:8),
+											#output.list = foreach(j=c(4), #.export=c("run_scenarios","params","run_MCMC"),
 											.errorhandling = 'pass') %dopar% {
 	print(params[j,])
 	run_scenarios(j)
@@ -220,7 +193,7 @@ output.list = foreach(j=c(2:4,7:8), #.export=c("run_scenarios","params","run_MCM
 # 
 # # Only running the full driver uncertainty and zero driver uncertainty
 # output.list = foreach(j= c(rep(4, 4), rep(8,4)),
-# 											#output.list = foreach(j=c(1,4,5,8), #.export=c("run_scenarios","params","run_MCMC"),
+# 											#output.list = foreach(j=c(1,4,8), #.export=c("run_scenarios","params","run_MCMC"),
 # 											.errorhandling = 'pass') %dopar% {
 # 												print(params[j,])
 # 												out <- run_scenarios(j)

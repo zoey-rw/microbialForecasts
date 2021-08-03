@@ -1,30 +1,23 @@
 # Running dirichlet regression on 5 taxonomic ranks for soil fungi and bacteria
 
 # For testing
-iter <- 1000
-burnin <- 500
+iter <- 5000
+burnin <- 2000
 thin <- 1
 test = T
 k = 1
 temporalDriverUncertainty <- TRUE
 spatialDriverUncertainty <- TRUE
+scenario <- "full_uncertainty"
 
-run_MCMC <- function(k = 17, 	
-										 iter = 1000,
-										 burnin = 500,
-										 thin = 1,
+run_MCMC <- function(k = 17, iter = 1000,  burnin = 500, thin = 1,
 										 test = F,
-										 temporalDriverUncertainty = TRUE,
-										 spatialDriverUncertainty = TRUE,
+										 temporalDriverUncertainty = TRUE, spatialDriverUncertainty = TRUE,
+										 scenario=NULL,
 										 ...) {
 	pacman::p_load(reshape2, parallel, nimble, coda, tidyverse) 
-	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepDirichletData.r")
+	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepTaxonomicData.r")
 	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
-	
-	# Set model run parameters 
-	# iter <- 200
-	# burnin <- 100
-	# thin <- 1
 	
 	# Read in microbial data
 	d <- c(readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_16S_2021.rds"), 
@@ -35,8 +28,6 @@ run_MCMC <- function(k = 17,
 									"phylum_fun", "class_fun", "order_fun", "family_fun", "genus_fun")
 	rank.name <- ranks.keep[k]
 	rank.df <- d[[rank.name]] 
-
-	
 	
 	# Reduce size for testing
 	if (test == T) {
@@ -46,8 +37,8 @@ run_MCMC <- function(k = 17,
 	
 	# Prep model inputs/outputs.
 	print(paste0("Preparing model data for ", rank.name))
-	model.dat <- prepModelData(rank.df = rank.df, min.prev = 3)
-	out.path <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/samples_", rank.name, "_min3_10tax.rds")
+	model.dat <- prepTaxonomicData(rank.df = rank.df, min.prev = 3)
+	out.path <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/samples_", rank.name, "_", scenario, ".rds")
 	print(paste0("Completed model data for ", rank.name))
 
 constants <- list(N.plot =  length(unique(model.dat$plotID)), 
@@ -83,36 +74,22 @@ Rmodel <- nimbleModel(code = nimbleModLong,
 											inits = initsFun(constants))
 # Compile model
 cModel <- compileNimble(Rmodel)
-
-
-
-## set options to make history accessible
-# nimbleOptions(buildInterfacesForCompiledNestedNimbleFunctions = TRUE)
-# nimbleOptions(MCMCsaveHistory = TRUE)
-
 # Configure & compile MCMC
 mcmcConf <- configureMCMC(cModel, monitors = c("beta","sigma","site_effect","intercept", "rho"),
-													monitors2 = c("plot_rel"), useConjugacy = F, control = c(scale = .1))
+													monitors2 = c("plot_rel"), useConjugacy = T#, control = c(scale = .1)
+													)
+mcmcConf$removeSamplers(c('site_effect'))
+mcmcConf$addSampler(target = c('site_effect'), type = 'AF_slice')
 myMCMC <- buildMCMC(mcmcConf)
 # myMCMC <- buildMCMC(conf = cModel, monitors = c("beta","sigma","site_effect","intercept", "rho"),
 # 													monitors2 = c("plot_rel"), useConjugacy = F)
 compiled <- compileNimble(myMCMC, project = Rmodel, resetFunctions = TRUE)
-	
 # Remove large objects due to data usage
-# rm(model.dat, d, rank.df)
-# gc()
+ rm(model.dat, d, rank.df); gc()
 
 # Sample from MCMC
 samples <- runMCMC(compiled, niter = iter, nburnin = burnin, 
 									 nchains = 3, samplesAsCodaMCMC = T, thin = thin)
-
-# samplerConfList <- mcmcConf$getSamplers()
-# mcmcConf$printSamplers(executionOrder = TRUE)
-# idx <- 3
-# ## Now access the history information:
-# compiled$samplerFunctions[[idx]]$getScaleHistory()
-# compiled$samplerFunctions[[idx]]$getAcceptanceHistory()
-
 samples2 <- rm.NA.mcmc(samples$samples2)
 samples <- rm.NA.mcmc(samples$samples)
 
@@ -121,13 +98,14 @@ param_summary <- summary(samples)
 plot_summary <- summary(samples2)
 metadata <- c("niter" = iter,
 						 "nburnin" = burnin,
-						 "thin" = thin,
+						 "thin" = thin, "scenario" = scenario,
 						 "model_data" = truth)
 out <- list(samples = samples, 
 						param_summary = param_summary, 
 						metadata = metadata, 
 						plot_summary = plot_summary)
 saveRDS(out, out.path)
+print(paste0("Saved ", rank.name, " to ", out.path))
 return(out)
 }
 
@@ -149,19 +127,20 @@ params = data.frame(group = rep(1:n.groups, 2),
 # Create function that calls run_MCMC for each uncertainty scenario
 run_scenarios <- function(j) {
 	print(params[j,])
-	out <- run_MCMC(k = params$group[[j]], iter = 150000, burnin = 750000, thin = 10, 
+	out <- run_MCMC(k = params$group[[j]], iter = 3000, burnin = 1000, thin = 5, 
 									test=F, 
 									temporalDriverUncertainty = params$temporalDriverUncertainty[[j]], 
-									spatialDriverUncertainty = params$spatialDriverUncertainty[[j]])
+									spatialDriverUncertainty = params$spatialDriverUncertainty[[j]],
+									scenario = params$scenario[[j]])
 	return(out)
 }
 
 
-cl <- makeCluster(10, type="PSOCK", outfile="")
+cl <- makeCluster(2, type="PSOCK", outfile="")
 registerDoParallel(cl)
 
 # Run for all 10 taxonomic ranks, in parallel (via PSOCK)
-output.list = foreach(j=11:20,
+output.list = foreach(j=13:20,
 											#.export=c("run_scenarios","params","run_MCMC"), 
 											.errorhandling = 'pass') %dopar% {
 												run_scenarios(j)
