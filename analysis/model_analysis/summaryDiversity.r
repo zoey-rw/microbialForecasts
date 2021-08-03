@@ -7,10 +7,46 @@ library(dplyr)
 library(tibble)
 
 # # Read in samples for visualization
-read_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_samples_min3.rds")
+# read_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_samples_min3.rds")
+
+read_in <- list()
+read_in[[1]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_no_uncertainty_ITS.rds")
+read_in[[2]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_spatial_uncertainty_ITS.rds")
+read_in[[3]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_temporal_uncertainty_ITS.rds")
+read_in[[4]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_full_uncertainty_ITS.rds")
+read_in[[5]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_no_uncertainty_16S.rds")
+read_in[[6]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_spatial_uncertainty_16S.rds")
+read_in[[7]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_temporal_uncertainty_16S.rds")
+read_in[[8]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_full_uncertainty_16S.rds")
+names(read_in) <- c("no_uncertainty_ITS", "spatial_uncertainty_ITS", "temporal_uncertainty_ITS", 
+										"full_uncertainty_ITS", "no_uncertainty_16S", "spatial_uncertainty_16S", 
+										"temporal_uncertainty_16S", "full_uncertainty_16S")
+read_in$sample.list <- lapply(read_in, "[[", 1)
+read_in$param.summary.list <- lapply(read_in, "[[", 2)
+read_in$metadata.list <- lapply(read_in, "[[", 3)
+read_in$plot.summary.list <- lapply(read_in, "[[", 4)
+# names(read_in$sample.list) <- params$scenario
+# names(read_in$param.summary.list) <- params$scenario
+# names(read_in$metadata.list) <- params$scenario
+# names(read_in$plot.summary.list) <- params$scenario
+
+
+
+# Create parameters to pass	
+params = data.frame(index = 1:8,
+										scenario = c("no_uncertainty_ITS", "spatial_uncertainty_ITS",
+																 "temporal_uncertainty_ITS", "full_uncertainty_ITS",
+																 "no_uncertainty_16S", "spatial_uncertainty_16S",
+																 "temporal_uncertainty_16S", "full_uncertainty_16S"),
+										group = c(rep("ITS", 4),rep("16S", 4)),
+										temporalDriverUncertainty = c(F, F, T, T, F, F, T, T),
+										spatialDriverUncertainty = c(F, T, F, T, F, T, F, T))
 
 plot_est_df_all <- list()
 summary_df_all <- list()
+gelman_list <- list()
+allplots.scores.list <- list()
+
 for (scenario in names(read_in$sample.list)){
 	
 	cat(paste0("\nSummarizing ", scenario, "..."))
@@ -31,8 +67,19 @@ for (scenario in names(read_in$sample.list)){
 		mutate(dates = as.Date(paste0(dateID, "01"), "%Y%m%d"),
 					 timepoint = as.integer(timepoint))
 	allplots <- merge(truth.plot.long, pred.plot, by = c("plot_num","timepoint"), all=T)
+	allplots$scenario <- scenario
+	plot_est_df_all[[scenario]] <- allplots
 	
-	means <- param_summary[[2]]
+	
+	pred.plot.scores <- plot_summary[[1]] %>% as.data.frame() %>%  rownames_to_column() %>%
+		separate(rowname, sep=", ", into=c("plot_num","timepoint")) %>%
+		mutate(plot_num = as.integer(gsub("plot_mu\\[", "", plot_num)),
+					 timepoint = as.integer(gsub("\\]", "", timepoint)))
+	allplots.scores <- merge(truth.plot.long, pred.plot.scores, by = c("plot_num","timepoint"), all=T)
+	allplots.scores$scenario <- scenario
+	allplots.scores.list[[scenario]] <- allplots.scores
+
+		means <- param_summary[[2]]
 	beta_out <- means[grep("beta", rownames(means)),]
 	rho_out <- means[grep("rho", rownames(means)),,drop=F] %>% as.data.frame() %>% 
 		rownames_to_column("rowname") %>% mutate(beta = "rho")
@@ -72,18 +119,29 @@ for (scenario in names(read_in$sample.list)){
 	summary_df$scenario <- scenario
 	summary_df_all[[scenario]] <- summary_df
 	
-	allplots$scenario <- scenario
-	plot_est_df_all[[scenario]] <- allplots
+
+	## Calculate gelman diagnostics to assess convergence
+	gd <- gelman.diag(samples, multivariate = FALSE)
+	gelman_list[[scenario]] <- gd
 }
 
-plot_est_df_all <- do.call(rbind, plot_est_df_all)
+plot_est_df_all <- plyr::rbind.fill(plot_est_df_all)
+plot_est_df_all <- plot_est_df_all %>% tidyr::separate(scenario, sep = "_", into = c("uncert1", "uncert2", "group"))
+plot_est_df_all$scenario <- paste(plot_est_df_all$uncert1, plot_est_df_all$uncert2)
+
+scores.list <- plyr::rbind.fill(allplots.scores.list)
+scores.list <- scores.list %>% tidyr::separate(scenario, sep = "_", into = c("uncert1", "uncert2", "group"))
+scores.list$scenario <- paste(scores.list$uncert1, scores.list$uncert2)
+
 summary_df_all <- do.call(rbind, summary_df_all)
 summary_df_all <- summary_df_all %>% tidyr::separate(scenario, sep = "_", into = c("uncert1", "uncert2", "group"))
 summary_df_all$scenario <- paste(summary_df_all$uncert1, summary_df_all$uncert2)
 
 saveRDS(list(plot_est = plot_est_df_all,
 						 summary_df = summary_df_all,
-						 samples = read_in$sample.list),
+						 samples = read_in$sample.list,
+						 gelman_list = gelman_list,
+						 scores.list = scores.list),
 				"/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_summaries.rds")
 
 
@@ -110,6 +168,85 @@ ggplot(data=beta_out,
 		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
 	) + scale_shape_manual(values = c(21, 16), name = NULL, 
 												 labels = c("Not significant","Significant")) 
+
+# Only full-uncertainty scenario
+ggplot(data=beta_out[beta_out$scenario=="full uncertainty",],
+			 aes(x = reorder(beta, effSize),y = effSize)) +
+	facet_grid(rows = vars(group), drop = T) +
+	geom_point(aes(shape = as.factor(significant), color = beta), size = 4) +
+	labs(col = "Parameter", title = "Absolute effect size") + 
+	xlab("Parameter")+ 
+	ylab(NULL) +
+	theme_bw() + theme(#axis.ticks.x=element_blank(),
+		text = element_text(size = 16),
+		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
+			angle = 320, vjust=1, hjust = -0.05),
+		axis.title=element_text(size=22,face="bold")
+		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
+	) + scale_shape_manual(values = c(21, 16), name = NULL, 
+												 labels = c("Not significant","Significant")) 
+
+
+## Violin plots of parameter estimates
+samps <- read_in$sample.list$full_uncertainty_ITS
+samps <- do.call(rbind.data.frame, samps[,grep("beta|rho", colnames(samps[[1]]))])
+samps_long <- samps %>% rownames_to_column("rowname") %>% pivot_longer(2:8)
+
+samps_long <- samps_long %>% 
+	mutate(beta_num = as.numeric(gsub("beta\\[|\\]", "", name))) %>% 
+	mutate(beta = recode(beta_num,
+											 "1" = "Temperature",
+											 "2" = "Moisture",
+											 "3" = "pH",
+											 "4" = "pC",
+											 "5" = "Plant species richness",
+											 "6" = "% grasses",
+											 .missing = "Autocorrelation"))
+ggplot(data=samps_long,
+			 aes(x = reorder(beta, value),y = value)) +
+	geom_violin(aes(fill = beta), trim=FALSE) + 
+	ylab("Effect size") + 
+	xlab("Parameter")+ ggtitle("Drivers of Shannon evenness of soil fungi") + theme_minimal(base_size = 16) + geom_hline(aes(yintercept=0), linetype=2) + 
+	theme(
+		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
+			angle = 320, vjust=1, hjust = -0.05),
+		axis.title=element_text(size=18,face="bold")
+	) 
+
+# Without rho
+ggplot(data=samps_long[samps_long$beta != "Autocorrelation",],
+			 aes(x = reorder(beta, value),y = value)) +
+	geom_violin(aes(fill = beta), trim=FALSE) + 
+	ylab("Effect size") + 
+	xlab("Parameter")+ ggtitle("Drivers of Shannon evenness of soil fungi") + theme_minimal(base_size = 16) + geom_hline(aes(yintercept=0), linetype=2) + 
+	theme(
+		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
+			angle = 320, vjust=1, hjust = -0.05),
+		axis.title=element_text(size=18,face="bold")
+	) 
+
+# WITHOUT "rho", and not-absolute effects
+ggplot(data=beta_out[beta_out$scenario=="full uncertainty" & beta_out$rowname != "rho",],
+			 aes(x = reorder(beta, `50%`),y = `50%`)) +
+	facet_grid(rows = vars(group), drop = T) +
+	geom_point(aes(shape = as.factor(significant), color = beta), size = 4) +
+	labs(col = "Parameter", title = "Effect size") + 
+	xlab("Parameter")+ 
+	ylab(NULL) +
+	theme_bw() + theme(#axis.ticks.x=element_blank(),
+		text = element_text(size = 16),
+		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
+			angle = 320, vjust=1, hjust = -0.05),
+		axis.title=element_text(size=22,face="bold")
+		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
+	) + scale_shape_manual(values = c(21, 16), name = NULL, 
+												 labels = c("Not significant","Significant"))  + geom_hline(aes(yintercept = 0), linetype=3) + ylim(c(-.1, .1))
+
+
+
+
+
+
 
 # View fcast w/ confidence intervals for no and full uncertainties
 allplots <- plot_est_df_all %>% filter(scenario %in% c("no_uncertainty_ITS", "full_uncertainty_ITS","spatial_uncertainty_ITS","temporal_uncertainty_ITS"))
