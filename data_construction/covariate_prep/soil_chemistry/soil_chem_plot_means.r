@@ -138,3 +138,11 @@ p2 <- ggplot(soil.chem.out.plot[soil.chem.out.plot$siteID %in% c("BART","NIWO","
 
 library(ggpubr)
 ggarrange(p1, p2, nrow=2, labels = c("A","B"))
+
+
+
+chem_df <- dat_soil %>% select(siteID, plotID, soilInCaClpH, organicCPercent, year)
+ggplot(chem_df[chem_df$siteID %in% c("CPER"),]) + 
+	geom_point(aes(x = plotID, y = organicCPercent)) + 
+	#facet_grid(~siteID, scales = "free_x", drop = T) + 
+ theme(axis.text.x = element_text(angle = 310))
