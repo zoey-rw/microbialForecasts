@@ -1,20 +1,20 @@
 ## NOTE: removed crib_fun step because my rowSums are ending up >1 (need to fix probably)
-
+# 
 # k <- 1
 # j <- 1
 # 
-# Read in covariate data 
+# Read in covariate data
 # chem_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")
 # min.prev = 3;
 # max.date = "20200101"
 # dom_soil_horizons <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/dominantHorizonsSite.rds")
 # predictor_data <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/all_predictor_data.rds")
 
-prepDivData <- function(rank.df, 
-												max.date = "20170101",
-												predictor_data = NULL,
-													min.prev = 5,
-													dom_soil_horizons = NULL
+prepTaxonomicData <- function(rank.df, 
+															 max.date = "20170101",
+															 predictor_data = NULL,
+															 min.prev = 5,
+															 dom_soil_horizons = NULL
 ){
 	require(padr)
 	require(tibble)
@@ -44,7 +44,7 @@ prepDivData <- function(rank.df,
 	min.date <- as.Date("20130601", format = "%Y%m%d")
 	dates <- as.Date(dat$dates, format = "%Y%m%d")
 	dat <- dat[which(dates < max.date & dates > min.date),]
-#	dat <- dat[which(dates > min.date),]
+	#	dat <- dat[which(dates > min.date),]
 	dat$dates <- NULL
 	
 	# Remove horizons that aren't the dominant one for that site
@@ -178,10 +178,11 @@ prepDivData <- function(rank.df,
 	# n.core.by.date <- expanded_dat %>%  group_split(dateID) %>% 
 	# 	map(.f = ~ .x %>% nrow())
 	# 
-
-
-
-	y <- dat_subset[,c("Shannon"), drop=F]
+	
+	
+	
+	y <- dat_subset[,c(7:17), drop=F] %>% as.matrix() %>% interval_transform()
+	
 	siteID = dat_subset$siteID
 	plotID = dat_subset$plotID
 	#  plot_site <- as.factor(unique(dat_subset[,c('siteID','plotID')])$siteID)
@@ -202,7 +203,7 @@ prepDivData <- function(rank.df,
 	# By plot
 	pH 				<- predictor_data$pH %>% filter(rownames(predictor_data$pH) %in% keep_plots) %>% select(88) %>% data.matrix() 
 	pH_sd 				<- predictor_data$pH_sd %>% filter(rownames(predictor_data$pH_sd) %in% keep_plots) %>%  #data.matrix() %>% 
-	select(88)  %>% data.matrix() 
+		select(88)  %>% data.matrix() 
 	pC 				<- predictor_data$pC %>% filter(rownames(predictor_data$pC) %in% keep_plots) %>% #data.matrix() %>% 
 		select(88) %>% data.matrix() 
 	pC_sd 				<- predictor_data$pC_sd %>% filter(rownames(predictor_data$pC_sd) %in% keep_plots) %>% #data.matrix() %>% 
@@ -246,7 +247,7 @@ prepDivData <- function(rank.df,
 		mutate(plot_num = match(plotID, names(plot_start)),
 					 site_num = match(siteID, names(site_start)))
 	
-
+	
 	return(list(y = y, 
 							siteID = siteID, 
 							plotID = plotID, 
