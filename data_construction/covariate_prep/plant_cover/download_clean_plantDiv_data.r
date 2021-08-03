@@ -46,9 +46,11 @@ plant_subset <- plant_stats %>%
   mutate(siteID = substr(plotID, 1, 4)) %>% 
   mutate(year_date = as.Date(paste0(year, "-01-1"), "%Y-%m-%d"))
 
+microbe_plots <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/microbe_plot_list.rds")
 # Get all plotID x year combinations
 poss_site_dates <- plant_subset %>% tidyr::expand(nesting(siteID, year_date))
 poss_site_plots <- plant_subset %>% tidyr::expand(nesting(siteID, plotID))
+poss_site_plots <- merge(poss_site_plots, microbe_plots, all=T)
 poss_plot_dates <- merge(poss_site_dates, poss_site_plots)
 
 # Let's gap-fill the data so that a plot retains its values until a new measurement is taken.
@@ -72,16 +74,25 @@ plant_subset_fill$gap_filled <- ifelse(plant_subset_fill$real_year != plant_subs
 
 
 # let's also use site-level means to fill in plots unique to our microbial dataset (only applies for a handful)
-microbes1 <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_16S.rds")[[1]] 
-microbes2 <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS.rds")[[1]] 
-microbe_plots1 <- unique(data.frame(plotID = substr(rownames(microbes1), 1, 8),
-														siteID = substr(rownames(microbes1), 1, 4)))
-microbe_plots2 <- unique(data.frame(plotID = substr(rownames(microbes2), 1, 8),
-																		siteID = substr(rownames(microbes2), 1, 4)))
-microbe_plots <- rbind(microbe_plots1, microbe_plots2)
+# This code is super clunky and dumb but w/e
+# microbes1 <- rbind(readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_16S_2021.rds")[[1]],
+# 									 readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_16S_2021.rds")[[1]])
+# microbes2 <- rbind(readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS_2021.rds")[[1]],
+# 									 readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_ITS_2021.rds")[[1]])
+# microbes3 <- do.call(rbind.data.frame, readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S.rds")) %>% select(plotID, siteID)
+# microbes4 <- do.call(rbind.data.frame, readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds")) %>% select(plotID, siteID)
+# microbe_plots <- unique(rbind(microbes3, microbes4))
+# microbe_plots1 <- unique(data.frame(plotID = substr(rownames(microbes1), 1, 8),
+# 														siteID = substr(rownames(microbes1), 1, 4)))
+# microbe_plots2 <- unique(data.frame(plotID = substr(rownames(microbes2), 1, 8),
+# 																		siteID = substr(rownames(microbes2), 1, 4)))
+# microbe_plots <- unique(rbind(microbe_plots, microbe_plots1))
+# microbe_plots <- unique(rbind(microbe_plots, microbe_plots2))
+# saveRDS(microbe_plots, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/microbe_plot_list.rds")
 
-plant_fill_site <- merge(plant_subset_fill, microbe_plots, all=T)
-plant_fill_site <- plant_fill_site %>% group_by(siteID) %>% mutate(site_mean_nspp_total = mean(nspp_total, na.rm=T),
+
+#plant_fill_site <- merge(plant_subset_fill, microbe_plots, all=T)
+plant_fill_site <- plant_subset_fill %>% group_by(siteID) %>% mutate(site_mean_nspp_total = mean(nspp_total, na.rm=T),
 																											site_mean_rel_cover_exotic = mean(rel_cover_exotic, na.rm=T),
 																											site_mean_rc_Poaceae = mean(rc_Poaceae, na.rm=T)) %>% 
 	mutate(nspp_total = ifelse(is.na(nspp_total), site_mean_nspp_total, nspp_total),
@@ -100,6 +111,8 @@ plant_fill_site$nspp_total <- scale(plant_fill_site$nspp_total_out)
 plant_fill_site$rc_Poaceae <- scale(plant_fill_site$rc_Poaceae_out)
 plant_fill_site$rc_exotic <- scale(plant_fill_site$rc_exotic_out)
 
+
+plant_fill_site[is.na(plant_fill_site$gap_filled),]$gap_filled <- T
 saveRDS(plant_fill_site, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/annual_plant_data.rds")
 
 
