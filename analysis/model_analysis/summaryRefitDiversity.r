@@ -5,19 +5,15 @@ library(coda)
 # # Read in samples for visualization
 # read_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_samples_min3.rds")
 
+
 read_list <- list()
 read_in <- list()
-read_list[[1]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_no_uncertainty_ITS.rds")
-read_list[[2]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_spatial_uncertainty_ITS.rds")
-read_list[[3]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_temporal_uncertainty_ITS.rds")
-read_list[[4]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_full_uncertainty_ITS.rds")
-read_list[[5]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_no_uncertainty_16S.rds")
-read_list[[6]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_spatial_uncertainty_16S.rds")
-read_list[[7]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_temporal_uncertainty_16S.rds")
-read_list[[8]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_full_uncertainty_16S.rds")
-names(read_list) <- c("no_uncertainty_ITS", "spatial_uncertainty_ITS", "temporal_uncertainty_ITS", 
-										"full_uncertainty_ITS", "no_uncertainty_16S", "spatial_uncertainty_16S", 
-										"temporal_uncertainty_16S", "full_uncertainty_16S")
+read_list[[1]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/refit_nolog_div_no_uncertainty_ITS.rds")
+read_list[[2]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/refit_nolog_div_full_uncertainty_ITS.rds")
+read_list[[3]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/refit_nolog_div_no_uncertainty_16S.rds")
+read_list[[4]] <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/refit_nolog_div_full_uncertainty_16S.rds")
+names(read_list) <- c("no_uncertainty_ITS", 
+										"full_uncertainty_ITS", "no_uncertainty_16S", "full_uncertainty_16S")
 read_in$sample.list <- lapply(read_list, "[[", 1)
 read_in$param.summary.list <- lapply(read_list, "[[", 2)
 read_in$metadata.list <- lapply(read_list, "[[", 3)
@@ -39,8 +35,6 @@ summary_df_all <- list()
 gelman_list <- list()
 allplots.scores.list <- list()
 
-scenario <- "full_uncertainty_ITS"
-
 for (scenario in names(read_in$sample.list)){
 	
 	cat(paste0("\nSummarizing ", scenario, "..."))
@@ -48,14 +42,15 @@ for (scenario in names(read_in$sample.list)){
 	param_summary <- read_in$param.summary.list[[scenario]]
 	plot_summary <- read_in$plot.summary.list[[scenario]]
 	truth.plot.long <- read_in$metadata.list[[scenario]]$model_data 
-
+	
 	
 	# Calculate plot means and actual values per rank
 	plot_est <- plot_summary[[2]]
 	pred.plot <- plot_est %>% as.data.frame() %>%  rownames_to_column() %>%
 		separate(rowname, sep=", ", into=c("plot_num","timepoint")) %>%
 		mutate(plot_num = as.integer(gsub("plot_mu\\[", "", plot_num)),
-					 timepoint = as.integer(gsub("\\]", "", timepoint)))
+					 timepoint = as.integer(gsub("\\]", "", timepoint)),
+					 rank = "bacterial_richness")
 	truth.plot.long <- truth.plot.long %>% 
 		mutate(dates = as.Date(paste0(dateID, "01"), "%Y%m%d"),
 					 timepoint = as.integer(timepoint))
@@ -71,9 +66,9 @@ for (scenario in names(read_in$sample.list)){
 	allplots.scores <- merge(truth.plot.long, pred.plot.scores, by = c("plot_num","timepoint"), all=T)
 	allplots.scores$scenario <- scenario
 	allplots.scores.list[[scenario]] <- allplots.scores
-
+	
 	# Get mean values for parameters
-		means <- param_summary[[1]]
+	means <- param_summary[[1]]
 	beta_out <- means[grep("beta", rownames(means)),]
 	rho_out <- means[grep("rho", rownames(means)),,drop=F] %>% as.data.frame() %>% 
 		rownames_to_column("rowname") %>% mutate(beta = "rho")
@@ -82,6 +77,8 @@ for (scenario in names(read_in$sample.list)){
 	sigma_out <- means[grep("sigma", rownames(means)),,drop=F] %>% as.data.frame() %>% 
 		rownames_to_column("rowname")
 	sig_out <- means[grep("sig$", rownames(means)),,drop=F] %>% as.data.frame() %>% 
+		rownames_to_column("rowname")
+	core_sd_out <- means[grep("core", rownames(means)),,drop=F] %>% as.data.frame() %>% 
 		rownames_to_column("rowname")
 	
 	
@@ -113,11 +110,11 @@ for (scenario in names(read_in$sample.list)){
 		mutate(site_num = as.character(gsub("site_effect\\[|\\]", "", rowname))) %>% 
 		mutate(siteID = truth.plot.long[match(site_num, truth.plot.long$site_num),]$siteID)
 	
-	summary_df <- plyr::rbind.fill(site_eff_out, beta_out, intercept_out, sigma_out, sig_out, rho_out)
+	summary_df <- plyr::rbind.fill(site_eff_out, beta_out, intercept_out, sigma_out, sig_out, rho_out, core_sd_out)
 	summary_df$scenario <- scenario
 	summary_df_all[[scenario]] <- summary_df
 	
-
+	
 	## Calculate gelman diagnostics to assess convergence
 	gd <- gelman.diag(samples, multivariate = FALSE)
 	gelman_list[[scenario]] <- cbind(gd[[1]], effSize = effectiveSize(samples))
@@ -128,41 +125,42 @@ plot_est_df_all <- plyr::rbind.fill(plot_est_df_all) %>%
 	tidyr::separate(scenario, sep = "_", into = c("uncert1", "uncert2", "group"), remove = F) %>% 
 	mutate(uncert = paste(uncert1, uncert2, sep = "_")) %>% select(-c(uncert1, uncert2)) %>% 
 	mutate(fcast_type = "Diversity",  
-				 fcast_period = "calibration")
+				 fcast_period = "refit")
 
 scores.list <- plyr::rbind.fill(allplots.scores.list) %>% 
 	tidyr::separate(scenario, sep = "_", into = c("uncert1", "uncert2", "group"), remove = F) %>% 
 	mutate(uncert = paste(uncert1, uncert2, sep = "_")) %>% select(-c(uncert1, uncert2)) %>% 
 	mutate(fcast_type = "Diversity",  
-				 fcast_period = "calibration")
+				 fcast_period = "refit")
 
 summary_df_all <- do.call(rbind, summary_df_all) %>% 
 	tidyr::separate(scenario, sep = "_", into = c("uncert1", "uncert2", "group"), remove = F) %>% 
 	mutate(uncert = paste(uncert1, uncert2, sep = "_")) %>% select(-c(uncert1, uncert2)) %>% 
 	mutate(fcast_type = "Diversity",  
-				 fcast_period = "calibration")
-
-
+				 fcast_period = "refit")
 
 saveRDS(list(plot_est = plot_est_df_all,
 						 summary_df = summary_df_all,
 						 samples = read_in$sample.list,
 						 gelman_list = gelman_list,
 						 scores.list = scores.list),
-				"/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/div_summaries.rds")
+				"/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/refit_div_summaries.rds")
 
 
+# Copy over outputs
 sum.all <- summary_df_all
 
-data_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/div_summaries.rds")
-# ## GGPLOT
+# Or read in outputs instead
+data_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/refit_div_summaries.rds")
 sum.all <- data_in$summary_df
 
+# ## GGPLOT
+
 beta_out <- sum.all[which(!is.na(sum.all$beta)),]
-# By rank with every scenario - cluttered
+# By rank with every taxon - cluttered
 ggplot(data=beta_out,
 			 aes(x = reorder(beta, effSize),y = effSize)) +
-	facet_grid(rows = vars(group), cols = vars(scenario), drop = T) +
+	facet_grid(rows = vars(group), cols = vars(uncert), drop = T) +
 	geom_point(aes(shape = as.factor(significant), color = beta), size = 4) +
 	labs(col = "Parameter", title = "Absolute effect size") + 
 	xlab("Parameter")+ 
@@ -177,7 +175,7 @@ ggplot(data=beta_out,
 												 labels = c("Not significant","Significant")) 
 
 # Only full-uncertainty scenario
-ggplot(data=beta_out[beta_out$uncert=="full_uncertainty",],
+ggplot(data=beta_out[beta_out$scenario=="full uncertainty",],
 			 aes(x = reorder(beta, effSize),y = effSize)) +
 	facet_grid(rows = vars(group), drop = T) +
 	geom_point(aes(shape = as.factor(significant), color = beta), size = 4) +
@@ -207,23 +205,9 @@ samps_long <- samps_long %>%
 											 "3" = "pH",
 											 "4" = "pC",
 											 "5" = "Plant species richness",
-											 "6" = "Ectomycorrhizal trees",
-											 "rho" = "Autocorrelation",
+											 "6" = "% ectomycorrhizal trees",
 											 .missing = "Autocorrelation"))
 ggplot(data=samps_long,
-			 aes(x = reorder(beta, value),y = value)) +
-	geom_violin(aes(fill = beta), trim=FALSE, show.legend = F) + 
-	ylab("Effect size") + 
-	xlab("Parameter")+ ggtitle("Drivers of fungal evenness (calibration: 2013-2016)") + 
-	theme_minimal(base_size = 16) + geom_hline(aes(yintercept=0), linetype=2) + 
-	theme(
-		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
-			angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=18,face="bold")
-	) 
-
-# Without rho
-ggplot(data=samps_long[samps_long$beta != "Autocorrelation",],
 			 aes(x = reorder(beta, value),y = value)) +
 	geom_violin(aes(fill = beta), trim=FALSE) + 
 	ylab("Effect size") + 
@@ -234,107 +218,15 @@ ggplot(data=samps_long[samps_long$beta != "Autocorrelation",],
 		axis.title=element_text(size=18,face="bold")
 	) 
 
-# WITHOUT "rho", and not-absolute effects
-ggplot(data=beta_out[beta_out$scenario=="full uncertainty" & beta_out$rowname != "rho",],
-			 aes(x = reorder(beta, `50%`),y = `50%`)) +
-	facet_grid(rows = vars(group), drop = T) +
-	geom_point(aes(shape = as.factor(significant), color = beta), size = 4) +
-	labs(col = "Parameter", title = "Effect size") + 
-	xlab("Parameter")+ 
-	ylab(NULL) +
-	theme_bw() + theme(#axis.ticks.x=element_blank(),
-		text = element_text(size = 16),
+
+# Takes a long time to render...
+ggplot(data=samps_long,
+			 aes(x = reorder(beta, value),y = value)) +
+	geom_jitter(aes(color = beta), width = .2, height = 0, alpha = .3) + 
+	ylab("Effect size") + 
+	xlab("Parameter")+ ggtitle("Drivers of Shannon evenness of soil fungi") + theme_minimal(base_size = 16) + geom_hline(aes(yintercept=0), linetype=2) + 
+	theme(
 		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
 			angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=22,face="bold")
-		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
-	) + scale_shape_manual(values = c(21, 16), name = NULL, 
-												 labels = c("Not significant","Significant"))  + geom_hline(aes(yintercept = 0), linetype=3) + ylim(c(-.1, .1))
-
-
-
-
-
-
-library(hrbrthemes)
-# View fcast w/ confidence intervals for no and full uncertainties
-allplots <- plot_est_df_all %>% filter(uncert %in% c("no_uncertainty", "full_uncertainty","spatial_uncertainty","temporal_uncertainty"))
-plot_data <- allplots %>% filter(plotID == "HARV_001")
-plot_data$observed <- ifelse(is.na(plot_data$truth), "Estimated", "Observed")
-# Fcast
-ggplot(plot_data, aes(x = dates)) +
-	facet_grid(group~uncert) + 
-	geom_line(aes(y = `50%`), show.legend = F) + #facet_wrap(~species, scales = "free") +
-	#geom_ribbon(aes(ymin = `2.5%`, ymax = `97.5%`), alpha=0.2, show.legend = F) +
-	geom_ribbon(data = plot_data[plot_data$uncert == "no_uncertainty",], 
-							aes(ymin = `25%`, ymax = `75%`), fill = "lightblue", alpha=0.4, show.legend = F) +
-	geom_ribbon(data = plot_data[plot_data$uncert == "full_uncertainty",],
-							aes(ymin = `25%`, ymax = `75%`),fill = "darkblue", alpha=0.4, show.legend = F) +
-	geom_point(aes(y = as.numeric(truth))) + theme_ipsum(base_size = 14, strip_text_size = 22) + ggtitle(paste0("Shannon diversity at ", unique(plot_data$plotID))) + scale_x_date() +	scale_fill_brewer(palette = "Paired") + 
-	theme(panel.spacing = unit(0, "lines"),
-				plot.margin = unit(c(.2, .2, .2, .2), "cm")) 
-
-
-full_uncert <- plot_data %>% filter(scenario == "full_uncertainty_ITS")
-no_uncert <- plot_data %>% filter(scenario == "no_uncertainty_ITS")
-spat_uncert <- plot_data %>% filter(scenario == "spatial_uncertainty_ITS")
-temp_uncert <- plot_data %>% filter(scenario == "temporal_uncertainty_ITS")
-
-ggplot() +
-	#facet_wrap(~scenario) + 
-	geom_line(data = pred.plot1[pred.plot1$scenario == "no_uncertainty_ITS",],
-						aes(x = dates, y = `50%`), show.legend = F) + 
-	geom_line(data = pred.plot1[pred.plot1$scenario == "full_uncertainty_ITS",],
-						aes(x = dates, y = `50%`), show.legend = F) + #facet_wrap(~species, scales = "free") +
-	#geom_ribbon(aes(ymin = `2.5%`, ymax = `97.5%`), alpha=0.2, show.legend = F) +
-	geom_ribbon(data = pred.plot1[pred.plot1$scenario == "no_uncertainty_ITS",], 
-							aes(x = dates, ymin = `25%`, ymax = `75%`), fill = "lightblue", alpha=0.4, show.legend = F) +
-	geom_ribbon(data = pred.plot1[pred.plot1$scenario == "full_uncertainty_ITS",],
-							aes(x = dates, ymin = `25%`, ymax = `75%`),fill = "darkblue", alpha=0.4, show.legend = F) +
-	geom_point(data = pred.plot1[pred.plot1$scenario == "full_uncertainty_ITS",],
-						 aes(x = dates, y = as.numeric(truth))) + 
-	theme_ipsum(base_size = 14, strip_text_size = 22) + ggtitle(paste0("Shannon diversity at ", unique(pred.plot1$plotID))) + scale_x_date() +	scale_fill_brewer(palette = "Paired") + 
-	theme(panel.spacing = unit(0, "lines"),
-				plot.margin = unit(c(.2, .2, .2, .2), "cm")) 
-
-
-
-# Side by side...
-ggplot(pred.plot1, aes(x = dates)) + 
-	facet_wrap(~scenario) + 
-	geom_line(aes(y = `50%`), show.legend = F) + #facet_wrap(~species, scales = "free") +
-	geom_ribbon(aes(ymin = `2.5%`, ymax = `97.5%`), alpha=0.2, show.legend = F) +
-	
-	geom_ribbon(
-		aes(ymin = `25%`, ymax = `75%`),fill = "darkblue", alpha=0.4, show.legend = F) +
-	geom_point(aes(y = as.numeric(truth))) + theme_ipsum(base_size = 14, strip_text_size = 22) + ggtitle(paste0("Shannon diversity at ", unique(pred.plot1$plotID))) + scale_x_date() +	scale_fill_brewer(palette = "Paired") + 
-	theme(panel.spacing = unit(0, "lines"),
-				plot.margin = unit(c(.2, .2, .2, .2), "cm"))  + ylim(c(4,6))
-
-
-
-
-
-
-
-
-
-
-output.plot <-  ggplot() +
-	geom_line(data = no_uncert,
-						aes(x = dates, y = `50%`), show.legend = F) + 
-	geom_ribbon(data = no_uncert, 
-							aes(x = dates, ymin = `25%`, ymax = `75%`), fill = "lightblue", alpha=0.4) +
-	geom_ribbon(data = spat_uncert, 
-							aes(x = dates, ymin = `25%`, ymax = `75%`), fill = "green", alpha=0.4) +
-	geom_point(data = no_uncert,
-						 aes(x = dates, y = as.numeric(no_uncert$truth))) + 
-	theme_ipsum(base_size = 14, strip_text_size = 22) + 
-	ggtitle(paste0("Shannon diversity at CPER_004")) + scale_x_date() +	
-	scale_fill_brewer(palette = "Paired") + 
-	theme(panel.spacing = unit(0, "lines"),
-				plot.margin = unit(c(.2, .2, .2, .2), "cm")) + ylim(c(4,6)) +
-	geom_ribbon(data = full_uncert,
-							aes(x = dates, ymin = `25%`, ymax = `75%`), fill = "darkblue", alpha=0.4) +
-	scale_fill_brewer(palette = "Paired")
-output.plot
+		axis.title=element_text(size=18,face="bold")
+	) 
