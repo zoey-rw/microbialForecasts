@@ -1,7 +1,66 @@
 # New source script (started Mar 2021 for Dirichlet regression in Nimble)
 # Contains miscellaneous functions and objects to make model scripts clearer.
+if (!require("pacman")) install.packages("pacman") 
 library(nimble)
 
+#### global variables ####
+keep_fg_names <- c("cellulolytic", "assim_nitrite_reduction", "dissim_nitrite_reduction", 
+									 "assim_nitrate_reduction", "n_fixation", "dissim_nitrate_reduction", 
+									 "nitrification", "denitrification", "chitinolytic", "lignolytic", 
+									 "copiotroph", "oligotroph", "benomyl_antibiotic", "glucose_simple",  "pyruvate_simple", 
+									 "streptomycin_antibiotic", "sucrose_complex", "acetogen_anaerobic", 
+									 "chloramphenicol_antibiotic", "erythromycin_antibiotic", 
+									 "gentamycin_antibiotic", "glycerol_simple", 
+									 "acetate_simple",
+									 "acidic_stress", "cellobiose_complex", 
+									 "cellulose_complex", "chitin_complex", "galactose_simple", 
+									 "xylose_simple", "salt_stress", "herbicide_stress", "osmotic_stress", 
+									 "heat_stress", "light_stress", "endophyte", "plant_pathogen", 
+									 "animal_pathogen", "ectomycorrhizal", "lichenized", "saprotroph")
+
+fg_names <- c("cellulolytic", "assim_nitrite_reduction", "dissim_nitrite_reduction", 
+							"assim_nitrate_reduction", "n_fixation", "dissim_nitrate_reduction", 
+							"nitrification", "denitrification", "chitinolytic", "lignolytic", 
+							"methanotroph", "copiotroph", "oligotroph", "benomyl_antibiotic", 
+							"citrate_simple", "glucose_simple", "glycine_simple", "pyruvate_simple", 
+							"streptomycin_antibiotic", "sucrose_complex", "acetogen_anaerobic", 
+							"fsfeso4_anaerobic", "ironcitrate_anaerobic", "nonfsfeso4_anaerobic", 
+							"potassiumnitrate_anaerobic", "chloramphenicol_antibiotic", "erythromycin_antibiotic", 
+							"gentamycin_antibiotic", "nystatin_antibiotic", "glycerol_simple", 
+							"acetate_simple", "glutamate_simple", "late_stress", "propionate_simple", 
+							"acidic_stress", "alkaline_stress", "d_galacturonicacid_simple", 
+							"d_glucuronicacid_simple", "arabinose_simple", "cellobiose_complex", 
+							"cellulose_complex", "chitin_complex", "galactose_simple", "glucosamine_simple", 
+							"mannose_simple", "n_acetylglucosamine_simple", "pectin_complex", 
+							"rhamnose_simple", "trehalose_complex", "xylan_complex", "xylose_simple", 
+							"salt_stress", "herbicide_stress", "lowcarbon_stress", "osmotic_stress", 
+							"heat_stress", "light_stress", "endophyte", "plant_pathogen", 
+							"animal_pathogen", "ectomycorrhizal", "lichenized", "wood_saprotroph", 
+							"soil_saprotroph", "litter_saprotroph", "saprotroph")
+
+tax_names <- c("phylum_bac", "class_bac", "order_bac", "family_bac", "genus_bac", 
+								"phylum_fun", "class_fun", "order_fun", "family_fun", "genus_fun")
+
+div_scenarios <- c("no_uncertainty_ITS", "spatial_uncertainty_ITS", "temporal_uncertainty_ITS", 
+									 "full_uncertainty_ITS", "no_uncertainty_16S", "spatial_uncertainty_16S", 
+									 "temporal_uncertainty_16S", "full_uncertainty_16S")
+
+#####
+
+
+#### misc functions ####
+assign_fg_categories <- function(vector) {
+	out <- rep(NA, length(vector))
+	out[which(grepl("simple", vector))] <- "Simple substrates"
+	out[which(grepl("complex|lign|cellu|chitin", vector))] <- "Complex substrates"
+	out[which(grepl("stress", vector))] <- "Stresses"
+	out[which(grepl("antibiotic", vector))] <- "Antibiotic resistance"
+	out[which(grepl("anaerobic", vector))] <- "Anaerobic"
+	out[which(grepl("nitr|fixa", vector))] <- "N-cycling"
+	out[which(grepl("sapr|path|arbusc|ecto|endo|lichen", vector))] <- "Trophic guild"
+	out[which(grepl("copio|oligo", vector))] <- "Life-history"
+	return(out)
+}
 
 ### CONVERT PRECISION TO SD
 prec_to_sd <- function(x) 1/sqrt(x)
@@ -15,7 +74,6 @@ tau_to_sd <- function(samples, var.list = c("tau_proc", "tau_obs","sigma"), mean
 	out.list <- list()
 	for (i in 1:length(var.list)){
 		varname <- var.list[[i]]
-		tau_samples <- samples[,varname]
 		samples_sd <- unlist(lapply(tau_samples, function(y) lapply(y, function(x) 1/sqrt(x))))
 		samples_mean_sd <- mean(samples_sd)
 		out.list[[i]] <- samples_mean_sd
@@ -41,6 +99,9 @@ interval_transform <- function(x,C = ncol(x), N = nrow(x)){
      return(out)
 }
 
+fixDate <- function(datesToFix){
+	as.Date(paste0(datesToFix, "01"), format = "%Y%m%d")
+}
 
 lmIndicatorCode <- nimbleCode({ 
 	
@@ -106,7 +167,7 @@ lmIndicatorCode <- nimbleCode({
 }) #end NIMBLE model.
 
 
-initsFun <- function(constants){
+initsFun <- function(constants, type = NULL){
 	#	core_per_plot <- 3
 	y_init <- matrix(rep(rep(1/constants$N.spp, constants$N.spp), constants$N.core),
 				 ncol = constants$N.spp, nrow = constants$N.core)
@@ -121,8 +182,11 @@ initsFun <- function(constants){
 	sigma_init <- rep(1, constants$N.spp)
 	intercept_init <- rep(.3, constants$N.spp)
 	Ex_init <- plot_mu_init
-	mois_est <- constants$mois
+	mois_est <- constants$mois 
+	mois_est[is.na(mois_est)] <- 0
 	temp_est <- constants$temp
+	temp_est[is.na(temp_est)] <- 0
+	
 	pH_est <- constants$pH
 	pC_est <- constants$pC
 	sig_init <- 1
@@ -150,7 +214,28 @@ initsFun <- function(constants){
 			pH_est = pH_est,
 			pC_est = pC_est 
 		)
-	} else { # For taxa/functional groups
+	} else if (type == "fg") { # for functional groups
+		out <- list(
+			y = y_init,
+			plot_mu = matrix(rep(.1, constants$N.plot*constants$N.date), 
+											 constants$N.plot, constants$N.date),
+			intercept = 0,
+			core_sd = .1,
+			sig = sig_init,
+			beta = beta_init[1,],
+			rho = rho_init[1],
+			sigma = .1,
+			plot_rel = plot_rel_init,
+			site_effect = rep(.1, constants$N.site),
+			Ex = matrix(rep(.1, constants$N.plot*constants$N.date), 
+									constants$N.plot, constants$N.date),
+			#SIGMA = SIGMA,
+			mois_est = mois_est,
+			temp_est = temp_est,
+			pH_est = pH_est,
+			pC_est = pC_est
+		)
+	} else { # For taxa 
 		SIGMA <- diag(rep(.1, constants$N.spp))		
 
 		out <- list(
@@ -170,7 +255,7 @@ initsFun <- function(constants){
 			pH_est = pH_est,
 			pC_est = pC_est
 		)
-	}
+	} 
 	return(out)
 }
 
@@ -203,6 +288,7 @@ rm.NA.mcmc <- function(samples){
 # rank.df <- cbind(sample_data(ps.phy)[,c("siteID","plotID","dateID","sampleID","dates","plot_date")], out_top10)
 # saveRDS(rank.df,"/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/phylum_dat_testing.rds")
 
+#####
 
 nimbleMod_shannon <- nimbleCode({ 
 	
@@ -219,13 +305,13 @@ nimbleMod_shannon <- nimbleCode({
 		
 		for (t in plot_index[p]:N.date) { # Starts from second date
 			# Previous value * rho + covariates
-			log(Ex[p,t]) <- rho * log(plot_mu[p,t-1]) + 
+			Ex[p,t] <- rho * plot_mu[p,t-1] + 
 				beta[1]*temp_est[plot_site_num[p],t] + 
 				beta[2]*mois_est[plot_site_num[p],t] + 
 				beta[3]*pH_est[p,1] + 
 				beta[4]*pC_est[p,1] +
 				beta[5]*nspp[p,t] +
-				beta[6]*rc_grass[p,t] +
+				beta[6]*relEM[p,t] +
 				#	beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
 				site_effect[plot_site_num[p]] #+
 #				intercept
@@ -269,88 +355,7 @@ nimbleMod_shannon <- nimbleCode({
 	core_sd ~ dgamma(.1, 1)
 	sigma ~ dgamma(.5, .1)
 	#	intercept ~ dgamma(.1, .1)
-#	intercept ~ dnorm(0, sd = 3)
-	
-	# Priors for covariates:
-	for (n in 1:N.beta){
-		beta[n] ~ dnorm(0, sd = 1)
-	}
-	# Priors for site effects----
-	for(k in 1:N.site){
-		site_effect[k] ~ dnorm(0,  sig)
-	}
-	# Priors for site effect variance ----
-	sig ~ dgamma(.5,1)
-	
-}) #end NIMBLE model.
-
-
-nimbleMod_shannon_nolog <- nimbleCode({ 
-	
-	# Observation model (cores ~ plot means)
-	for(i in 1:N.core){
-		y[i,1] ~ dnorm(plot_mu[plot_num[i],timepoint[i]],  core_sd)
-	}
-	
-	# Process model
-	for(p in 1:N.plot){
-		for (t in plot_start[p]) {
-			plot_mu[p,t] ~ dgamma(2, 1) # Plot means for first date
-		}
-		
-		for (t in plot_index[p]:N.date) { # Starts from second date
-			# Previous value * rho + covariates
-			Ex[p,t] <- rho * plot_mu[p,t-1] + 
-				beta[1]*temp_est[plot_site_num[p],t] + 
-				beta[2]*mois_est[plot_site_num[p],t] + 
-				beta[3]*pH_est[p,1] + 
-				beta[4]*pC_est[p,1] +
-				beta[5]*nspp[p,t] +
-				beta[6]*rc_grass[p,t] +
-				#	beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
-				site_effect[plot_site_num[p]] #+
-			#				intercept
-			# Add process error, sigma
-			plot_mu[p,t] ~ dnorm(Ex[p,t], sigma)
-		}
-	}
-	
-	# Add driver uncertainty if desired ----
-	if(temporalDriverUncertainty) {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
-				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
-			}
-		}
-	} else {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] <- mois[k,t]
-				temp_est[k,t] <- temp[k,t]
-			}
-		} 
-	}
-	
-	# Add spatial uncertainty (values are constant over time)
-	if(spatialDriverUncertainty) {
-		for(p in 1:N.plot){
-			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
-			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
-		}
-	} else {
-		for(p in 1:N.plot){
-			pH_est[p,1] <- pH[p,1]
-			pC_est[p,1] <- pC[p,1]
-		}
-	}
-	
-	rho ~ dnorm(0, sd = 1)
-	#core_sd ~ dinvgamma(3, .5)
-	core_sd ~ dgamma(.1, 1)
-	sigma ~ dgamma(.5, .1)
-	#	intercept ~ dgamma(.1, .1)
-	#	intercept ~ dnorm(0, sd = 3)
+# intercept ~ dnorm(0, sd = 1)
 	
 	# Priors for covariates:
 	for (n in 1:N.beta){
@@ -368,10 +373,7 @@ nimbleMod_shannon_nolog <- nimbleCode({
 
 
 
-
-
-
-nimbleModLong <- nimbleCode({ 
+nimbleModTaxa <- nimbleCode({ 
 	
 	# Loop through core observations ----
 	for(i in 1:N.core){
@@ -382,7 +384,7 @@ nimbleModLong <- nimbleCode({
 	for(s in 1:N.spp){
 		for(p in 1:N.plot){
 			for (t in plot_start[p]) {
-				plot_mu[p,s,t] ~ dgamma(0.01, 0.01) # Plot means for first date
+				plot_mu[p,s,t] ~ dgamma(0.5, 1) # Plot means for first date
 				# Convert back to relative abundance
 				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
 			}
@@ -395,11 +397,11 @@ nimbleModLong <- nimbleCode({
 					beta[s,3]*pH_est[p,1] +
 					beta[s,4]*pC_est[p,1] +
 					beta[s,5]*nspp[p,t] +
-					beta[s,6]*rc_grass[p,t] +
+					beta[s,6]*relEM[p,t] +
 					site_effect[plot_site_num[p],s] +
 					intercept[s]
 				# Add process error (sigma)
-				plot_mu[p,s,t] ~ dnorm(Ex[p,s,t], sd = sigma[s])
+				plot_mu[p,s,t] ~ dnorm(Ex[p,s,t], sigma[s])
 				# Convert back to relative abundance
 				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
 			}
@@ -437,7 +439,7 @@ nimbleModLong <- nimbleCode({
 	}
 	
 	# Priors for site effect covariance matrix ----
-	#sig ~ dgamma(3,1)
+	sig ~ dgamma(3,1)
 	# SIGMA[1:N.spp,1:N.spp] <- diag(rep(sig^2, N.spp))		
 	# 
 	# # Priors for site random effects:
@@ -458,7 +460,7 @@ nimbleModLong <- nimbleCode({
 	for (s in 1:N.spp){
 		rho[s] ~ dnorm(0, sd = 1)
 		sigma[s] ~ dgamma(.1, .1)
-		intercept[s] ~ dgamma(.1, .1)
+		intercept[s] ~ dnorm(0, sd = 1)
 		for (n in 1:N.beta){
 			beta[s,n] ~ dnorm(0, sd = 1)
 		}
@@ -482,24 +484,24 @@ nimbleModFunctional <- nimbleCode({
 	# Plot-level process model ----
 	for(p in 1:N.plot){
 		for (t in plot_start[p]) {
-			plot_mu[p,t] ~ dbeta(mean=.55, sd=.1) # Plot means for first date
+			plot_mu[p,t] ~ dbeta(mean=.3, sd=.3) # Plot means for first date
 		}
 		
 		for (t in plot_index[p]:N.date) {
 			# Previous value * rho
 			logit(Ex[p,t]) <- rho * logit(plot_mu[p,t-1]) + 
-				
 				beta[1]*temp_est[plot_site_num[p],t] +
 				beta[2]*mois_est[plot_site_num[p],t] +
 				beta[3]*pH_est[p,1] +
 				beta[4]*pC_est[p,1] +
 				beta[5]*nspp[p,t] +
-				beta[6]*rc_grass[p,t] +
-				site_effect[plot_site_num[p]] #+
-			#intercept
+				beta[6]*relEM[p,t] +
+				site_effect[plot_site_num[p]] +
+			intercept
 			# Add process error (sigma)
 			#	plot_mu[p,t] ~ dnorm(Ex[p,t], sigma)
 			plot_mu[p,t] ~ dnorm(mean = Ex[p,t], sigma)
+			#plot_mu[p,t] <- Ex[p,t]
 		}
 	}
 	
@@ -537,17 +539,185 @@ nimbleModFunctional <- nimbleCode({
 	
 	# Priors for site effect covariance matrix ----
 	sig ~ dgamma(.5,1)
-	
 	# Priors for site effects----
 	for(k in 1:N.site){
 		site_effect[k] ~ dnorm(0,  sig)
 	}
 	
 	# Priors for everything else ----
+	core_sd ~ dgamma(.5,1)
 	rho ~ dnorm(0, sd = 1)
 	sigma ~ dgamma(.5, .1)
 	#intercept ~ dgamma(.1, .1)
+	intercept ~ dnorm(0, sd = 1)
+	
 	for (n in 1:N.beta){
 		beta[n] ~ dnorm(0, sd = 1)
 	}
 }) #end NIMBLE model.
+
+
+
+
+nimbleModFunctional_trunc <- nimbleCode({ 
+	
+	# Loop through core observations ----
+	for(i in 1:N.core){
+		y[i,1] ~ dbeta(mean = plot_mu[plot_num[i],timepoint[i]], 
+									 sd = core_sd)
+	}
+	
+	# Plot-level process model ----
+	for(p in 1:N.plot){
+		for (t in plot_start[p]) {
+			plot_mu[p,t] ~ dbeta(mean=.3, sd=.3) # Plot means for first date
+		}
+		
+		for (t in plot_index[p]:N.date) {
+			# Previous value * rho
+			logit(Ex[p,t]) <- rho * logit(plot_mu[p,t-1]) + 
+				beta[1]*temp_est[plot_site_num[p],t] +
+				beta[2]*mois_est[plot_site_num[p],t] +
+				beta[3]*pH_est[p,1] +
+				beta[4]*pC_est[p,1] +
+				beta[5]*nspp[p,t] +
+				beta[6]*relEM[p,t] +
+				site_effect[plot_site_num[p]] +
+				intercept
+			# Add process error (sigma)
+			#	plot_mu[p,t] ~ dnorm(Ex[p,t], sigma)
+			plot_mu[p,t] ~ T(dnorm(mean = Ex[p,t], sigma), 0, Inf)
+			#plot_mu[p,t] <- Ex[p,t]
+		}
+	}
+	
+	
+	# Add driver uncertainty if desired ----
+	if(temporalDriverUncertainty) {
+		for(k in 1:N.site){
+			for (t in site_start[k]:N.date) {
+				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
+				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
+			}
+		}
+	} else {
+		for(k in 1:N.site){
+			for (t in site_start[k]:N.date) {
+				mois_est[k,t] <- mois[k,t]
+				temp_est[k,t] <- temp[k,t]
+			}
+		} 
+	}
+	
+	# Using 40th time point (values are constant over time)
+	if(spatialDriverUncertainty) {
+		for(p in 1:N.plot){
+			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
+			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
+		}
+	} else {
+		for(p in 1:N.plot){
+			pH_est[p,1] <- pH[p,1]
+			pC_est[p,1] <- pC[p,1]
+		} 
+	}
+	
+	
+	# Priors for site effect covariance matrix ----
+	sig ~ dgamma(.5,1)
+	# Priors for site effects----
+	for(k in 1:N.site){
+		site_effect[k] ~ dnorm(0,  sig)
+	}
+	
+	# Priors for everything else ----
+	core_sd ~ dgamma(.5,1)
+	rho ~ dnorm(0, sd = 1)
+	sigma ~ dgamma(.5, .1)
+	intercept ~ dnorm(0, sd = 1)
+	
+	for (n in 1:N.beta){
+		beta[n] ~ dnorm(0, sd = 1)
+	}
+}) #end NIMBLE model.
+
+
+
+
+
+# object <- read_in$samples$samples2
+# quantiles = c(0.025, 0.25, 0.5, 0.75, 0.975)
+
+fast.summary.mcmc <- function (object, quantiles = c(0.025, 0.25, 0.5, 0.75, 0.975), 
+															 ...) {
+	require(matrixStats)
+	require(data.table)
+	setDTthreads(threads = 8)
+	
+	x <- mcmc.list(object)
+	statnames <- c("Mean", "SD", "Naive SE", "Time-series SE")
+	varstats <- matrix(nrow = nvar(x), ncol = length(statnames), 
+										 dimnames = list(varnames(x), statnames))
+	xtsvar <- matrix(nrow = nchain(x), ncol = nvar(x))
+	
+	if (is.matrix(x[[1]])) {
+		for (i in 1:nchain(x)) {
+			print(paste0("Summarizing chain ", i))
+			pb <- txtProgressBar(min = 0, max = nvar(x), style = 3)
+			for (j in 1:nvar(x)) {
+				setTxtProgressBar(pb, j)
+				if (all(na.omit(x[[i]][, j])==0)) xtsvar[i,j] <- 0; next()
+				xtsvar[i,j] <- fast.spectrum0.ar(x[[i]][, j])$spec
+			}}
+		cat("\nCombining MCMC chains...\n")
+		#xlong <- as.matrix(data.table::rbindlist(lapply(x,as.data.frame)))
+		xlong <- as.matrix(x)
+	} else {
+		for (i in 1:nchain(x)) {
+			xtsvar[i, ] <- fast.spectrum0.ar(x[[i]])$spec
+		}
+		xlong <- as.matrix(x)
+	}
+	rm(object)
+	cat("\nWrapping up output...\n")
+	xmean <- matrixStats::colMeans2(xlong)
+	xvar <- matrixStats::colVars(xlong)
+	xtsvar <- matrixStats::colMeans2(xtsvar)
+	varquant <- matrixStats::colQuantiles(xlong, probs = quantiles)
+	
+	varstats[, 1] <- xmean
+	varstats[, 2] <- sqrt(xvar)
+	varstats[, 3] <- sqrt(xvar/(niter(x) * nchain(x)))
+	varstats[, 4] <- sqrt(xtsvar/(niter(x) * nchain(x)))
+	varquant <- drop(varquant)
+	varstats <- drop(varstats)
+	out <- list(statistics = varstats, quantiles = varquant, 
+							start = start(x), end = end(x), thin = thin(x), nchain = nchain(x))
+	class(out) <- "summary.mcmc"
+	return(out)
+}
+	
+fast.spectrum0.ar <- function (x) {
+	x <- as.matrix(x)
+	v0 <- order <- numeric(ncol(x))
+	names(v0) <- names(order) <- colnames(x)
+	z <- 1:nrow(x)
+	for (i in 1:ncol(x)) {
+			ar.out <- ar(na.omit(x[, i]))
+			v0[i] <- ar.out$var.pred/(1 - sum(ar.out$ar))^2
+			order[i] <- ar.out$order
+	}
+	return(list(spec = v0, order = order))
+}
+
+
+
+# Calculate summary and save output.
+# system.time(v1 <- coda:::spectrum0.ar(y))
+# # system.time(v2 <- fast.spectrum0.ar(y))
+# 
+# parameter_names <- varnames(mcmc_list)
+# saved_steps <- as.integer(row.names(mcmc_list[[1]]))
+# out <- data.frame("chain" = factor(rep(1 : length(mcmc_list), each = length(saved_steps))),
+# 									"step" = rep(saved_steps, length(mcmc_list)) )
+# out <- cbind(out, as.data.frame(as.matrix(chain_samples)))
