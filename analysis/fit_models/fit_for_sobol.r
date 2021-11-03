@@ -1,41 +1,41 @@
 # Running shannon diversity model with different NA values
 # 
 
-iter <- 1000
-burnin <- 500
-thin <- 1
-test = T
-n.chains = 3
-group = "ITS"
-temporalDriverUncertainty <- TRUE
-spatialDriverUncertainty <- TRUE
+# iter <- 1000
+# burnin <- 500
+# thin <- 1
+# test = T
+# n.chains = 3
+# group = "ITS"
+# temporalDriverUncertainty <- TRUE
+# spatialDriverUncertainty <- TRUE
 
 run_MCMC <- function(group = "ITS", 	
-														 iter = 1000,
-														 burnin = 500,
-														 thin = 1,
-														 test = F,
-															n.chains = 3,
-														 temporalDriverUncertainty = TRUE,
-														 spatialDriverUncertainty = TRUE,
-										 scenario = NULL) {
+										 iter = 1000,
+										 burnin = 500,
+										 thin = 1,
+										 test = F,
+										 n.chains = 3,
+										 temporalDriverUncertainty = TRUE,
+										 spatialDriverUncertainty = TRUE) {
 	pacman::p_load(reshape2, parallel, lubridate, nimble, coda, tidyverse) 
 	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepDiversityData.r")
-	 
 	
 	div_in = switch(group,
 									"ITS" = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds"),
 									"16S" = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S.rds"))
 	
-	rank.df = div_in$cal
+	rank.df = rbind(div_in$cal, div_in$val)
+	
+	# Leaving out two sites because they're missing data, plus Harvard Forest because it's our hindcast test site.
+	rank.df <- rank.df[which(!rank.df$siteID %in% c("ABBY","LAJA","HARV")),]
 	rank.df$Shannon <- scale(rank.df$Shannon, scale = F)
 	if (test == T) {
-	rank.df = rank.df[1:500,]
+		rank.df = rank.df[1:500,]
 	}
-	
 	# Custom function for organizing model data.
-	model.dat <- prepDivData(rank.df = rank.df, min.prev = 3)
+	model.dat <- prepDivData(rank.df = rank.df, min.prev = 3,max.date = "20200101")
 	constants <- list(N.plot =  length(unique(model.dat$plotID)), 
 										N.spp = ncol(model.dat$y), 
 										N.core = nrow(model.dat$y), 
@@ -84,82 +84,35 @@ run_MCMC <- function(group = "ITS",
 	myMCMC <- buildMCMC(mcmcConf)
 	compiled <- compileNimble(myMCMC, project = Rmodel, resetFunctions = TRUE)
 	
-	
 	samples.out <- runMCMC(compiled, niter = iter,
 												 nchains = n.chains, nburnin = burnin,
 												 samplesAsCodaMCMC = T, thin = thin)
-	cat(paste0("Finished sampling for run: ", group))
-	# plot(samples.out$samples)
-	# mcmcConf$printSamplers("beta")
-	# mcmcConf$printSamplers("site_effect")
-	# idx <- 1
-	# scaleHist <- compiled$samplerFunctions[[idx]]$getScaleHistory()
-	# acceptHist <- compiled$samplerFunctions[[idx]]$getAcceptanceHistory()
-	# nimble:::clearCompiled(cModel)
-	# Process and summarize outputs
 	samples2 <- rm.NA.mcmc(samples.out$samples2)
 	samples <- rm.NA.mcmc(samples.out$samples)
 	# plot(samples)
 	param_summary <- summary(samples)
 	plot_summary <- summary(samples2)
-
+	
 	# Create outputs and clear compiled code
 	metadata <- list(niter = iter,
 									 nburnin = burnin,
 									 thin = thin,
 									 model_data = truth)
-		out <- list(samples = samples, 
+	
+	cat(paste0("Diversity model fit for run: ", group)) 
+	out <- list(samples = samples, 
 							param_summary = param_summary, 
 							metadata = metadata, 
 							plot_summary = plot_summary)
-		saveRDS(out, paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/nolog_div_", scenario, ".rds"))
-		cat(paste0("Diversity output saved for fit for run: ", group)) 
 	return(out)
 }
 
-
+ 
 pacman::p_load(reshape2, parallel, nimble, coda, tidyverse) 
 
-# Create parameters to pass	
-params = data.frame(index = 1:8,
-										scenario = c("no_uncertainty_ITS", "spatial_uncertainty_ITS",
-																 "temporal_uncertainty_ITS", "full_uncertainty_ITS",
-																 "no_uncertainty_16S", "spatial_uncertainty_16S",
-																 "temporal_uncertainty_16S", "full_uncertainty_16S"),
-										group = c(rep("ITS", 4),rep("16S", 4)),
-										temporalDriverUncertainty = c(F, F, T, T, F, F, T, T),
-										spatialDriverUncertainty = c(F, T, F, T, F, T, F, T))
-
-# Create function that calls run_MCMC for each uncertainty scenario
-run_scenarios <- function(j) {
-	out <- run_MCMC(group = params$group[[j]], iter = 500000, burnin = 250000, thin = 10, 
+out <- run_MCMC(group = "16S", iter = 50000, burnin = 20000, thin = 3, 
 									test=F, 
-									temporalDriverUncertainty = params$temporalDriverUncertainty[[j]], 
-									spatialDriverUncertainty = params$spatialDriverUncertainty[[j]], scenario = params$scenario[[j]])
-	return()
-}
+									temporalDriverUncertainty = TRUE, 
+									spatialDriverUncertainty = TRUE)
 
-
-# NOT PARALLEL
-# for(j in c(5:8)){
-# 												print(params[j,])
-# 												run_scenarios(j)
-# 											}
-# 
-# # Create cluster and pass it everything in the workspace
-library(doParallel)
-# cl <- makeCluster(4, type="PSOCK", outfile="")
-cl <- makeCluster(2, type="PSOCK", outfile="")
-registerDoParallel(cl)
-
-# output.list = foreach(j= c(3,4,5,6),
-#output.list = foreach(j= c(7:8),
-output.list = foreach(j= c(7:8),
-											#output.list = foreach(j=c(4), #.export=c("run_scenarios","params","run_MCMC"),
-											.errorhandling = 'pass') %dopar% {
-	print(params[j,])
-	run_scenarios(j)
-}
-# saveRDS(output.list, out.path)
-
-
+saveRDS(out, paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/16S_sobol_calibration.rds"))
