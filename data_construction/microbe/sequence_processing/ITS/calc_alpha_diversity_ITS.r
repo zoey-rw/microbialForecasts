@@ -6,33 +6,42 @@ library(lubridate)
 
 source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
 
-# Combine legacy and recent phyloseq objects
-recent_ps <- readRDS("/projectnb/dietzelab/zrwerbin/NEON_soil_microbe_processing/data/NEON_ITS_phyloseq_subset.rds")
-legacy_ps <- readRDS("/projectnb/dietzelab/zrwerbin/NEON_soil_microbe_processing/data/NEON_ITS_phyloseq_legacy.rds")
-new_sample_dat <- parseNEONsampleIDs(as.character(sample_data(recent_ps)$dnaSampleID))
-rownames(new_sample_dat) <- rownames(sample_data(recent_ps))
-sample_data(recent_ps) <- new_sample_dat
-master_ps <- merge_phyloseq(legacy_ps, recent_ps)
-colnames(tax_table(master_ps)) <- tolower(colnames(tax_table(master_ps)))
+# Output from reformat_taxonomy.r
+master_ps <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_ITS.rds")
+# 
+# rared <- rarefy_even_depth(master_ps, sample.size = 5000, rngseed = 1)
+# 
+# shannon <- estimate_richness(rared, measures = "Shannon")
+# # chao <- estimate_richness(master_ps, measures = "chao1")
+# # shannon$seqDepth <- sample_sums(master_ps)
+# dat <- cbind(parseNEONsampleIDs(rownames(shannon)), shannon)
+# saveRDS(dat, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS_full.rds")
 
-shannon <- estimate_richness(master_ps, measures = "Shannon")
-
-dat <- cbind(parseNEONsampleIDs(rownames(shannon)), shannon)
-saveRDS(dat, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS_full.rds")
-
-
-cal_ps <- prune_samples(sample_data(master_ps)$asDate  < "2017-01-01", master_ps)
-val_ps <- prune_samples(sample_data(master_ps)$asDate  >= "2017-01-01", master_ps)
-
-shannon_cal <- estimate_richness(cal_ps, measures = "Shannon")
-shannon_val <- estimate_richness(val_ps, measures = "Shannon")
-
-cal_dat <- cbind(parseNEONsampleIDs(rownames(shannon_cal)), shannon_cal)
-val_dat <- cbind(parseNEONsampleIDs(rownames(shannon_val)), shannon_val)
-
-saveRDS(list(cal = cal_dat, val = val_dat), "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds")
+dat <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS_full.rds")
 
 
+# Mean center and scale data (within each site)
+dat <- dat %>% group_by(siteID) %>% mutate(Shannon_orig = Shannon,
+																					 Shannon_scale_site = scale(Shannon_orig, scale = T)) %>% 
+	ungroup() %>% mutate(Shannon = scale(Shannon_orig, scale = T))
+
+# This code is redundant
+# cal_ps <- prune_samples(sample_data(rared)$asDate  < "2017-01-01", rared)
+# val_ps <- prune_samples(sample_data(rared)$asDate  >= "2017-01-01", rared)
+# 
+# shannon_cal <- estimate_richness(cal_ps, measures = "Shannon")
+# shannon_val <- estimate_richness(val_ps, measures = "Shannon")
+# 
+# cal_dat <- cbind(parseNEONsampleIDs(rownames(shannon_cal)), shannon_cal)
+# val_dat <- cbind(parseNEONsampleIDs(rownames(shannon_val)), shannon_val)
+
+
+cal_dat <- dat[dat$asDate < "2017-01-01",]
+val_dat <- dat[dat$asDate >= "2017-01-01",]
+saveRDS(list(cal = cal_dat, val = val_dat, full = dat), "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds")
+
+
+#### Visualize
 
 div_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds")
 div_cal <- div_in$cal
@@ -56,7 +65,7 @@ ggplot(data=div_cal[div_cal$siteID %in% keep_sites,],
 		text = element_text(size = 16),
 		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
 		axis.title=element_text(size=22,face="bold")
-	) + ylim(c(-1,10))
+	) #+ ylim(c(-1,10))
 
 
 # grouped by month, colored by year
@@ -76,4 +85,16 @@ ggplot(data=div_cal,
 	# geom_point(aes(color = as.factor(year)), size = 3, show.legend=F) +
 	facet_wrap(~siteID, nrow = 4) +
 	labs(col = "Shannon diversity", title = "Alpha diversity by month")
+
+
+# grouped by month, panel by site
+ggplot(data=div_cal,
+			 aes(x = seqDepth,y = Shannon))+
+	geom_point() +
+	# geom_point(aes(color = as.factor(year)), size = 3, show.legend=F) +
+	facet_wrap(~siteID, nrow = 4) +
+	labs(col = "Shannon diversity", title = "Alpha diversity by month")
+
+
+
 
