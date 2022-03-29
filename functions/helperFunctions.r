@@ -4,10 +4,9 @@ library(dplyr)
 library(reshape2)
 library(ggpubr)
 library(coda)
-library(runjags)
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepModelData_clr.r")
-weather <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/temporal_covariates.rds")
-plot.preds <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilSpatialCov.rds")[[1]]
+# source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepModelData_clr.r")
+# weather <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/temporal_covariates.rds")
+# plot.preds <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilSpatialCov.rds")[[1]]
 
 fixDate <- function(datesToFix){
   as.Date(paste0(datesToFix, "01"), format = "%Y%m%d")

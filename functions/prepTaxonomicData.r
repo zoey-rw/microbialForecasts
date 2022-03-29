@@ -14,7 +14,8 @@ prepTaxonomicData <- function(rank.df,
 															 max.date = "20170101",
 															 predictor_data = NULL,
 															 min.prev = 5,
-															 dom_soil_horizons = NULL
+															 dom_soil_horizons = NULL,
+															full_timeseries = F
 ){
 	require(padr)
 	require(tibble)
@@ -76,9 +77,7 @@ prepTaxonomicData <- function(rank.df,
 	
 	
 	# Fill in any empty dates
-	start_date <- paste0(substr(min(dates, na.rm = T), 1, 7), "-01")
-	start_date <- "2013-06-01"
-	poss_dates <- seq.Date(as.Date(start_date), as.Date(max(dates, na.rm = T)), by = "month")
+	poss_dates <- seq.Date(min.date, max.date, by = "month")
 	poss_dateID <- as.numeric(as.character(stringr::str_replace_all(substr(poss_dates, 1, 7), "-", "")))
 	
 	# Add dates for forecasts
@@ -180,17 +179,25 @@ prepTaxonomicData <- function(rank.df,
 	# 
 	
 	
-	
-	y <- dat_subset[,c(7:17), drop=F] %>% as.matrix() %>% interval_transform()
+	# Requires only numeric values for interval transform
+	#y <- dat_subset[,c(7:17), drop=F] %>% as.matrix() %>% interval_transform()
+	y <- dat_subset %>% select(-c(rowname,number, core, siteID, plotID,dateID,sampleID,plot_date)) %>% as.matrix() %>% interval_transform()
 	
 	siteID = dat_subset$siteID
 	plotID = dat_subset$plotID
 	#  plot_site <- as.factor(unique(dat_subset[,c('siteID','plotID')])$siteID)
 	
 	# Create output timepoints
+	# Don't want to return entire (mostly empty) timeseries unless using for forecasting
 	expanded_dat$timepoint <- as.numeric(as.factor(expanded_dat$dateID))
-	timepoint <- expanded_dat[match(dat_subset$dateID, expanded_dat$dateID),]$timepoint
-	names(timepoint) <- expanded_dat[match(dat_subset$dateID, expanded_dat$dateID),]$dateID
+	if (full_timeseries){
+		timepoint <- expanded_dat$timepoint
+		names(timepoint) <- expanded_dat$dateID
+	} else {
+		timepoint <- expanded_dat[match(dat_subset$dateID, expanded_dat$dateID),]$timepoint
+		names(timepoint) <- expanded_dat[match(dat_subset$dateID, expanded_dat$dateID),]$dateID
+	}
+	
 	
 	
 	# subset covariates to plots/sites that have been observed for multiple (min.prev) dates, and before the max date
@@ -211,6 +218,10 @@ prepTaxonomicData <- function(rank.df,
 	nspp 				<- predictor_data$nspp %>% filter(rownames(predictor_data$nspp) %in% keep_plots)  %>% data.matrix() 
 	rc_grass 				<- predictor_data$rc_grass %>% filter(rownames(predictor_data$rc_grass) %in% keep_plots) %>% data.matrix() 
 	rc_exotic 				<- predictor_data$rc_exotic %>% filter(rownames(predictor_data$rc_exotic) %in% keep_plots) %>% data.matrix() 
+	relEM 				<- predictor_data$relEM_plot %>% filter(rownames(predictor_data$relEM_plot) %in% keep_plots) %>% data.matrix() 
+	
+	LAI 				<- predictor_data$LAI %>% filter(rownames(predictor_data$LAI) %in% keep_sites) %>% data.matrix() 
+	
 	
 	site_start_temp <- site_start_index[site_start_index$siteID %in% keep_sites,]
 	plot_start_temp <- plot_start_index[plot_start_index$plotID %in% keep_plots,]
@@ -242,10 +253,12 @@ prepTaxonomicData <- function(rank.df,
 	truth.plot.long <- truth.plot %>% as.data.frame() %>%
 		separate(plot_date, sep="_", into=c("siteID","plotID","dateID")) %>%
 		mutate(plotID = paste0(siteID, "_", plotID),
-					 date_num = as.numeric(as.factor(dateID))) %>%
-		pivot_longer(cols = 4, values_to = "truth") %>% 
-		mutate(plot_num = match(plotID, names(plot_start)),
-					 site_num = match(siteID, names(site_start)))
+					 date_num = as.numeric(as.factor(dateID)),
+					 plot_num = match(plotID, names(plot_start)),
+					 site_num = match(siteID, names(site_start)),
+					 timepoint = as.numeric(timepoint)) %>%
+		relocate(plot_num, date_num, site_num, timepoint, .before=1) %>%
+		pivot_longer(cols = 8:last_col(),names_to = "species", values_to = "truth")
 	
 	
 	return(list(y = y, 
@@ -271,6 +284,8 @@ prepTaxonomicData <- function(rank.df,
 							nspp = nspp,
 							rc_grass = rc_grass,
 							rc_exotic = rc_exotic,
+							relEM = relEM,
+							LAI = LAI,
 							dates_per_plot = dates_per_plot))
 }
 

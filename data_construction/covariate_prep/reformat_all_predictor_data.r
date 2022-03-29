@@ -7,19 +7,13 @@ require(tidyr)
 source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
 # # Read in covariate data chem_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")
-moisture_in <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/monthly_soil_moisture.rds")
-temp_in <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/monthly_soil_temperature.rds")
-plant_in <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/annual_plant_data.rds")
-dom_soil_horizons_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/dominantHorizonsSite.rds")
-chem_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")
-
-moisture = moisture_in;
-temp = temp_in;
-chem = chem_in; 
-plant = plant_in;
-
-dom_soil_horizons = dom_soil_horizons_in
-
+moisture <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/monthly_soil_moisture.rds")
+temp <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/monthly_soil_temperature.rds")
+plant <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/annual_plant_data.rds")
+relEM <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/mean_relEM_data.rds")
+LAI <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/mean_LAI_data.rds")
+dom_soil_horizons <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/dominantHorizonsSite.rds")
+chem <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")
 
 
 # reformat moisture to be site x date
@@ -63,6 +57,24 @@ temp_site_sd <- temp %>% dplyr::select(siteID, month, temperature_sd) %>%
 # temp_site_sd <- temp_site_sd %>% data.matrix() 
 
 
+
+# reformat LAI to be site x date
+# remove any extra sites/dates
+LAI_site <- LAI %>% dplyr::select(siteID, dateID, LAI) %>% 
+	filter(siteID %in% temp$siteID) %>% 
+	filter(dateID %in% temp$month) %>% 
+	arrange(dateID) %>% unique() %>% 
+	pivot_wider(names_from = dateID, values_from = LAI,
+							values_fill = NA) %>% 
+	pivot_longer(cols = 2:ncol(.), names_to = "dateID", values_to = "LAI") %>% 
+	group_by(siteID) %>% 
+	tidyr::fill(LAI, .direction = "updown") %>% ungroup() %>%
+	pivot_wider(names_from = dateID, values_from = LAI,
+							values_fill = NA) %>% 
+	arrange(siteID) %>% 
+	
+	column_to_rownames(var = "siteID")
+# temp_site <- temp_site %>% data.matrix() 
 
 # reformat pH to be plot x date (even though dates aren't real) - use dates from temperature
 pH_plot <- chem  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>% #filter(plotID %in% dat$plotID) %>% 
@@ -154,6 +166,19 @@ rc_exotic_plot <- plant %>%# merge(unique(chem_in[,c("siteID", "plotID")]), all.
 rc_exotic_plot[rc_exotic_plot=="NULL"] <- NA
 # rc_exotic_plot <- rc_exotic_plot  %>% data.matrix() 
 
+# reformat relEM to be plot x date (even though dates aren't real) - use dates from temperature
+relEM_plot <- relEM  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>% #filter(plotID %in% dat$plotID) %>% 
+	#mutate(pH = scale(as.numeric(pH_sd))) %>% 
+	dplyr::select(plotID, siteID, relEM) %>% merge(unique(temp[,c("siteID", "date","month")]))  %>% 
+	arrange(date, plotID) %>% unique() %>% 
+	group_by(siteID) %>% tidyr::fill(relEM, .direction = "updown") %>% ungroup() %>% 
+	dplyr::select(-siteID, -date) %>% 
+	pivot_wider(names_from = month, values_from = relEM, values_fn = list)  %>% 
+	arrange(plotID)  %>% 
+	column_to_rownames(var = "plotID") 
+relEM_plot[relEM_plot=="NULL"] <- NA
+
+
 all_predictors <- list("mois" = mois_site,
 											 "mois_sd" = mois_site_sd,
 											 "temp" = temp_site,
@@ -163,9 +188,12 @@ all_predictors <- list("mois" = mois_site,
 											 "pC" = pC_plot,
 											 "pC_sd" = pC_plot_sd, 
 											 "nspp" = nspp_plot,
+											 "LAI" = LAI_site,
 											 "rc_grass" = rc_grass_plot,
-											 "rc_exotic" = rc_exotic_plot
-											 )
+											 "rc_exotic" = rc_exotic_plot,
+											 "relEM_plot" = relEM_plot
+)
 
 
 saveRDS(all_predictors, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/all_predictor_data.rds")
+
