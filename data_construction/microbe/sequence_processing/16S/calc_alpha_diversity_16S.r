@@ -6,31 +6,31 @@ library(lubridate)
 
 source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
 
-# Combine legacy and recent phyloseq objects
-recent_ps <- readRDS("/projectnb/dietzelab/zrwerbin/NEON_soil_microbe_processing/data/NEON_16S_phyloseq_subset.rds")
-legacy_ps <- readRDS("/projectnb/dietzelab/zrwerbin/NEON_soil_microbe_processing/data/NEON_16S_phyloseq_legacy.rds")
-new_sample_dat <- parseNEONsampleIDs(as.character(sample_data(recent_ps)$dnaSampleID))
-rownames(new_sample_dat) <- rownames(sample_data(recent_ps))
-sample_data(recent_ps) <- new_sample_dat
-master_ps <- merge_phyloseq(legacy_ps, recent_ps)
-colnames(tax_table(master_ps)) <- tolower(colnames(tax_table(master_ps)))
-
-shannon <- estimate_richness(master_ps, measures = "Shannon")
-
-dat <- cbind(parseNEONsampleIDs(rownames(shannon)), shannon)
-saveRDS(dat, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S_full.rds")
+# Output from reformat_taxonomy.r
+# master_ps <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_16S.rds")
+# 
+# rared <- rarefy_even_depth(master_ps, sample.size = 5000, rngseed = 1)
+# 
+# shannon <- estimate_richness(rared, measures = "Shannon")
+# # chao <- estimate_richness(master_ps, measures = "chao1")
+# # shannon$seqDepth <- sample_sums(master_ps)
+# dat <- cbind(parseNEONsampleIDs(rownames(shannon)), shannon)
+# saveRDS(dat, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S_full.rds")
 
 
-cal_ps <- prune_samples(sample_data(master_ps)$asDate  < "2017-01-01", master_ps)
-val_ps <- prune_samples(sample_data(master_ps)$asDate  >= "2017-01-01", master_ps)
+dat <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S_full.rds")
 
-shannon_cal <- estimate_richness(cal_ps, measures = "Shannon")
-shannon_val <- estimate_richness(val_ps, measures = "Shannon")
 
-cal_dat <- cbind(parseNEONsampleIDs(rownames(shannon_cal)), shannon_cal)
-val_dat <- cbind(parseNEONsampleIDs(rownames(shannon_val)), shannon_val)
+# Mean center and scale data (within each site)
+dat <- dat %>% group_by(siteID) %>% mutate(Shannon_orig = Shannon,
+																					 Shannon_scale_site = scale(Shannon_orig, scale = T)) %>% 
+	ungroup() %>% mutate(Shannon = scale(Shannon_orig, scale = T))
 
-saveRDS(list(cal = cal_dat, val = val_dat), "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S.rds")
+
+cal_dat <- dat[dat$asDate < "2017-01-01",]
+val_dat <- dat[dat$asDate >= "2017-01-01",]
+
+saveRDS(list(cal = cal_dat, val = val_dat, full = dat), "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S.rds")
 
 
 
@@ -42,13 +42,27 @@ keep_sites <- c("CPER", "DSNY", "HARV", "OSBS", "STER", "TALL", "WOOD", "BART",
 								"JERC", "ORNL", "SCBI", "UNDE", "BLAN", "CLBJ", "DEJU", "DELA"
 )
 
+# panels for each site, with global scaling
+ggplot(data=div_cal[div_cal$siteID %in% keep_sites,],
+			 aes(x = asDate,y = Shannon_scale_global))+
+	geom_point(aes(shape = as.factor(horizon), color = plotID), size = 3, show.legend=F) +
+	geom_smooth() +
+	labs(col = "Parameter", title = "Shannon diversity") + 
+	xlab("Date")+ 
+	ylab(NULL)+
+	facet_wrap(~siteID, scales = "free") +
+	theme_bw() + theme(
+		text = element_text(size = 16),
+		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
+		axis.title=element_text(size=22,face="bold")
+	) +ylim(c(-5,5))
 
 # panels for each site
 ggplot(data=div_cal[div_cal$siteID %in% keep_sites,],
 			 aes(x = asDate,y = Shannon))+
 	geom_point(aes(shape = as.factor(horizon), color = plotID), size = 3, show.legend=F) +
 	geom_smooth() +
-	labs(col = "Parameter", title = "Absolute effect size") + 
+	labs(col = "Parameter", title = "Shannon diversity") + 
 	xlab("Taxon")+ 
 	ylab(NULL)+
 	facet_wrap(~siteID, scales = "free") +
@@ -56,8 +70,7 @@ ggplot(data=div_cal[div_cal$siteID %in% keep_sites,],
 		text = element_text(size = 16),
 		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
 		axis.title=element_text(size=22,face="bold")
-	) 
-
+	) +ylim(c(-5,5))
 
 # all sites together on one plot
 ggplot(data=div_cal[div_cal$siteID %in% keep_sites,],
@@ -73,8 +86,6 @@ ggplot(data=div_cal[div_cal$siteID %in% keep_sites,],
 		axis.title=element_text(size=22,face="bold")
 	) 
 
-
-
 # grouped by month, colored by year
 div_cal$month <- month(div_cal$asDate)
 div_cal$year <- year(div_cal$asDate)
@@ -83,7 +94,6 @@ ggplot(data=div_cal,
 	 geom_point(aes(color = as.factor(year)), size = 3, show.legend=F) +
 	 geom_smooth() +
 	labs(col = "Parameter", title = "Absolute effect size")
-
 
 # grouped by month, panel by site
 ggplot(data=div_cal,

@@ -2,6 +2,7 @@
 # Contains miscellaneous functions and objects to make model scripts clearer.
 if (!require("pacman")) install.packages("pacman") 
 library(nimble)
+library(lubridate)
 
 #### global variables ####
 keep_fg_names <- c("cellulolytic", "assim_nitrite_reduction", "dissim_nitrite_reduction", 
@@ -310,11 +311,11 @@ nimbleMod_shannon <- nimbleCode({
 				beta[2]*mois_est[plot_site_num[p],t] + 
 				beta[3]*pH_est[p,1] + 
 				beta[4]*pC_est[p,1] +
-				beta[5]*nspp[p,t] +
-				beta[6]*relEM[p,t] +
-				#	beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
-				site_effect[plot_site_num[p]] #+
-#				intercept
+				beta[5]*relEM[p,t] +
+				beta[6]*LAI[plot_site_num[p],t] +
+				beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
+				site_effect[plot_site_num[p]] +
+				intercept
 			# Add process error, sigma
 			plot_mu[p,t] ~ dnorm(Ex[p,t], sigma)
 		}
@@ -355,7 +356,7 @@ nimbleMod_shannon <- nimbleCode({
 	core_sd ~ dgamma(.1, 1)
 	sigma ~ dgamma(.5, .1)
 	#	intercept ~ dgamma(.1, .1)
-# intercept ~ dnorm(0, sd = 1)
+ intercept ~ dnorm(0, sd = 1)
 	
 	# Priors for covariates:
 	for (n in 1:N.beta){
@@ -396,8 +397,9 @@ nimbleModTaxa <- nimbleCode({
 					beta[s,2]*mois_est[plot_site_num[p],t] +
 					beta[s,3]*pH_est[p,1] +
 					beta[s,4]*pC_est[p,1] +
-					beta[s,5]*nspp[p,t] +
-					beta[s,6]*relEM[p,t] +
+					beta[s,5]*relEM[p,t] +
+					beta[s,6]*LAI[plot_site_num[p],t] +
+					beta[s,7]*sin_mo[t] + beta[s,8]*cos_mo[t] +
 					site_effect[plot_site_num[p],s] +
 					intercept[s]
 				# Add process error (sigma)
@@ -494,8 +496,10 @@ nimbleModFunctional <- nimbleCode({
 				beta[2]*mois_est[plot_site_num[p],t] +
 				beta[3]*pH_est[p,1] +
 				beta[4]*pC_est[p,1] +
-				beta[5]*nspp[p,t] +
-				beta[6]*relEM[p,t] +
+				#beta[5]*nspp[p,t] +
+				beta[5]*relEM[p,t] +
+				beta[6]*LAI[plot_site_num[p],t] +
+				beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
 				site_effect[plot_site_num[p]] +
 			intercept
 			# Add process error (sigma)
@@ -580,8 +584,9 @@ nimbleModFunctional_trunc <- nimbleCode({
 				beta[2]*mois_est[plot_site_num[p],t] +
 				beta[3]*pH_est[p,1] +
 				beta[4]*pC_est[p,1] +
-				beta[5]*nspp[p,t] +
-				beta[6]*relEM[p,t] +
+				beta[5]*relEM[p,t] +
+				beta[6]*LAI[plot_site_num[p],t] +
+				beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
 				site_effect[plot_site_num[p]] +
 				intercept
 			# Add process error (sigma)
@@ -721,3 +726,149 @@ fast.spectrum0.ar <- function (x) {
 # out <- data.frame("chain" = factor(rep(1 : length(mcmc_list), each = length(saved_steps))),
 # 									"step" = rep(saved_steps, length(mcmc_list)) )
 # out <- cbind(out, as.data.frame(as.matrix(chain_samples)))
+
+create_div_constants <- function(model.dat){
+constants <- list(N.plot =  length(unique(model.dat$plotID)), 
+									N.spp = ncol(model.dat$y), 
+									N.core = nrow(model.dat$y), 
+									N.date = model.dat$N.date,
+									N.site = length(unique(model.dat$siteID)),
+									timepoint = model.dat$timepoint,
+									mois = model.dat[["mois"]],
+									temp = model.dat[["temp"]],
+									mois_sd = model.dat[["mois_sd"]],
+									temp_sd = model.dat[["temp_sd"]],
+									pH = model.dat[["pH"]],
+									pC = model.dat[["pC"]],
+									pH_sd = model.dat[["pH_sd"]],
+									pC_sd = model.dat[["pH_sd"]],
+									relEM = model.dat[["relEM"]],
+									nspp = model.dat[["nspp"]],
+									rc_grass = model.dat[["rc_grass"]],
+									plotID = model.dat$plotID,
+									plot_site = model.dat$plot_site,
+									plot_num = model.dat$plot_num,
+									plot_site_num = model.dat$plot_site_num,
+									plot_start = model.dat[["plot_start"]],
+									plot_index = model.dat[["plot_index"]],
+									site_start = model.dat[["site_start"]],
+									N.beta = 6)
+return(constants)
+}
+
+
+
+
+
+
+nimbleModTaxa <- nimbleCode({ 
+	
+	# Loop through core observations ----
+	for(i in 1:N.core){
+		y[i,1:N.spp] ~ ddirch(plot_mu[plot_num[i], 1:N.spp, timepoint[i]])
+	}
+	
+	# Plot-level process model ----
+	for(s in 1:N.spp){
+		for(p in 1:N.plot){
+			for (t in plot_start[p]) {
+				plot_mu[p,s,t] ~ dgamma(0.5, 1) # Plot means for first date
+				# Convert back to relative abundance
+				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
+			}
+			
+			for (t in plot_index[p]:N.date) {
+				# Previous value * rho
+				log(Ex[p,s,t]) <- rho[s] * log(plot_mu[p,s,t-1]) + 
+					beta[s,1]*temp_est[plot_site_num[p],t] +
+					beta[s,2]*mois_est[plot_site_num[p],t] +
+					beta[s,3]*pH_est[p,1] +
+					beta[s,4]*pC_est[p,1] +
+					beta[s,5]*relEM[p,t] +
+					beta[s,6]*LAI[plot_site_num[p],t] +
+					beta[s,7]*sin_mo[t] + beta[s,8]*cos_mo[t] +
+					site_effect[plot_site_num[p],s] +
+					intercept[s]
+				# Add process error (sigma)
+				plot_mu[p,s,t] ~ dnorm(Ex[p,s,t], sigma[s])
+				# Convert back to relative abundance
+				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
+			}
+		}
+	}
+	
+	# Add driver uncertainty if desired ----
+	if(temporalDriverUncertainty) {
+		for(k in 1:N.site){
+			for (t in site_start[k]:N.date) {
+				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
+				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
+			}
+		}
+	} else {
+		for(k in 1:N.site){
+			for (t in site_start[k]:N.date) {
+				mois_est[k,t] <- mois[k,t]
+				temp_est[k,t] <- temp[k,t]
+			}
+		} 
+	}
+	
+	# Using 40th time point (values are constant over time)
+	if(spatialDriverUncertainty) {
+		for(p in 1:N.plot){
+			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
+			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
+		}
+	} else {
+		for(p in 1:N.plot){
+			pH_est[p,1] <- pH[p,1]
+			pC_est[p,1] <- pC[p,1]
+		} 
+	}
+	
+	# Priors for site effect covariance matrix ----
+	sig ~ dgamma(3,1)
+	
+	# Priors for site random effects:
+	for(s in 1:N.spp){
+		for(k in 1:N.site){
+			site_effect[k,s] ~ dnorm(0, sig)
+		}
+	}
+	
+	
+	# Priors for everything else ----
+	for (s in 1:N.spp){
+		rho[s] ~ dnorm(0, sd = 1)
+		sigma[s] ~ dgamma(.1, .1)
+		intercept[s] ~ dnorm(0, sd = 1)
+		for (n in 1:N.beta){
+			beta[s,n] ~ dnorm(0, sd = 1)
+		}
+	}
+	
+	
+}) #end NIMBLE model.
+
+
+
+ 
+check_continue <- function(run1, min_eff_size = 50) {
+	require(coda)
+	effsize <- effectiveSize(run1)
+	
+	# Get lowest non-zero effective sample size
+	lowest_eff_size <- min(effsize[effsize != 0])
+	
+	# If lower than our preset, continue sampling
+	if(lowest_eff_size < min_eff_size){
+		cat("\n Effective samples sizes too low:", min(lowest_eff_size))
+		return(TRUE)
+		#	}
+	} else {
+		cat("\n Effective samples sizes is sufficient:", min(lowest_eff_size))
+		return(FALSE)
+	}
+}
+

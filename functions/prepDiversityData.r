@@ -3,18 +3,19 @@
 # k <- 1
 # j <- 1
 # 
-# Read in covariate data 
-# chem_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")
+# Read in covariate data
 # min.prev = 3;
 # max.date = "20200101"
 # dom_soil_horizons <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/dominantHorizonsSite.rds")
 # predictor_data <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/all_predictor_data.rds")
+# full_timeseries = F
 
 prepDivData <- function(rank.df, 
 												max.date = "20170101",
 												predictor_data = NULL,
 													min.prev = 5,
-													dom_soil_horizons = NULL
+													dom_soil_horizons = NULL,
+												full_timeseries = F
 ){
 	require(padr)
 	require(tibble)
@@ -42,7 +43,7 @@ prepDivData <- function(rank.df,
 	# Subset to dates before "max.date"
 	max.date <- as.Date(max.date, format = "%Y%m%d"); print(max.date)
 	min.date <- as.Date("20130601", format = "%Y%m%d")
-	dates <- as.Date(dat$dates, format = "%Y%m%d")
+	dates <- dat$asDate
 	dat <- dat[which(dates < max.date & dates > min.date),]
 #	dat <- dat[which(dates > min.date),]
 	dat$dates <- NULL
@@ -75,10 +76,8 @@ prepDivData <- function(rank.df,
 	dat_subset <- with_coreIDs[which(with_coreIDs$plotID %in% keep_plots),]
 	
 	
-	# Fill in any empty dates
-	start_date <- paste0(substr(min(dates, na.rm = T), 1, 7), "-01")
-	start_date <- "2013-06-01"
-	poss_dates <- seq.Date(as.Date(start_date), as.Date(max(dates, na.rm = T)), by = "month")
+	# Fill in any empty dates"
+	poss_dates <- seq.Date(min.date, max.date, by = "month")
 	poss_dateID <- as.numeric(as.character(stringr::str_replace_all(substr(poss_dates, 1, 7), "-", "")))
 	
 	# Add dates for forecasts
@@ -191,6 +190,15 @@ prepDivData <- function(rank.df,
 	timepoint <- expanded_dat[match(dat_subset$dateID, expanded_dat$dateID),]$timepoint
 	names(timepoint) <- expanded_dat[match(dat_subset$dateID, expanded_dat$dateID),]$dateID
 	
+	# Don't want to return entire (mostly empty) timeseries unless using for forecasting
+	if (full_timeseries){
+		timepoint <- expanded_dat$timepoint
+		names(timepoint) <- expanded_dat$dateID
+	} else {
+		timepoint <- expanded_dat[match(dat_subset$dateID, expanded_dat$dateID),]$timepoint
+		names(timepoint) <- expanded_dat[match(dat_subset$dateID, expanded_dat$dateID),]$dateID
+	}
+	
 	
 	# subset covariates to plots/sites that have been observed for multiple (min.prev) dates, and before the max date
 	keep_sites <- unique(substr(keep_plots, 1, 4))
@@ -210,6 +218,14 @@ prepDivData <- function(rank.df,
 	nspp 				<- predictor_data$nspp %>% filter(rownames(predictor_data$nspp) %in% keep_plots)  %>% data.matrix() 
 	rc_grass 				<- predictor_data$rc_grass %>% filter(rownames(predictor_data$rc_grass) %in% keep_plots) %>% data.matrix() 
 	rc_exotic 				<- predictor_data$rc_exotic %>% filter(rownames(predictor_data$rc_exotic) %in% keep_plots) %>% data.matrix() 
+	relEM 				<- predictor_data$relEM_plot %>% filter(rownames(predictor_data$relEM_plot) %in% keep_plots) %>% data.matrix() 
+	LAI 				<- predictor_data$LAI %>% filter(rownames(predictor_data$LAI) %in% keep_sites) %>% data.matrix() 
+	
+	
+	
+	mo <- month(as.Date(paste0(colnames(mois), "01"), format="%Y%m%d"))
+	y_sin = sin((2*pi*mo)/12)
+	y_cos = cos((2*pi*mo)/12)
 	
 	site_start_temp <- site_start_index[site_start_index$siteID %in% keep_sites,]
 	plot_start_temp <- plot_start_index[plot_start_index$plotID %in% keep_plots,]
@@ -244,7 +260,8 @@ prepDivData <- function(rank.df,
 					 date_num = as.numeric(as.factor(dateID))) %>%
 		pivot_longer(cols = 4, values_to = "truth") %>% 
 		mutate(plot_num = match(plotID, names(plot_start)),
-					 site_num = match(siteID, names(site_start)))
+					 site_num = match(siteID, names(site_start)),
+					 timepoint = as.numeric(timepoint))
 	
 
 	return(list(y = y, 
@@ -268,8 +285,12 @@ prepDivData <- function(rank.df,
 							pC = pC,
 							pC_sd = pC_sd,
 							nspp = nspp,
+							LAI = LAI,
 							rc_grass = rc_grass,
 							rc_exotic = rc_exotic,
+							relEM = relEM,
+							y_sin = y_sin,
+							y_cos = y_cos,
 							dates_per_plot = dates_per_plot))
 }
 

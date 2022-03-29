@@ -32,8 +32,10 @@ sample_dat_legacy <- parseNEONsampleIDs(rownames(seqtab_legacy))
 ps_legacy <- phyloseq(otu_table(seqtab_legacy, taxa_are_rows = F), 
 											tax_table(new_tax_legacy), sample_data(sample_dat_legacy))
 
+ps_legacy_prune <- prune_samples(!sample_names(ps_legacy) %in% c(sample_dat$geneticSampleID, sample_dat$sampleID, sample_dat$sample), ps_legacy)
+
 # Combine legacy and recent!
-ps <- merge_phyloseq(ps_recent, ps_legacy)
+ps <- merge_phyloseq(ps_recent, ps_legacy_prune)
 
 
 # Assign functional groups
@@ -74,7 +76,7 @@ tax_rank <- "genus"
 n.taxa <- 30
 
 
-n.taxa <- 10
+n.taxa <- 5
 
 cal.out.bac <- list()
 val.out.bac <- list()
