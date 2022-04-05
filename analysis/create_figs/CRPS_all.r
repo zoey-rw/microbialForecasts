@@ -97,20 +97,23 @@ summary_mean <- summary_mean %>% mutate(
 #summary_median$decrease_in_accuracy <- summary_median$new_site_TRUE/summary_median$new_site_FALSE
 
 # Compare decrease in accuracy for fungi vs bacteria
-ggplot(summary_mean, aes(x = pretty_group, y = decrease_in_accuracy, color = pretty_group)) + 
+ggplot(summary_mean[summary_mean$fcast_type != "Diversity",], 
+			 aes(x = pretty_name, y = decrease_in_accuracy, color = pretty_group)) + 
+	# facet_grid(rows=vars(fcast_type), #cols = vars(pretty_group),
+	# 					 drop=T, scales = "free_x") +
+	#coord_trans(y = "log10") +
+	geom_jitter(aes(fill = pretty_group), shape=21, color="black", width=.1, height = 0, size=4) + 
+	ylab("Relative accuracy at new sites") + xlab(NULL) + 
+	theme_bw(base_size=18)+ scale_fill_manual(values = c("grey30","grey90")) + geom_hline(yintercept = 0, linetype=2) 
+
+
+ggplot(summary_mean, aes(x = pretty_group, y = decrease_in_accuracy)) + 
 	facet_grid(rows=vars(fcast_type), #cols = vars(pretty_group),
 						 drop=T, scales = "free_x") +
 	#coord_trans(y = "log10") +
-	geom_jitter( width=.1, height = 0, alpha = .5, size=4) + ylab("Relative accuracy at new sites") + xlab(NULL) + 
-	theme_bw(base_size=18)
-
-
-ggplot(summary_mean, aes(x = pretty_group, y = decrease_in_accuracy, color = pretty_group)) + 
-	facet_grid(rows=vars(fcast_type), #cols = vars(pretty_group),
-						 drop=T, scales = "free_x") +
-	#coord_trans(y = "log10") +
-	geom_jitter( width=.1, height = 0, alpha = .5, size=4) + ylab("Relative accuracy at new sites") + xlab(NULL) + 
-	theme_bw(base_size=18)
+	geom_jitter(aes(fill = pretty_group), shape=21, color="black", width=.1, height = 0, size=4) + 
+		ylab("Relative accuracy at new sites") + xlab(NULL) + 
+	theme_bw(base_size=18) + scale_fill_manual(values = c("grey30","grey90")) + geom_hline(yintercept = 0, linetype=2) 
 
 
 

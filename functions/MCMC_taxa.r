@@ -8,13 +8,14 @@ spatialDriverUncertainty <- TRUE
 scenario <- "full_uncertainty"
 nchains=3
 model_name = "cycl_only"
-model_name = "all_covariates"
+#model_name = "all_covariates"
 time_period = "calibration"
-time_period = "refit"
+#time_period = "refit"
 thin = 10
 iter_per_chunk = 1000
 thin = 5
-
+init_iter = 5000
+chain_no = 1
 run_MCMC <- function(k = 1, iter = 1000, init_iter = 100000, iter_per_chunk = 10000, burnin = 500, thin = 1,
 										 test = F,
 										 temporalDriverUncertainty = TRUE, spatialDriverUncertainty = TRUE,
@@ -23,6 +24,9 @@ run_MCMC <- function(k = 1, iter = 1000, init_iter = 100000, iter_per_chunk = 10
 										 model_name = "all_covariates",
 										 time_period = "calibration", chain_no = 1, 
 										 ...) {
+	#set.seed(chain_no)
+	
+
 	pacman::p_load(reshape2, parallel, nimble, coda, tidyverse) 
 	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepTaxonomicData.r")
 	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
@@ -64,6 +68,8 @@ run_MCMC <- function(k = 1, iter = 1000, init_iter = 100000, iter_per_chunk = 10
 		rank.df_spec <- rank.df[,colnames(rank.df) %in% keep_vec] 
 		tots <- rowSums(rank.df_spec[,7:ncol(rank.df_spec)])
 		rank.df_spec$other <- 1-tots
+		# Remove samples where more than 99% of reads are "Other"
+		rank.df_spec <- rank.df_spec %>% filter(tots > .01)
 		model.dat <- prepTaxonomicData(rank.df = rank.df_spec, min.prev = 3, max.date = "20200101")
 		
 	} else if (time_period == "calibration") {
@@ -81,6 +87,8 @@ run_MCMC <- function(k = 1, iter = 1000, init_iter = 100000, iter_per_chunk = 10
 		rank.df_spec <- rank.df[,colnames(rank.df) %in% keep_vec] 
 		tots <- rowSums(rank.df_spec[,7:ncol(rank.df_spec)])
 		rank.df_spec$other <- 1-tots
+		# Remove samples where more than 99% of reads are "Other"
+		rank.df_spec <- rank.df_spec %>% filter(tots > .01)
 		model.dat <- prepTaxonomicData(rank.df = rank.df_spec, min.prev = 3)
 		
 	} else cat("Missing specification of time period.")
@@ -130,6 +138,9 @@ run_MCMC <- function(k = 1, iter = 1000, init_iter = 100000, iter_per_chunk = 10
 										N.beta = n.beta
 	)
 	
+	constants$omega <- 0.0001 * diag(constants$N.spp)
+	constants$zeros = rep(0, constants$N.spp)
+	
 	# for output.
 	metadata <- list("rank.name" = rank.name,
 									 "niter" = iter,
@@ -138,28 +149,50 @@ run_MCMC <- function(k = 1, iter = 1000, init_iter = 100000, iter_per_chunk = 10
 									 "model_data" = model.dat$truth.plot.long)
 	
 	inits <- initsFun(constants, type = "tax")
+	cat("\nInits created")
+	
+	#inits
 	## Configure & compile model
 	Rmodel <- nimbleModel(code = Nimble_model,
 												constants = constants, data = list(y=model.dat$y),
 												inits = inits)
+	
+	#return(list(rnorm(1,0,1), Rmodel$plot_mu[1,1,30]))
+	
+	cat("\nModel compiled")
+	
 	# Compile model
 	cModel <- compileNimble(Rmodel)
-	nimbleOptions(multivariateNodesAsScalars = TRUE)
+	
+	
+	cat("\nModel compiled")
+	
+#	nimbleOptions(multivariateNodesAsScalars = TRUE)
 	# Configure & compile MCMC
 	mcmcConf <- configureMCMC(cModel, monitors = c("beta","sigma","site_effect",
 																								 "sig","intercept", 
 																								 "rho"),
 														monitors2 = c("plot_rel"), thin2 = 25,
-														useConjugacy = T)
+														useConjugacy = T, )
+	
+	cat("\nMCMC configured")
+	
+	#mcmcConf$removeSamplers(c('sigma', 'intercept', 'rho'))
+	#mcmcConf$addSampler(target = c('sigma', 'intercept', 'rho'), type = 'RW_block')
 	
 	myMCMC <- buildMCMC(mcmcConf)
+	cat("\nModel built")
+	
 	compiled <- compileNimble(myMCMC, project = Rmodel, resetFunctions = TRUE)
+	cat("\nMCMC compiled")
 	
 	#out.path2 <- gsub(".rds", paste0("_", format(Sys.time(), "%F_%H-%M-%S"), ".rds"), out.path)
 	out.path2 <- gsub(".rds", paste0("_chain", chain_no, ".rds"), out.path)
 	#iter_per_chunk <- 50000
 	
 	compiled$run(niter=init_iter, thin=thin, nburnin = burnin)
+	cat(paste0("\nInitial run finished for chain", chain_no))
+	
 	out.run<-as.mcmc(as.matrix(compiled$mvSamples))
 	out.run2<-as.mcmc(as.matrix(compiled$mvSamples2))
 	saveRDS(list(out.run, out.run2), out.path2)

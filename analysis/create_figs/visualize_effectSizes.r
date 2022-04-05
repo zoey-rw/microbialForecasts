@@ -11,9 +11,9 @@ sum.all.fg <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/dat
 sum.all.tax$beta_eff$fg_cat <- NA
 sum.all.tax$beta_eff$fg_cat <- ifelse(grepl("fun$", sum.all.tax$beta_eff$rank), "Fungal taxa", "Bacterial taxa")
 
-df <- rbind(sum.all.tax$beta_eff, sum.all.fg$beta_eff)
+df <- plyr::rbind.fill(sum.all.tax$beta_eff, sum.all.fg$full_uncertainty$beta_eff)
 
-df <- df[df$taxon_name != "other",]
+df <- df[which(!df$taxon_name %in% c("other")),]
 
 
 
@@ -55,6 +55,11 @@ df$effSize <- abs(df$`50%`)
 # ## GGPLOT
 sum.all <- df
 
+fg_summary <- sum.all[sum.all$rank=="functional_group",]
+fg_summary[grep("lytic", fg_summary$taxon),]$fg_cat <- "Decomposers"
+fg_summary[grep("methan", fg_summary$taxon),]$fg_cat <- "Methanotroph"
+
+saveRDS(sum.all, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/for_plotting_ranks.rds")
 
 ## NO FUNCTIONAL GROUPS
 
@@ -174,9 +179,6 @@ ggplot(data=sum.all,
 	) + scale_shape_manual(values = c(21, 16), name = NULL, 
 												 labels = c("Not significant","Significant")) 
 
-fg_summary <- sum.all[sum.all$rank=="functional_group",]
-fg_summary[grep("lytic", fg_summary$taxon_name),]$fg_cat <- "Decomposers"
-fg_summary[grep("methan", fg_summary$taxon_name),]$fg_cat <- "Methanotroph"
 
 # Functional groups only
 ggplot(data=fg_summary,
@@ -196,10 +198,11 @@ ggplot(data=fg_summary,
 		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
 	)
 
+
 # Only decomposers
 ggplot(data=fg_summary[fg_summary$fg_cat=="Decomposers",],
 			 aes(x = reorder(beta,effSize),y = effSize))+
-	geom_point(aes(color = as.factor(beta), shape=taxon_name), show.legend = F, size = 5) +
+	geom_point(aes(color = as.factor(beta), shape=taxon), show.legend = T, size = 5) +
 	labs(col = "Parameter", title = "Decomposers: absolute effect size") + 
 	xlab("Parameter")+ 
 	ylab(NULL)+
@@ -312,8 +315,9 @@ p2 <- ggplot(data=tax.all,
 
 
 gen <- sum.all[sum.all$rank=="genus_bac",]
-ggplot(data=gen,
+ggplot(data=sum.all,
 			 aes(x = taxon_name,y = effSize))+
+	facet_grid(cols = vars(rank), scales="free_x") +
 	geom_point(aes(color = as.factor(beta)), size = 4) +
 	labs(col = "Parameter", title = "Absolute effect size") + 
 	xlab("Genus")+ 
@@ -325,3 +329,14 @@ ggplot(data=gen,
 		axis.title=element_text(size=22,face="bold")
 		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
 	)
+
+# BiocManager::install("metagenomeFeatures")
+library(metagenomeFeatures)
+
+
+
+
+
+
+dada_res
+dada_res$seqtab.nochim 
