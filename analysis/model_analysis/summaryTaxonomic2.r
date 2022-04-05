@@ -34,6 +34,7 @@ cycl_only_key <- list("1" = "sin",
 
 file.list <- list.files(path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/taxa/", recursive = T,
 												#pattern = "^refit_samples",
+												pattern = "chain",
 												full.names = T)
 f <- file.list[[1]]
 
