@@ -458,15 +458,23 @@ nimbleModTaxa <- nimbleCode({
 	}
 	
 	
+	# # Priors for everything else ----
+	# for (s in 1:N.spp){
+	# 	rho[s] ~ dnorm(0, sd = 1)
+	# 	sigma[s] ~ dgamma(.1, .1)
+	# 	intercept[s] ~ dnorm(0, sd = 1)
+	# 	for (n in 1:N.beta){
+	# 		beta[s,n] ~ dnorm(0, sd = 1)
+	# 	}
+	# }
+	
 	# Priors for everything else ----
 	for (s in 1:N.spp){
-		rho[s] ~ dnorm(0, sd = 1)
 		sigma[s] ~ dgamma(.1, .1)
-		intercept[s] ~ dnorm(0, sd = 1)
-		for (n in 1:N.beta){
-			beta[s,n] ~ dnorm(0, sd = 1)
-		}
+		beta[s,1:N.beta] ~ dmnorm(zeros[1:N.beta], omega[1:N.beta, 1:N.beta])
 	}
+	rho[1:N.spp] ~ dmnorm(zeros[1:N.spp], omega[1:N.spp, 1:N.spp])
+	intercept[1:N.spp] ~ dmnorm(zeros[1:N.spp], omega[1:N.spp, 1:N.spp])
 	
 	
 }) #end NIMBLE model.
@@ -856,6 +864,9 @@ nimbleModTaxa <- nimbleCode({
  
 check_continue <- function(run1, min_eff_size = 50) {
 	require(coda)
+	
+	cat(paste0("\n Current size: ", nrow(run1)))
+	
 	effsize <- effectiveSize(run1)
 	
 	# Get lowest non-zero effective sample size
@@ -870,5 +881,46 @@ check_continue <- function(run1, min_eff_size = 50) {
 		cat("\n Effective samples sizes is sufficient:", min(lowest_eff_size))
 		return(FALSE)
 	}
+}
+
+
+combine_chains <- function(chain_paths, save = FALSE){
+	
+	# initialize
+	samples <- samples2 <- list()
+	for(i in 1:length(chain_paths)){
+		# paste model file path to chain number
+		chain <- readRDS(chain_paths[[i]])
+		samples[[i]] <- chain[[1]]
+		samples2[[i]] <- chain[[2]]
+	}
+	
+	nrows <- lapply(samples, nrow) %>% unlist()
+	min_nrow <- min(nrows)
+	
+	for(i in 1:length(chain_paths)){
+		current_nrow <- nrow(samples[[i]])
+		if (min_nrow < current_nrow){
+			print(i)
+			samples[[i]] <- as.mcmc(samples[[i]][(current_nrow-min_nrow+1):current_nrow,])
+		}
+	}
+	nrows <- lapply(samples2, nrow) %>% unlist()
+	min_nrow <- min(nrows)
+	for(i in 1:length(chain_paths)){
+		current_nrow <- nrow(samples2[[i]])
+		if (min_nrow < current_nrow){
+			print(i)
+			samples2[[i]] <- as.mcmc(samples2[[i]][(current_nrow-min_nrow+1):current_nrow,])
+		}
+	}
+	
+	out <- list(samples = as.mcmc.list(samples),
+							samples2 = as.mcmc.list(samples2))
+	
+	if(!isFALSE(save)){
+		saveRDS(out, file = save)
+	}
+	return(out)
 }
 

@@ -24,6 +24,8 @@ output.list = foreach(k=1:length(keep_fg_names),
 										 # .export=c("fcast_all_plots","ranks.keep","data_in"), .packages = c("tidyr","tidyverse","nimble"),
 											.errorhandling = 'pass') %dopar% {
 												
+												library(tidyverse)
+												
 												# Only functional groups; subset to one rank.
 												rank.name <- keep_fg_names[k]
 												cal.rank.df <- cal[[rank.name]] 
@@ -33,20 +35,38 @@ output.list = foreach(k=1:length(keep_fg_names),
 												
 												# Model truth/inputs
 												# Prep validation data
-												# model.cal.dat <- prepFunctionalData(rank.df = rank.df, min.prev = 3, max.date = "20170101")
-												# model_val <- prepFunctionalData(rank.df = rank.df[rank.df$plotID %in% model.cal.dat$plotID,], min.prev = 3, max.date = "20200801", full_timeseries = T)
-												
-												model_val <- prepFunctionalData(rank.df = rank.df, min.prev = 3, max.date = "20200801", full_timeseries = T)
+												model.cal.dat <- prepFunctionalData(rank.df = rank.df, 
+																														min.prev = 3, max.date = "20170101")
+												model_val <- prepFunctionalData(rank.df = 
+																													rank.df,#[rank.df$plotID %in% model.cal.dat$plotID,], 
+																												min.prev = 3, max.date = "20200101", full_timeseries = T)
 												
 												
 												scenario_list <- list()
-												for (scenario_name in names(model_outputs)){
-												scenario_list[[scenario_name]] <- fcast_all_plots(taxon_name = rank.name, 
-																																		 model.dat = model_val, 
-																																		 scenario = scenario_name,
-																				model_outputs = model_outputs,test=FALSE,
-																				N.beta = 6, Nmc = 10000, IC = .01)
+												for (scenario in c("full_uncertainty")){
+													
+													
+													model_list <- list()
+										
+													for (model_name in c("cycl_only", "all_covariates")){
+													
+												#for (scenario_name in names(model_outputs)){
+												out <- fcast_all_plots(taxon_name = rank.name, 
+																																		 model_val = model_val, 
+																																		 scenario = scenario,
+																				model_outputs = model_outputs,
+																				test=F,
+																				model_name = model_name,
+																				time_period = "calibration",
+																				Nmc = 10000, IC = .01)
+												
+												model_list[[model_name]] <- out
+												
+													}
+													out_scenario <- do.call(rbind, model_list)
+													scenario_list[[scenario]] <- out_scenario
 												}
+												
 												scenarios <- do.call(rbind, scenario_list)
 												return(scenarios)
 											}
@@ -66,9 +86,11 @@ out.data_all <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/d
 
 out.data <- out.data_all %>% filter(taxon_name == "copiotroph")
 out.data <- out.data_all %>% filter(taxon_name == "ectomycorrhizal")
-out.data <- out.data[out.data$plotID %in% c("HARV_001","BART_001","KONZ_024"),]
+
+#out.data <- out.data[out.data$time_period != "refit",]
+out.data <- out.data[out.data$plotID %in% c("HARV_001","BART_001","DSNY_001"),]
 out.data <- out.data[out.data$plotID %in% c("UKFS_031","NOGP_003","KONZ_024"),]
-out.data <- out.data[out.data$plotID %in% c("BART_001","CPER_001","DSNY_001"),]
+out.data <- out.data[out.data$plotID %in% c("BART_001","CPER_002","HARV_004"),]
 
 # Simple CI
 output.plot <- ggplot(out.data) +

@@ -7,27 +7,20 @@ source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFu
 
 sum.all.fg <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/fg_summaries.rds")
 sum.fg <- sum.all.fg$full_uncertainty$summary_df %>% filter(grepl("beta", rowname)) 
-sum.all.fg_refit <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/refit_fg_summaries.rds")
-sum.fg_refit <- sum.all.fg_refit$full_uncertainty$summary_df %>% filter(grepl("beta", rowname)) 
 
-sum.all.tax <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/allrank_summaries.rds")
-sum.tax <- sum.all.tax$summary_df %>% filter(taxon != "other" & grepl("beta", rowname)) 
-sum.all.tax_refit <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/refit_allrank_summaries.rds")
+sum.all.tax <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/allrank_summaries_bac.rds")
+sum.tax <- sum.all.tax$summary_df %>% filter(taxon != "other" & grepl("beta", rowname))
+# just until fixing the summary code
+sum.tax$beta <- ifelse(sum.tax$model_name=="cycl_only" & sum.tax$beta_num == 1, "sin", sum.tax$beta)
+sum.tax$beta <- ifelse(sum.tax$model_name=="cycl_only" & sum.tax$beta_num == 2, "cos", sum.tax$beta)
 
-# TODO: put this into summary code
-sum.tax_refit <- sum.all.tax_refit$summary_df %>% filter(taxon != "other" & grepl("beta", rowname)) 
 
 sum.div.all <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/div_summaries.rds")
 sum.div <- sum.div.all$summary_df %>% filter(uncert == "full_uncertainty" & grepl("beta", rowname))
-sum.div.all_refit <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/refit_div_summaries.rds")
-sum.div_refit <- sum.div.all_refit$summary_df %>% filter(uncert == "full_uncertainty" & grepl("beta", rowname))
 
 df <- data.table::rbindlist(list(sum.tax, 
 																 sum.fg, 
-																 sum.div, 
-																 sum.fg_refit, 
-																 sum.tax_refit,
-																 sum.div_refit), fill=TRUE)
+																 sum.div), fill=TRUE)
 
 df$pretty_group <- ifelse(df$group=="16S", "Bacteria", "Fungi")
 
@@ -57,13 +50,17 @@ df$rank <- ordered(df$rank, levels = c("genus_bac","genus_fun",
 																			 "phylum_bac","phylum_fun",
 																			 "functional_group"))
 
-df$beta <- ordered(df$beta, levels = c("Ectomycorrhizal trees",
-																			 "Plant species richness",
+
+
+df$beta <- ordered(df$beta, levels = c("sin", "cos", 
+																			 "Ectomycorrhizal trees",
+																			 "LAI",
 																			 "pC", 
 																			 "pH",
-																			 "Temperature", "Moisture"))
+																			 "Temperature", 
+																			 "Moisture","rho"))
 levels(df$beta)[levels(df$beta)=="Ectomycorrhizal trees"] <- "Ectomycorrhizal\ntrees"
-levels(df$beta)[levels(df$beta)=="Plant species richness"] <- "Plant species\nrichness"
+#levels(df$beta)[levels(df$beta)=="Plant species richness"] <- "Plant species\nrichness"
 
 
 saveRDS(df, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/all_fcast_effects.rds")
