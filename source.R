@@ -769,95 +769,95 @@ return(constants)
 
 
 
-nimbleModTaxa <- nimbleCode({ 
-	
-	# Loop through core observations ----
-	for(i in 1:N.core){
-		y[i,1:N.spp] ~ ddirch(plot_mu[plot_num[i], 1:N.spp, timepoint[i]])
-	}
-	
-	# Plot-level process model ----
-	for(s in 1:N.spp){
-		for(p in 1:N.plot){
-			for (t in plot_start[p]) {
-				plot_mu[p,s,t] ~ dgamma(0.5, 1) # Plot means for first date
-				# Convert back to relative abundance
-				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
-			}
-			
-			for (t in plot_index[p]:N.date) {
-				# Previous value * rho
-				log(Ex[p,s,t]) <- rho[s] * log(plot_mu[p,s,t-1]) + 
-					beta[s,1]*temp_est[plot_site_num[p],t] +
-					beta[s,2]*mois_est[plot_site_num[p],t] +
-					beta[s,3]*pH_est[p,1] +
-					beta[s,4]*pC_est[p,1] +
-					beta[s,5]*relEM[p,t] +
-					beta[s,6]*LAI[plot_site_num[p],t] +
-					beta[s,7]*sin_mo[t] + beta[s,8]*cos_mo[t] +
-					site_effect[plot_site_num[p],s] +
-					intercept[s]
-				# Add process error (sigma)
-				plot_mu[p,s,t] ~ dnorm(Ex[p,s,t], sigma[s])
-				# Convert back to relative abundance
-				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
-			}
-		}
-	}
-	
-	# Add driver uncertainty if desired ----
-	if(temporalDriverUncertainty) {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
-				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
-			}
-		}
-	} else {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] <- mois[k,t]
-				temp_est[k,t] <- temp[k,t]
-			}
-		} 
-	}
-	
-	# Using 40th time point (values are constant over time)
-	if(spatialDriverUncertainty) {
-		for(p in 1:N.plot){
-			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
-			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
-		}
-	} else {
-		for(p in 1:N.plot){
-			pH_est[p,1] <- pH[p,1]
-			pC_est[p,1] <- pC[p,1]
-		} 
-	}
-	
-	# Priors for site effect covariance matrix ----
-	sig ~ dgamma(3,1)
-	
-	# Priors for site random effects:
-	for(s in 1:N.spp){
-		for(k in 1:N.site){
-			site_effect[k,s] ~ dnorm(0, sig)
-		}
-	}
-	
-	
-	# Priors for everything else ----
-	for (s in 1:N.spp){
-		rho[s] ~ dnorm(0, sd = 1)
-		sigma[s] ~ dgamma(.1, .1)
-		intercept[s] ~ dnorm(0, sd = 1)
-		for (n in 1:N.beta){
-			beta[s,n] ~ dnorm(0, sd = 1)
-		}
-	}
-	
-	
-}) #end NIMBLE model.
+# nimbleModTaxa <- nimbleCode({ 
+# 	
+# 	# Loop through core observations ----
+# 	for(i in 1:N.core){
+# 		y[i,1:N.spp] ~ ddirch(plot_mu[plot_num[i], 1:N.spp, timepoint[i]])
+# 	}
+# 	
+# 	# Plot-level process model ----
+# 	for(s in 1:N.spp){
+# 		for(p in 1:N.plot){
+# 			for (t in plot_start[p]) {
+# 				plot_mu[p,s,t] ~ dgamma(0.5, 1) # Plot means for first date
+# 				# Convert back to relative abundance
+# 				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
+# 			}
+# 			
+# 			for (t in plot_index[p]:N.date) {
+# 				# Previous value * rho
+# 				log(Ex[p,s,t]) <- rho[s] * log(plot_mu[p,s,t-1]) + 
+# 					beta[s,1]*temp_est[plot_site_num[p],t] +
+# 					beta[s,2]*mois_est[plot_site_num[p],t] +
+# 					beta[s,3]*pH_est[p,1] +
+# 					beta[s,4]*pC_est[p,1] +
+# 					beta[s,5]*relEM[p,t] +
+# 					beta[s,6]*LAI[plot_site_num[p],t] +
+# 					beta[s,7]*sin_mo[t] + beta[s,8]*cos_mo[t] +
+# 					site_effect[plot_site_num[p],s] +
+# 					intercept[s]
+# 				# Add process error (sigma)
+# 				plot_mu[p,s,t] ~ dnorm(Ex[p,s,t], sigma[s])
+# 				# Convert back to relative abundance
+# 				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
+# 			}
+# 		}
+# 	}
+# 	
+# 	# Add driver uncertainty if desired ----
+# 	if(temporalDriverUncertainty) {
+# 		for(k in 1:N.site){
+# 			for (t in site_start[k]:N.date) {
+# 				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
+# 				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
+# 			}
+# 		}
+# 	} else {
+# 		for(k in 1:N.site){
+# 			for (t in site_start[k]:N.date) {
+# 				mois_est[k,t] <- mois[k,t]
+# 				temp_est[k,t] <- temp[k,t]
+# 			}
+# 		} 
+# 	}
+# 	
+# 	# Using 40th time point (values are constant over time)
+# 	if(spatialDriverUncertainty) {
+# 		for(p in 1:N.plot){
+# 			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
+# 			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
+# 		}
+# 	} else {
+# 		for(p in 1:N.plot){
+# 			pH_est[p,1] <- pH[p,1]
+# 			pC_est[p,1] <- pC[p,1]
+# 		} 
+# 	}
+# 	
+# 	# Priors for site effect covariance matrix ----
+# 	sig ~ dgamma(3,1)
+# 	
+# 	# Priors for site random effects:
+# 	for(s in 1:N.spp){
+# 		for(k in 1:N.site){
+# 			site_effect[k,s] ~ dnorm(0, sig)
+# 		}
+# 	}
+# 	
+# 	
+# 	# Priors for everything else ----
+# 	for (s in 1:N.spp){
+# 		rho[s] ~ dnorm(0, sd = 1)
+# 		sigma[s] ~ dgamma(.1, .1)
+# 		intercept[s] ~ dnorm(0, sd = 1)
+# 		for (n in 1:N.beta){
+# 			beta[s,n] ~ dnorm(0, sd = 1)
+# 		}
+# 	}
+# 	
+# 	
+# }) #end NIMBLE model.
 
 
 
@@ -883,40 +883,117 @@ check_continue <- function(run1, min_eff_size = 50) {
 	}
 }
 
+# 
+# combine_chains <- function(chain_paths, save = FALSE){
+# 	
+# 	# initialize
+# 	samples <- samples2 <- metadata <- list()
+# 	for(i in 1:length(chain_paths)){
+# 		print(i)
+# 		# paste model file path to chain number
+# 		chain <- readRDS(chain_paths[[i]])
+# 		samples[[i]] <- chain[[1]]
+# 		samples2[[i]] <- chain[[2]]
+# 		metadata[[i]] <- chain[[3]]
+# 	}
+# 	
+# 	nrows <- lapply(samples, nrow) %>% unlist()
+# 	min_nrow <- min(nrows)
+# 	
+# 	for(i in 1:length(chain_paths)){
+# 		current_nrow <- nrow(samples[[i]])
+# 		if (min_nrow < current_nrow){
+# 			print(i)
+# 			samples[[i]] <- as.mcmc(samples[[i]][(current_nrow-min_nrow+1):current_nrow,])
+# 		}
+# 	}
+# 	nrows <- lapply(samples2, nrow) %>% unlist()
+# 	min_nrow <- min(nrows)
+# 	for(i in 1:length(chain_paths)){
+# 		current_nrow <- nrow(samples2[[i]])
+# 		if (min_nrow < current_nrow){
+# 			print(i)
+# 			samples2[[i]] <- as.mcmc(samples2[[i]][(current_nrow-min_nrow+1):current_nrow,])
+# 		}
+# 	}
+# 	
+# 	out <- list(samples = as.mcmc.list(samples),
+# 							samples2 = as.mcmc.list(samples2),
+# 							metadata = metadata[[1]])
+# 	
+# 	if(!isFALSE(save)){
+# 		saveRDS(out, file = save)
+# 	}
+# 	return(out)
+# }
 
-combine_chains <- function(chain_paths, save = FALSE){
+
+
+
+
+combine_chains <- function(chain_paths, 
+													 save = FALSE, 
+													 cut_size1 = NULL, 
+													 cut_size2 = NULL){
+	require(coda)
+	require(tidyverse)
+	
+	
+	if (is.null(cut_size1)) cut_size1 <- 19999 
+	if (is.null(cut_size2)) cut_size2 <- 9999 
+	
 	
 	# initialize
-	samples <- samples2 <- list()
+	samples <- samples2 <- metadata <- list()
 	for(i in 1:length(chain_paths)){
+		
+		print(i)
 		# paste model file path to chain number
 		chain <- readRDS(chain_paths[[i]])
-		samples[[i]] <- chain[[1]]
-		samples2[[i]] <- chain[[2]]
+		nrow_samples <- nrow(chain[[1]])
+		nrow_samples2 <- nrow(chain[[2]])
+		
+		if (nrow_samples < cut_size1) {
+			cut_size1 <- nrow_samples
+		}
+		
+		samples[[i]] <- as.mcmc(as.matrix(window(chain[[1]], nrow_samples-cut_size1, nrow_samples, 1)))
+		
+		
+		if (nrow_samples2 < cut_size2) {
+			cut_size2 <- nrow_samples2
+		}
+		samples2[[i]] <- as.mcmc(as.matrix(window(chain[[2]], nrow_samples2-cut_size1, nrow_samples2, 1)))
+		
+		metadata[[i]] <- chain[[3]]
 	}
+	
 	
 	nrows <- lapply(samples, nrow) %>% unlist()
 	min_nrow <- min(nrows)
-	
 	for(i in 1:length(chain_paths)){
 		current_nrow <- nrow(samples[[i]])
 		if (min_nrow < current_nrow){
 			print(i)
-			samples[[i]] <- as.mcmc(samples[[i]][(current_nrow-min_nrow+1):current_nrow,])
+			samples[[i]] <- as.mcmc(as.matrix(window(samples[[i]], (current_nrow-min_nrow+1), current_nrow, 1)))
 		}
 	}
+	
+	
 	nrows <- lapply(samples2, nrow) %>% unlist()
 	min_nrow <- min(nrows)
 	for(i in 1:length(chain_paths)){
 		current_nrow <- nrow(samples2[[i]])
 		if (min_nrow < current_nrow){
 			print(i)
-			samples2[[i]] <- as.mcmc(samples2[[i]][(current_nrow-min_nrow+1):current_nrow,])
+			samples2[[i]] <- as.mcmc(as.matrix(window(samples2[[i]], (current_nrow-min_nrow+1), current_nrow, 1)))
 		}
 	}
 	
+	
 	out <- list(samples = as.mcmc.list(samples),
-							samples2 = as.mcmc.list(samples2))
+							samples2 = as.mcmc.list(samples2),
+							metadata = metadata[[1]])
 	
 	if(!isFALSE(save)){
 		saveRDS(out, file = save)
@@ -924,3 +1001,5 @@ combine_chains <- function(chain_paths, save = FALSE){
 	return(out)
 }
 
+
+norm_sample <- function(x, y) Rfast::Rnorm(1, x, y)

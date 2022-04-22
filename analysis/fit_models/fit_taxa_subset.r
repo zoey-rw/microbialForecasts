@@ -19,13 +19,14 @@ n.groups <- 10 # Number of taxonomic ranks
 # 										spatialDriverUncertainty = c(rep(TRUE, n.groups),
 # 																								 rep(FALSE, n.groups)))
 
-params = data.frame(group = 1:n.groups)
+params = data.frame(group = 1:n.groups, rank.names = tax_names)
 params <- rbind(cbind(params, model_name = "cycl_only"),
 								cbind(params, model_name = "all_covariates"))
 params <- rbind(cbind(params, time_period = "calibration"),
 								cbind(params, time_period = "refit"))
 params$temporalDriverUncertainty <- T
 params$spatialDriverUncertainty <- T
+params$scenario <- "full_uncertainty"
 
 to_run1 <- grep("full_uncertainty", params$scenario) 
 to_run2 <- grep("calibration", params$time_period) 
@@ -38,11 +39,23 @@ pacman::p_load(doParallel, reshape2, nimble, coda, tidyverse)
 
 
 
+
+# to_rerun <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/taxa/to_rerun.rds")
+# 
+# params$id <- paste(params$rank.names, params$time_period, params$model_name)
+# to_rerun$id <- paste(to_rerun$rank.names, to_rerun$time_period, to_rerun$model)
+# params <- params[which(params$id %in% to_rerun$id),]
+
+
+params <- params[(params$rank.names=="order_bac" & params$model_name == "all_covariates")|
+								 	(params$rank.names=="family_fun" & params$model_name == "all_covariates")|
+								 	(params$rank.names=="class_bac" & params$model_name == "all_covariates"),]
+
 # Create function that calls run_MCMC for each uncertainty scenario
 run_scenarios <- function(j, chain) {
 	print(params[j,])
-	out <- run_MCMC(k = params$group[[j]], iter_per_chunk = 50000, init_iter = 100000,
-									iter = 350000, burnin = 50000, thin = 20, chain_no = chain,
+	out <- run_MCMC(k = params$group[[j]], iter_per_chunk = 50000, init_iter = 500000,
+									iter = 350000, burnin = 350000, thin = 20, chain_no = chain,
 									test=F, 
 									temporalDriverUncertainty = params$temporalDriverUncertainty[[j]], 
 									spatialDriverUncertainty = params$spatialDriverUncertainty[[j]],
@@ -56,7 +69,7 @@ run_scenarios <- function(j, chain) {
 
 # 
 # 
-logfile <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/analysis/fit_models/log/", tax_names[params$group[[k]]], "_", params$model_name[[k]], "_", params$time_period[[k]], ".log")
+logfile <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/analysis/fit_models/log/", params$rank.names[[k]], "_", params$model_name[[k]], "_", params$time_period[[k]], ".log")
 cl <- makeCluster(4, type="PSOCK", outfile=logfile)
 registerDoParallel(cl)
 #Run for multiple chains, in parallel (via PSOCK)
@@ -69,3 +82,4 @@ output.list = foreach(chain=c(1:4),
 
 #run_scenarios(k)
 stopCluster(cl)
+
