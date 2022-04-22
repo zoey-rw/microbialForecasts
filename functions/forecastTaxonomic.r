@@ -1,112 +1,60 @@
-# Function to forecast taxonomic groups at all NEON sites, using parameters estimated from models (from summary script) 
+# Function to forecast taxonomic groups at all NEON sites, using parameters estimated from model samples
 # 
+##### Use Nmc samples to make predictions, returns a dataframe with Nmc rows 
+#
 
-# N.beta = 6
-# Nmc <- 15000
-# IC = .01
-# model_outputs = data_in
-# rank.name = "phylum_bac"
-# NT = 80
+# hindcast.plot <- taxa_fcast(
+# 	plotID = plotID,
+# 	covar = covar,
+# 	param_samples = param_samples,
+# 	ic = ic,
+# 	truth.plot.long = truth.plot.long,
+# 	Nmc = 5000, 
+# 	plot_summary = plot_summary,
+# 	plot_start_date = plot_start_date)
 
-fcast_all_plots <- function(model_val,
-														model_outputs,
-														rank.name = NULL,
-														taxon_name = NULL,
-														Nmc = 15000,
-														NT = 80,
-														test = F,
-														N.beta = 6, IC = .3){
-	require(dplyr)
-	require(tidyr)
-	require(nimble)
+taxa_fcast <- function(
+	...
+	# plotID = plotID,
+	# covar = covar,
+	# param_samples = param_samples,
+	# ic = ic,
+	# truth.plot.long = truth.plot.long,
+	# model.inputs = model.inputs,
+	# Nmc = 5000, 
+	# plot_summary = plot_summary,
+	# plot_start_date = plot_start_date
+	) {
 	
-	# Create key of all available plots for given taxon
-	truth.plot.long <- model_val$truth.plot.long
-	val_key <- truth.plot.long %>% 
-		select(siteID, plotID, dateID, date_num, plot_num, site_num) %>% distinct()
-	val_plot_key <- val_key %>% select(-c(dateID, date_num)) %>% distinct()
+	siteID <- substr(plotID, 1, 4)
 	taxon_names <- truth.plot.long %>% select(species) %>% distinct() %>% unlist()
-	cat(paste0("\nGroup: ", rank.name))
 	
-	# Filter to rank of interest, exclude site effects
-	model_plot_est <- model_outputs$plot_est %>% filter(rank.name==!!rank.name) 
-	model_out <- model_outputs$summary_df %>% filter(rank.name==!!rank.name) 
+	n.taxa <- length(taxon_names)
+	all_tax_abs <- array(dim = c(Nmc, n.taxa, NT))
 	
-	ci_list <- list()
-	# Loop through all plots
-		if (test){
-			to_loop <- c(1,20, 30, 50, 84, 85, 87, 100, 150) 
-		} else {
-			to_loop <-  1:nrow(val_plot_key)
-		}
- for (plot_num in to_loop){
-	#for (plot_num in c(1:2)){
-			site_num <- val_key %>% dplyr::filter(plot_num == !!plot_num) %>% 
-			select(site_num) %>% unique() %>% unlist()
-		siteID <- val_key %>% dplyr::filter(plot_num == !!plot_num) %>% 
-			select(siteID) %>% unique() %>% unlist()
-		plotID <- val_key %>% dplyr::filter(plot_num == !!plot_num) %>% 
-			select(plotID) %>% unique() %>% unlist()
-		cat(paste0("\nForecasting for plot: ", plotID))
-		
-		
-		# Parameters to decide forecast length
-		start_date <- model_val$site_start[siteID]
-		
-		# Get covariates for site/plot/date
-		covar <- array(NA, dim = c(Nmc, N.beta, NT))
-		set.seed(1)
-		for (time in start_date:NT) {
-			covar[,,time] <- c(rnorm(Nmc, model_val$temp[site_num, time], 
-															 model_val$temp_sd[site_num, time]),
-												 rnorm(Nmc, model_val$mois[site_num, time], 
-												 			model_val$mois_sd[site_num, time]),
-												 rnorm(Nmc, model_val$pH[plot_num], 
-												 			model_val$pH_sd[plot_num]),
-												 rnorm(Nmc, model_val$pC[plot_num], 
-												 			model_val$pC_sd[plot_num]),
-												 rep(model_val$nspp[plot_num, time], Nmc),
-												 rep(model_val$relEM[plot_num, time], Nmc))
-		}
-		# TODO: add this uncertainty back
-		# for (time in start_date:NT) {
-		# 	covar[,,time] <- c(rep(model_val$temp[site_num, time], Nmc),
-		# 										 rep(model_val$mois[site_num, time], Nmc),
-		# 										 rep(model_val$pH[plot_num], Nmc),
-		# 										 rep(model_val$pC[plot_num], Nmc),
-		# 										 rep(model_val$nspp[plot_num, time], Nmc),
-		# 										 rep(model_val$relEM[plot_num, time], Nmc))
-		# }
-		# 
+	for (i in 1:n.taxa){
+		taxon_name <- taxon_names[i]
+		print(paste0("Forecasting for taxon: ", taxon_name))
+
 		# Check whether there's already an estimated site effect. If not, we'll sample!
-		is_new_site <- ifelse(siteID %in% model_out$siteID, FALSE, TRUE)
-		
-		n.taxa <- length(taxon_names)
-		all_tax_abs <- array(dim = c(Nmc, n.taxa, NT))
-		
-		for (i in 1:n.taxa){
-			taxon_name <- taxon_names[i]
-			print(paste0("Forecasting for taxon: ", taxon_name))
-			taxon_summary <- model_out %>% filter(taxon == !!taxon_name)
-			
+		is_new_site <- ifelse(siteID %in% truth.plot.long$siteID, FALSE, TRUE)
 		if (!is_new_site) {
-			site_effect <- taxon_summary %>% filter(taxon_summary$siteID == !!siteID & 
-																						grepl("site_effect", rowname)) #%>% 
-			#site_effect_samp <- rnorm(Nmc, site_effect$Mean, site_effect$SD)
+
+			plot_obs <- truth.plot.long %>% filter(plotID==!!plotID) %>% select(-c(plot_num,site_num))
+			site_num <- unique(truth.plot.long[truth.plot.long$siteID==siteID,]$site_num)
+			site_param <- paste0("site_effect[", site_num, ", ", i, "]")
+			site_effect <- 	param_samples[row_samples,] %>% select(!!site_param) %>% unlist()
 			
-			# TODO: change back
-			site_effect_samp <- site_effect %>% select(Mean) %>% unlist()
-			
-			plot_est <- model_plot_est %>% 
-				filter(taxon==!!taxon_name & plotID == !!plotID & rank == rank.name) %>% 
-				select(-c(plot_num, site_num, dateID)) #%>% rename(taxon = name)
-			# set initial condition to first observed value
-			IC <- as.numeric(na.omit(plot_est$truth)[1])
+			plot_est <- plot_summary %>% 
+				filter(taxon==!!taxon_name & plotID == !!plotID) %>% 
+				select(-c(plot_num, site_num, dateID)) 
 		} else {
+			
+			plot_obs <- model.inputs$truth.plot.long %>% filter(plotID==!!plotID) %>% select(-c(plot_num,site_num))
 			# Sample from site effect variance
-			site_effect_tau <- model_out %>% filter(grepl("sig$", rowname))
+			site_effect_tau <- param_samples[row_samples,] %>% select(grep("sig$", colnames(.))) %>% unlist()
 			# Convert precision to SD
-			site_effect_tau <- unlist(lapply(site_effect_tau$Mean, 
+			site_effect_tau <- unlist(lapply(site_effect_tau, 
 																			 function(y) lapply(y, function(x) 1/sqrt(x))))
 			site_tau <- mean(site_effect_tau)
 			new_site_effect <- data.frame(rnorm(Nmc, 0, site_tau))
@@ -114,70 +62,58 @@ fcast_all_plots <- function(model_val,
 		}
 		
 		### Get other parameter estimates
-		rho <- taxon_summary[grep("rho", taxon_summary$rowname),]
-		rho_samp <-  rnorm(Nmc, rho$Mean, rho$SD)
-		beta <- taxon_summary[grepl("beta", taxon_summary$rowname),]
-		int <- taxon_summary[grepl("int", taxon_summary$rowname),]
-		# TODO: change back
-		# beta_samp <- apply(beta, 1, function(x) {
-		# 	rnorm(Nmc, as.numeric(x[["Mean"]]), as.numeric(x[["SD"]]))
-		# })
-		sigma <- taxon_summary[grep("sigma", taxon_summary$rowname),]
+		### Rho
+		rho <- param_samples[row_samples,] %>% select(grep("rho", colnames(.))) %>% 
+			select(grep(paste0("[",i,"]"), colnames(.), fixed = T)) %>% unlist()
+		### Betas
+		betas <- param_samples[row_samples,] %>% select(grep("beta", colnames(.))) %>% 
+			select(grep(paste0("[",i,","), colnames(.), fixed = T))
+		### Intercept
+		intercept <- param_samples[row_samples,] %>% select(grep("intercept", colnames(.))) %>% 
+			select(grep(paste0("[",i,"]"), colnames(.), fixed = T)) %>% unlist()
+		### Process error 
+		sigma_samp <- param_samples[row_samples,] %>% select(grep("sigma", colnames(.))) %>% 
+			select(grep(paste0("[",i,"]"), colnames(.), fixed = T)) %>% unlist()
+		sigma <- lapply(sigma_samp, function(y) lapply(y, function(x) 1/sqrt(x))) %>% unlist()
 		
-		sigma_samp <- rep(1/sqrt(sigma$Mean), Nmc)
-		beta_samp <- matrix(rep(beta$Mean, Nmc), ncol = 6, byrow = T)
-		rho_samp <- rep(rho$Mean, Nmc)
-		int_samp <- rep(int$Mean, Nmc)
 		
-		# sigma_samp <-  rnorm(Nmc, sigma$Mean, sigma$SD)
-		# # Convert tau to SD
-		# sigma_samp <- suppressWarnings(1/sqrt(sigma_samp))
-		# # Replace any NAs
-		# to_replace <- length(sigma_samp[is.na(sigma_samp)])
-		# sigma_samp[is.na(sigma_samp)] <- sample(na.omit(sigma_samp), to_replace)
-		# just seeing if this helps..
-		#sigma_samp <- 0
 		
-		#### MAKE PREDICTIONS!!! ####
-		## set up storage
-		predict <- matrix(NA, Nmc, NT)
-		## simulate
-		
-		#for (time in (start_date):NT) {
-#		time <- 13
-		### Initial condition uncertainty??? # Yes: input as argument
-		x <- IC
-		
-		for (time in (start_date+1):NT) {
-			Z  <- covar[, ,time]
-			
-			mu <- rho_samp * log(x) + beta_samp[,1]*Z[,1] +
-				beta_samp[,2]*Z[,2] +
-				beta_samp[,3]*Z[,3] +
-				beta_samp[,4]*Z[,4] +
-				beta_samp[,5]*Z[,5] +
-				beta_samp[,6]*Z[,6] + site_effect_samp + int_samp
-			
-			# Truncated to prevent negative values
-			x <- truncnorm::rtruncnorm(Nmc, mean = exp(mu), sd = sigma_samp, a = 0, b = Inf)
-		
-			# Save to array
-			all_tax_abs[,i,time] <- x
+		# If the model only had sin/cosine, remove the other covariate data
+		if (ncol(betas)==2) {
+			if(ncol(covar)==8) {
+				covar <- covar[,c(7,8),]
 			}
 		}
 		
-		# Make abundances relative within each MCMC sample
-		all_tax_rel <- array(dim = c(Nmc, n.taxa, NT))
-		for (time in (start_date+1):NT) {
-			all_tax_rel[,,time] <- all_tax_abs[,,time]/rowSums(all_tax_abs[,,time])
-		}
-		colnames(all_tax_rel) <- taxon_names
-		
-		all_tax_single_plot <- list() 
-		for (i in 1:n.taxa){
-			taxon_name <- taxon_names[i]
+		plot_start_date <- model.inputs$plot_index[plotID]
+		predict <- matrix(NA, Nmc, NT)
+		## simulate
+		x <- exp(ic)
+		for (time in (plot_start_date+1):NT) {
+			Z  <- covar[, ,time]
+			mu <- rho * log(x) + apply(Z * betas, 1, sum) + site_effect + intercept
+			# norm_sample <- function(x, y) truncnorm::rtruncnorm((1, x, y)
+			# x <- unlist(Map(norm_sample, mu, sigma))
 			
-			predict <- all_tax_rel[,i,]
+			# Truncated to prevent negative values
+			x <- truncnorm::rtruncnorm(Nmc, mean = exp(mu), sd = sigma, a = 0, b = Inf)
+			# Save to array
+			all_tax_abs[,i,time] <- x
+		}
+	}
+	
+	# Make abundances relative within each MCMC sample
+	all_tax_rel <- array(dim = c(Nmc, n.taxa, NT))
+	for (time in (start_date+1):NT) {
+		all_tax_rel[,,time] <- all_tax_abs[,,time]/rowSums(all_tax_abs[,,time])
+	}
+	colnames(all_tax_rel) <- taxon_names
+	
+	# Create output dataframe
+	all_tax_single_plot <- list() 
+	for (i in 1:n.taxa){
+		taxon_name <- taxon_names[i]
+		predict <- all_tax_rel[,i,]
 		ci <- as.data.frame(t(apply(predict, 2, quantile, c(0.025,0.5,0.975), na.rm=T)))
 		ci <- ci %>% mutate(mean = apply(predict, 2, mean, na.rm=T),
 												sd = apply(predict, 2, sd, na.rm=T),
@@ -192,32 +128,22 @@ fcast_all_plots <- function(model_val,
 												new_site = ifelse(is_new_site, T, F))
 		colnames(ci)[1:3] <- c("lo","med","hi")
 		
-		
 		if (!is_new_site) {
-		plot_est <- model_plot_est %>% 
-			filter(taxon==!!taxon_name & plotID == !!plotID & rank == rank.name) %>% 
-			select(-c(plot_num, site_num, truth, dateID)) #%>% rename(taxon = name)
-		ci <- left_join(ci, plot_est, by = intersect(colnames(ci), colnames(plot_est)))
+			plot_est_join <- plot_est %>% 
+				select(-c(truth)) 
+			ci <- left_join(ci, plot_est_join, by = intersect(colnames(ci), colnames(plot_est_join)))
 		}
 		ci$timepoint <- NULL
 		ci$truth <- NULL
-		ci <- left_join(ci, truth.plot.long, by = c("date_num", "plotID", "siteID", "species"))
-		# Check concurrence between model and formula estimates
-		# plot(ci$med, ci$`50%`); abline(0,1)
-		#print(tail(ci))
+		ci <- left_join(ci, plot_obs, by = c("date_num", "plotID", "siteID", "species"))
 		all_tax_single_plot[[i]] <- ci
-		}
-		ci_single_plot <-  do.call(rbind, all_tax_single_plot)
-		ci_single_plot$dates <- fixDate(ci_single_plot$dateID)
-		
-		ci_list[[plotID]] <- ci_single_plot
-		# plot(ci_single_plot$med, ci_single_plot$truth, col = as.factor(ci_single_plot$species)); abline(0,1)
-		# plot(ci_single_plot$mean, ci_single_plot$truth, col = as.factor(ci_single_plot$species)); abline(0,1)
-		
 	}
-	ci_allplots <- do.call(plyr::rbind.fill, ci_list)
-	return(ci_allplots)
+	ci_single_plot <-  do.call(rbind, all_tax_single_plot)
+	ci_single_plot$dates <- fixDate(ci_single_plot$dateID)
+	
+	return(ci_single_plot)
 }
+
 
 
 # 

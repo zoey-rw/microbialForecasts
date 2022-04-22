@@ -1,21 +1,21 @@
-iter <- 1000
-burnin <- 500
-thin <- 1
-test = F
-k = 1
-temporalDriverUncertainty <- TRUE
-spatialDriverUncertainty <- TRUE
-scenario <- "full_uncertainty"
-nchains=3
-model_name = "cycl_only"
-#model_name = "all_covariates"
-time_period = "calibration"
-#time_period = "refit"
-thin = 10
-iter_per_chunk = 1000
-thin = 5
-init_iter = 5000
-chain_no = 1
+# iter <- 1000
+# burnin <- 500
+# thin <- 1
+# test = F
+# k = 1
+# temporalDriverUncertainty <- TRUE
+# spatialDriverUncertainty <- TRUE
+# scenario <- "full_uncertainty"
+# nchains=3
+# model_name = "cycl_only"
+# #model_name = "all_covariates"
+# time_period = "calibration"
+# #time_period = "refit"
+# thin = 10
+# iter_per_chunk = 1000
+# thin = 5
+# init_iter = 5000
+# chain_no = 1
 run_MCMC <- function(k = 1, iter = 1000, init_iter = 100000, iter_per_chunk = 10000, burnin = 500, thin = 1,
 										 test = F,
 										 temporalDriverUncertainty = TRUE, spatialDriverUncertainty = TRUE,
@@ -140,16 +140,20 @@ run_MCMC <- function(k = 1, iter = 1000, init_iter = 100000, iter_per_chunk = 10
 	
 	constants$omega <- 0.0001 * diag(constants$N.spp)
 	constants$zeros = rep(0, constants$N.spp)
+	if (constants$N.spp < 8) {
+		constants$omega <- 0.0001 * diag(8)
+		constants$zeros = rep(0, 8)
+	}
 	
 	# for output.
 	metadata <- list("rank.name" = rank.name,
-									 "niter" = iter,
+									 "niter" = init_iter,
 									 "nburnin" = burnin,
 									 "thin" = thin,
 									 "model_data" = model.dat$truth.plot.long)
 	
 	inits <- initsFun(constants, type = "tax")
-	cat("\nInits created")
+	cat("\nInits created\n")
 	
 	#inits
 	## Configure & compile model
@@ -195,16 +199,18 @@ run_MCMC <- function(k = 1, iter = 1000, init_iter = 100000, iter_per_chunk = 10
 	
 	out.run<-as.mcmc(as.matrix(compiled$mvSamples))
 	out.run2<-as.mcmc(as.matrix(compiled$mvSamples2))
-	saveRDS(list(out.run, out.run2), out.path2)
+	saveRDS(list(samples = out.run, samples2 = out.run2, metadata = metadata), 
+					out.path2)
 
-	continue <- check_continue(out.run, min_eff_size = 50) 
+	continue <- check_continue(out.run, min_eff_size = 10) 
 	while (continue){
 		cat(paste0("\nEffective sample size too low; running for another ", iter_per_chunk, " iterations\n"))
 		compiled$run(niter=iter_per_chunk, thin=thin, reset=F)
 		out.run<-as.mcmc(as.matrix(compiled$mvSamples))
 		out.run2<-as.mcmc(as.matrix(compiled$mvSamples2))
-		saveRDS(list(out.run, out.run2), out.path2)
-		continue <- check_continue(out.run, min_eff_size = 50)
+		saveRDS(list(samples = out.run, samples2 = out.run2, metadata = metadata), 
+						out.path2)
+		continue <- check_continue(out.run, min_eff_size = 10)
 	}
 		
 	# 	continue <- check_continue(out.run)
