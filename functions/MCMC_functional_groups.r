@@ -80,9 +80,6 @@ run_MCMC <- function(k = 17,
 						 model_name,"/", time_period,  "_samples_", rank.name,"_",scenario, ".rds")
 	}
 	
-	mo <- month(as.Date(paste0(colnames(model.dat$mois), "01"), format="%Y%m%d"))
-	y_sin = sin((2*pi*mo)/12)
-	y_cos = cos((2*pi*mo)/12)
 	
 	if (model_name == "cycl_only"){
 		n.beta = 2
@@ -99,8 +96,8 @@ run_MCMC <- function(k = 17,
 										N.date = model.dat$N.date,
 										N.site = length(model.dat$site_start),
 										timepoint = model.dat$timepoint,
-										sin_mo = y_sin,
-										cos_mo = y_cos,
+										sin_mo = model.dat[["y_sin"]],
+										cos_mo = model.dat[["y_cos"]],
 										mois    = model.dat[["mois"]],
 										temp    = model.dat[["temp"]],
 										mois_sd = model.dat[["mois_sd"]],

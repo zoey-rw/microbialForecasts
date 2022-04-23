@@ -221,6 +221,10 @@ prepFunctionalData <- function(rank.df,
 	LAI 				<- predictor_data$LAI %>% filter(rownames(predictor_data$LAI) %in% keep_sites) %>% data.matrix() 
 	
 	
+	mo <- month(as.Date(paste0(colnames(mois), "01"), format="%Y%m%d"))
+	y_sin = sin((2*pi*mo)/12)
+	y_cos = cos((2*pi*mo)/12)
+	
 	site_start_temp <- site_start_index[site_start_index$siteID %in% keep_sites,]
 	plot_start_temp <- plot_start_index[plot_start_index$plotID %in% keep_plots,]
 	
@@ -283,6 +287,8 @@ prepFunctionalData <- function(rank.df,
 							rc_exotic = rc_exotic,
 							relEM = relEM,
 							LAI = LAI,
-							dates_per_plot = dates_per_plot))
+							dates_per_plot = dates_per_plot,
+							y_sin = y_sin,
+							y_cos = y_cos))
 }
 
