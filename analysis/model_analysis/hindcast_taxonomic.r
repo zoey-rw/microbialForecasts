@@ -1,10 +1,10 @@
-# New taxonomic hindcast script, using structure from SOBOL code
 
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepTaxonomicData.r")
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/forecastTaxonomic.r")
+# Create forecasts for taxonomic groups, using structure from SOBOL code
+source("./source.R")
+source("./functions/prepTaxonomicData.r")
+source("./functions/forecastTaxonomic.r")
 
-pacman::p_load(tidyverse, readxl, rjags, Rfast, moments, coda, scales, data.table, doParallel)
+pacman::p_load(readxl, rjags, Rfast, moments, scales, data.table, doParallel)
 
 # Set some global parameters
 Nmc_AB <- 5000 # Number of samples for subset
@@ -15,12 +15,12 @@ k = 10
 k = 1
 
 # Read in microbial abundances
-cal <- c(readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_16S_2021.rds"), 
-				 readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS_2021.rds"))
-val <- c(readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_16S_2021.rds"), 
-				 readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_ITS_2021.rds"))
+cal <- c(readRDS("./data/clean/cal_groupAbundances_16S_2021.rds"), 
+				 readRDS("./data/clean/cal_groupAbundances_ITS_2021.rds"))
+val <- c(readRDS("./data/clean/val_groupAbundances_16S_2021.rds"), 
+				 readRDS("./data/clean/val_groupAbundances_ITS_2021.rds"))
 
-summaries <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/taxa_summaries.rds")
+summaries <- readRDS("./data/summary/taxa_summaries.rds")
 # Loop through each model
 
 max.date = "20200101"
