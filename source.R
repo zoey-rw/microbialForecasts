@@ -1,5 +1,5 @@
 # Source script for Nimble models (w/ environmental covariates, & cyclical covariates only)
-
+setwd("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/")
 
 # Contains miscellaneous functions and objects to make model scripts clearer.
 message("Loading source.R, with Nimble model objects")
