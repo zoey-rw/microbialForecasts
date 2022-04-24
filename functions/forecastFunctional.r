@@ -33,6 +33,14 @@ fg_fcast <- function(
 		plot_est <- plot_summary %>% 
 			filter(plotID == !!plotID) %>% 
 			select(-c(plot_num, site_num, dateID)) %>% rename(species = name) 
+		
+		# Take initial condition & start forecast from last observed value if possible
+		last_obs <- plot_est %>% filter(timepoint==max(timepoint)) 
+		
+		#last_obs <- truth.plot.long %>% filter(!is.na(truth)) %>% tail(1)
+		plot_start_date <- last_obs$timepoint
+		ic <- last_obs$`50%`
+		
 	} else {
 		
 		plot_obs <- model.inputs$truth.plot.long %>% filter(plotID==!!plotID) %>% select(-c(plot_num,site_num)) %>% rename(species = name) 
@@ -44,6 +52,11 @@ fg_fcast <- function(
 		site_tau <- mean(site_effect_tau)
 		new_site_effect <- data.frame(rnorm(Nmc, 0, site_tau))
 		site_effect <- unlist(new_site_effect)
+		
+		# Take initial condition & start forecast from mean observed value if possible
+		plot_start_date <- model.inputs$plot_index[plotID]
+		ic <- mean(as.numeric(plot_obs$truth), na.rm = T)
+
 	}
 	
 	### Get other parameter estimates
@@ -57,7 +70,7 @@ fg_fcast <- function(
 	sigma_samp <- param_samples[row_samples,] %>% select(grep("sigma", colnames(.))) %>% unlist()
 	sigma <- lapply(sigma_samp, function(y) lapply(y, function(x) 1/sqrt(x))) %>% unlist()
 	
-	
+	sig_mean <- mean(sigma)
 	
 	# If the model only had sin/cosine, remove the other covariate data
 	if (ncol(betas)==2) {
@@ -66,18 +79,21 @@ fg_fcast <- function(
 		}
 	}
 	
-	plot_start_date <- model.inputs$plot_index[plotID]
 	predict <- matrix(NA, Nmc, NT)
 	## simulate
+
+	# In case initial condition wasn't set
+	if(is.na(ic)) ic <- .0001
+	
 	x <- ic
-	x <- .5
 	for (time in (plot_start_date+1):NT) {
 		Z  <- covar[, ,time]
 		mu <- rho * logit(x) + apply(Z * betas, 1, sum) + site_effect + intercept
 		
 		
 		# Truncated to prevent negative values
-		x <- truncnorm::rtruncnorm(Nmc, mean = expit(mu), sd = sigma, a = 0)
+		#x <- truncnorm::rtruncnorm(Nmc, mean = expit(mu), sd = sigma, a = 0)
+		x <- truncnorm::rtruncnorm(Nmc, mean = expit(mu), sd = sigma, a = 0, b = 1)
 		# Save to array
 		predict[, time] <- x
 	}
@@ -89,7 +105,7 @@ fg_fcast <- function(
 											plotID = plotID,
 											siteID = siteID,
 											taxon_name = taxon_name,
-											rank = "Functional_group",
+											rank = "functional_group",
 											species = taxon_name,
 											taxon = taxon_name,
 											taxon_name = taxon_name,
@@ -102,9 +118,12 @@ fg_fcast <- function(
 		ci <- left_join(ci, plot_est_join, by = intersect(colnames(ci), colnames(plot_est_join)))
 	}
 	ci$timepoint <- NULL
-	ci$truth <- NULL
-	ci <- left_join(ci, plot_obs, by = c("date_num", "plotID", "siteID", "species"))
+	ci$dateID <- NULL
+	ci <- left_join(ci, date_key, by=c("date_num"))
 	ci$dates <- fixDate(ci$dateID)
+
+	ci <- left_join(ci, plot_obs)
+	#ci <- left_join(ci, plot_obs, by = c("dateID","date_num", "plotID", "siteID", "species"))
 	
 	return(ci)
 }
@@ -114,10 +133,10 @@ fg_fcast <- function(
 # 
 # ggplot(ci) +
 # 	facet_grid(rows=vars(species), drop=T, scales="free") +
-# 	geom_line(aes(x = dates, y = mean), show.legend = F, linetype=2) +
+# 	geom_line(aes(x = dates, y = med), show.legend = F, linetype=2) +
 # 	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
-# 	geom_ribbon(aes(x = dates, ymin = lo, ymax = hi), alpha=0.6, fill="blue") +
 # 	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`),fill="red", alpha=0.6) +
+# 	geom_ribbon(aes(x = dates, ymin = lo, ymax = hi), alpha=0.6, fill="blue") +
 # 	theme_bw()+
 # 	scale_fill_brewer(palette = "Paired") +
 # 	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
