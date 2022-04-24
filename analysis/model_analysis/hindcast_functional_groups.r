@@ -1,6 +1,7 @@
 
 # Create forecasts for taxonomic groups, using structure from SOBOL code
-source("./source.R")
+#source("./source.R")
+source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 source("./functions/prepFunctionalData.r")
 source("./functions/forecastFunctional.r")
 
@@ -22,28 +23,19 @@ val <- c(readRDS("./data/clean/val_groupAbundances_16S_2021.rds"),
 
 summaries <- readRDS("./data/summary/fg_summaries.rds")
 
-# Loop through each model
-
-max.date = "20200101"
-
+# for testing
 model_name = "cycl_only"
 #model_name = "all_covariates"
 scenario = "full_uncertainty"
 
-
-cl <- makeCluster(10, type="FORK", outfile="")
+#Run for multiple groups at once, in parallel (via PSOCK)
+cl <- makeCluster(28, type="FORK", outfile="")
 registerDoParallel(cl)
 
+# Loop through each group
 rank_output_list <- list()
-
-#Run for multiple chains, in parallel (via PSOCK)
-# rank_output_list = foreach(k=c(1:10),
-# 											.errorhandling = 'pass') %do% {
-#for (k in 2:10){
-output.list = foreach(k=1:length(keep_fg_names), 	.errorhandling = 'pass') %do% {
-	
+output.list = foreach(k=1:length(keep_fg_names), .errorhandling = 'pass') %dopar% {
 	rank.name <- keep_fg_names[k]
-	
 	message("Beginning forecast loop for: ", rank.name)
 	
 	cal.rank.df <- cal[[rank.name]] 
@@ -52,8 +44,7 @@ output.list = foreach(k=1:length(keep_fg_names), 	.errorhandling = 'pass') %do% 
 	rank.df <- rank.df[!rank.df$siteID %in% c("ABBY","LAJA"),]
 	
 	# Prep validation data
-	model.inputs <- prepFunctionalData(rank.df = rank.df, min.prev = 3, max.date = max.date,	full_timeseries = T)
-	
+	model.inputs <- prepFunctionalData(rank.df = rank.df, min.prev = 3, max.date = "20200101",	full_timeseries = T)
 	
 	model_output_list <- list()
 	for (model_name in c("all_covariates", "cycl_only")){
@@ -74,8 +65,6 @@ output.list = foreach(k=1:length(keep_fg_names), 	.errorhandling = 'pass') %do% 
 		plot_site_key <- model.dat %>% select(siteID, plotID, dateID, date_num, plot_num, site_num) %>% distinct()
 		site_list <- unique(plot_site_key$siteID)
 		
-		
-		
 		# Use new model inputs for full date, site, and plot keys
 		date_key <- model.inputs$truth.plot.long %>% select(dateID, date_num) %>% distinct()
 		new_plot_site_key <- model.inputs$truth.plot.long %>% select(siteID, plotID, dateID, date_num, plot_num, site_num) %>% 
@@ -93,7 +82,7 @@ output.list = foreach(k=1:length(keep_fg_names), 	.errorhandling = 'pass') %do% 
 		
 		siteID <- site_list[[1]] #testing
 		siteID <- new_site_list[[1]] #testing
-		for (siteID in full_site_list[c(1, 21)]){
+		for (siteID in full_site_list){
 			message("SiteID: ", siteID)
 			
 			# Change based on each site
@@ -108,10 +97,9 @@ output.list = foreach(k=1:length(keep_fg_names), 	.errorhandling = 'pass') %do% 
 				plot_list <- unique(plot_key$plotID)
 			}
 			plot_output_list <- list()
-			plotID <- plot_list[[1]]
-			for (plotID in plot_list[1:2]){
+			plotID <- plot_list[[1]] #testing
+			for (plotID in plot_list){
 				message("PlotID: ", plotID)
-				
 				#Sample covariate data
 				covar_full <- array(NA, dim = c(Nmc_large, N.beta, NT))
 				set.seed(1)
@@ -132,41 +120,36 @@ output.list = foreach(k=1:length(keep_fg_names), 	.errorhandling = 'pass') %do% 
 				
 				covar <- covar_full[row_samples,,]
 				#go for it!!!
-				hindcast.plot <- fg_fcast(plotID,
-																	covar,
-																	param_samples,
-																	ic,
-																	truth.plot.long,
-																	Nmc = 5000,  plot_summary,plot_start_date)
+				hindcast.plot <- fg_fcast(plotID, covar, param_samples,
+																	ic, truth.plot.long, Nmc = 5000,  
+																	plot_summary, plot_start_date, date_key)
 				
 				hindcast.plot$dateID <- date_key[match(hindcast.plot$date_num, date_key$date_num),]$dateID
 				hindcast.plot <- hindcast.plot %>% mutate(dates = fixDate(dateID),
 																									model_name = !!model_name,
 																									time_period = "calibration")
 				plot_output_list[[plotID]] <- hindcast.plot
-				
 			}
 			site_output_list[[siteID]] <- rbindlist(plot_output_list)	
 		}
 		model_output_list[[model_name]] <- rbindlist(site_output_list, fill = T)	
 	}
-	#rank_output_list[[rank.name]] <- rbindlist(model_output_list)	
 	rank_output <- rbindlist(model_output_list)	
-	rank_output_list[[rank.name]] = rank_output
+	#rank_output_list[[rank.name]] = rank_output
 	return(rank_output)
 }				
 
 out <- rbindlist(rank_output_list)	
 out <- rbindlist(output.list)	
 out$fcast_period <- ifelse(out$dates < "2017-01-01", "calibration", "hindcast")
-saveRDS(out, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/hindcast_fg.rds")
+saveRDS(out, "./data/summary/hindcast_fg.rds")
 
 
-
+# View example output
 ggplot(out %>% filter(plotID=="BART_002" & taxon == "oligotroph")) + 
 	facet_grid(#rows=vars(taxon), 
 		cols = vars(model_name), drop=T, scales="free") +
-	geom_line(aes(x = dates, y = mean), show.legend = F, linetype=2) +
+	geom_line(aes(x = dates, y = med), show.legend = F, linetype=2) +
 	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
 	geom_ribbon(aes(x = dates, ymin = lo, ymax = hi), alpha=0.6, fill="blue") +
 	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`),fill="red", alpha=0.6) +
