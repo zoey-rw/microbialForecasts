@@ -3,7 +3,7 @@ library(stringr)
 library(forestplot)
 library(ggplot2)
 library(gridExtra)
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
+source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
 sum.all.fg <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/fg_summaries.rds")
 sum.fg <- sum.all.fg$full_uncertainty$summary_df %>% filter(grepl("beta", rowname)) 
