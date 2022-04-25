@@ -122,6 +122,7 @@ output.list = foreach(scenario = c("full_uncertainty_ITS","full_uncertainty_16S"
 				hindcast.plot <- hindcast.plot %>% mutate(dates = fixDate(dateID),
 																									model_name = !!model_name,
 																									scenario = !!scenario,
+																									group = !!group,
 																									time_period = "calibration")
 				plot_output_list[[plotID]] <- hindcast.plot
 			}
