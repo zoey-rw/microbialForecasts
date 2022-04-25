@@ -114,17 +114,14 @@ fg_fcast <- function(
 	
 	if (!is_new_site) {
 		plot_est_join <- plot_est %>% 
-			select(-c(truth)) 
+			select(-c(truth, timepoint, other)) 
 		ci <- left_join(ci, plot_est_join, by = intersect(colnames(ci), colnames(plot_est_join)))
 	}
-	ci$timepoint <- NULL
-	ci$dateID <- NULL
 	ci <- left_join(ci, date_key, by=c("date_num"))
 	ci$dates <- fixDate(ci$dateID)
 
-	ci <- left_join(ci, plot_obs)
-	#ci <- left_join(ci, plot_obs, by = c("dateID","date_num", "plotID", "siteID", "species"))
-	
+	ci <- left_join(ci, plot_obs, by = c("date_num", "plotID", "siteID", "species", "dateID"))
+
 	return(ci)
 }
 

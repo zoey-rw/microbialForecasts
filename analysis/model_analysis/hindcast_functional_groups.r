@@ -1,5 +1,5 @@
 
-# Create forecasts for taxonomic groups, using structure from SOBOL code
+# Create forecasts for functional groups, using structure from SOBOL code
 #source("./source.R")
 source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 source("./functions/prepFunctionalData.r")
@@ -120,7 +120,7 @@ output.list = foreach(k=1:length(keep_fg_names), .errorhandling = 'pass') %dopar
 				
 				covar <- covar_full[row_samples,,]
 				#go for it!!!
-				hindcast.plot <- fg_fcast(plotID, covar, param_samples,
+				hindcast.plot <- fg_fcast(plotID, covar, param_samples,model.inputs,
 																	ic, truth.plot.long, Nmc = 5000,  
 																	plot_summary, plot_start_date, date_key)
 				
@@ -144,6 +144,7 @@ out <- rbindlist(output.list)
 out$fcast_period <- ifelse(out$dates < "2017-01-01", "calibration", "hindcast")
 saveRDS(out, "./data/summary/hindcast_fg.rds")
 
+out <- readRDS("./data/summary/hindcast_fg.rds")
 
 # View example output
 ggplot(out %>% filter(plotID=="BART_002" & taxon == "oligotroph")) + 
