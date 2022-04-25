@@ -36,9 +36,8 @@ registerDoParallel(cl)
 #rank_output_list <- list()
 
 #Run for multiple chains, in parallel (via PSOCK)
-# rank_output_list = foreach(k=c(1:10),
-# 											.errorhandling = 'pass') %do% {
-											for (k in 2:10){
+#for (k in 2:10){
+rank_output_list = foreach(k=1:10, .errorhandling = 'pass') %dopar% {
 	rank.name <- tax_names[[k]]
 	message("Beginning forecast loop for: ", rank.name)
 	
@@ -154,9 +153,11 @@ registerDoParallel(cl)
 	}
 	#rank_output_list[[rank.name]] <- rbindlist(model_output_list)	
 	rank_output <- rbindlist(model_output_list)	
-	rank_output_list[[rank.name]] = rank_output
+	#rank_output_list[[rank.name]] = rank_output
 	return(rank_output)
-											}				
+}				
+
+
 keep <- list()									
 for (i in 1:10){
 	if (is.data.frame(rank_output_list[[i]])){
@@ -167,6 +168,11 @@ rank_output_save <- rank_output_list[unlist(keep)]
 all_out <- rbindlist(rank_output_save, fill = T)		 
 saveRDS(all_out, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/hindcast_tax_test.rds")
 
+
+
+out <- readRDS("./data/summary/hindcast_tax_test.rds")
+out$group <- ifelse(grepl("_bac", out$rank, fixed = T), "16S", "ITS")
+saveRDS(out, "./data/summary/hindcast_tax_test.rds")
 
 
 ggplot(all_out %>% filter(plotID=="BART_002" & rank == "phylum_fun")) + 
