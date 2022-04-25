@@ -7,10 +7,11 @@ library(hrbrthemes)
 library(coda)
 
 
-data_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/div_summaries.rds")
+effect_sizes <- readRDS("./data/summary/all_fcast_effects.rds")
+hindcasts <- readRDS("./data/summary/all_fcast_effects.rds")
 
-samples <- data_in$samples
-uncert_samples <- samples[[1]]
+# samples <- data_in$samples
+# uncert_samples <- samples[[1]]
  
 ui <- dashboardPage(
 	dashboardHeader(title = "Soil microbiome forecasts"),
