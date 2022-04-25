@@ -34,9 +34,11 @@ cycl_only_key <- list("1" = "sin",
 
 file.list <- list.files(path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/taxa/", recursive = T,
 												#pattern = "^refit_samples",
-												pattern = "chain",
+												pattern = "summary",
 												full.names = T)
 f <- file.list[[1]]
+
+metadata_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/taxa/mcmc_metadata.rds")
 
 for (f in file.list) {
 	# Subset to one rank.
@@ -48,8 +50,8 @@ for (f in file.list) {
 	model_name <- basename(dirname(f))
 	time_period <- info[[1]][1]
 	last <- length(info[[1]])
-	scenario <- paste0(info[[1]][(last-1):last], collapse = "_") %>% str_replace(".rds", "")
-	rank.name <- paste0(info[[1]][3:(last-2)], collapse = "_") 
+	scenario <- paste0(info[[1]][(last-2):(last-1)], collapse = "_") %>% str_replace(".rds", "")
+	rank.name <- paste0(info[[1]][3:(last-3)], collapse = "_") 
 	
 	
 	cat(paste0("\nSummarizing ", model_name, ", ", time_period, ", ", rank.name, "\n"))
@@ -61,8 +63,16 @@ for (f in file.list) {
 		param_summary <- read_in$param_summary
 		plot_summary <- read_in$plot_summary
 		# TO DO: remove once output is fixed
+		
+		k <- paste0(which(tax_names == rank.name)," ")
+		# metadata_subset <- metadata_list[grepl(k, names(metadata_list)) & grepl(model_name, names(metadata_list)) & grepl(time_period, names(metadata_list))]
+		# metadata <- metadata_subset[[1]]
+		# truth.plot.long <- metadata$model_data
 		truth.plot.long <- read_in$metadata$model_data
-		print(read_in$metadata[1:3])
+		# print(metadata[1:3])
+		# print(names(metadata_subset))
+		
+		
 		taxon_key <- unique(truth.plot.long$species)
 		names(taxon_key) <- seq(1, length(taxon_key))
 		
@@ -181,8 +191,7 @@ for (f in file.list) {
 		
 		
 		## Calculate gelman diagnostics to assess convergence
-		gd <- gelman.diag(samples, multivariate = FALSE)
-		gelman_list[[f]] <- cbind(gd[[1]], effSize = effectiveSize(samples))
+		gelman_list[[f]] <- read_in$gelman
 		
 		
 }
@@ -197,8 +206,26 @@ for (f in file.list) {
 																	group = "16S") 
 	summary_df_all_ranks[grepl("fun$", summary_df_all_ranks$rank),]$fg_cat = "Fungal taxa"
 	summary_df_all_ranks[grepl("fun$", summary_df_all_ranks$rank),]$group = "ITS"
+	rownames(summary_df_all_ranks) <- NULL
 
 saveRDS(list(plot_est = plot_est_df_all_ranks,
 						 summary_df = summary_df_all_ranks,
 						 gelman_list = gelman_list,
 						 scores.list = scores.list_all_ranks), "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/taxa_summaries.rds")
+
+
+# s <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/taxa_summaries.rds")
+# gelman_list <- s$gelman_list
+
+out_gelman_top <- lapply(gelman_list, head, 20)
+out_gelman_top_unconverged <- lapply(out_gelman_top, function(x) if(any(x[,1] > 3)) return(x))
+out_gelman_top_unconverged <- unlist(out_gelman_top_unconverged, recursive = F)
+out_gelman_top_unconverged <- as.data.frame(out_gelman_top_unconverged) %>% 
+	rownames_to_column("filename") %>% 
+	mutate(model = basename(dirname(filename))) %>% 
+	mutate(filename=gsub("_full_uncertainty_summary.rds","",basename(filename)),
+				 filename = gsub("[0-9]","",filename),
+				 filename = gsub("[0-9]","",filename)) %>% separate(filename, into = c("time_period","rank.names"), sep = "_samples_") 
+
+unconverged <- unique(out_gelman_top_unconverged[,c(1,2,4)])
+saveRDS(unconverged, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/taxa/to_rerun.rds", compress = F)

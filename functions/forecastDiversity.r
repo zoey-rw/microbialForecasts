@@ -24,7 +24,7 @@ diversity_fcast <- function(
 	is_new_site <- ifelse(siteID %in% truth.plot.long$siteID, FALSE, TRUE)
 	if (!is_new_site) {
 		
-		plot_obs <- truth.plot.long %>% filter(plotID==!!plotID) %>% select(-c(plot_num,site_num)) %>% rename(species = name) 
+		plot_obs <- model.inputs$truth.plot.long %>% filter(plotID==!!plotID) %>% select(-c(plot_num,site_num)) %>% rename(species = name) 
 		site_num <- unique(truth.plot.long[truth.plot.long$siteID==siteID,]$site_num)
 		site_param <- paste0("site_effect[", site_num, "]")
 		site_effect <- 	param_samples[row_samples,] %>% select(!!site_param) %>% unlist()

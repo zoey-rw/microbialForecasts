@@ -457,6 +457,17 @@ assign_fg_categories <- function(vector) {
 }
 
 
+# Assign functional group categories based on group name
+assign_fg_kingdoms <- function(vector) {
+	out <- rep(NA, length(vector))
+	out[which(grepl("Simple|Complex", vector))] <- "16S"
+	out[which(grepl("Stress|Antibiotic|Anaerobic|cycling", vector))] <- "16S"
+	out[which(grepl("Troph", vector))] <- "ITS"
+	out[which(grepl("Life", vector))] <- "16S"
+	return(out)
+}
+
+
 # create sample information data.frame from NEON sample names
 parseNEONsampleIDs <- function(sampleID){
   df <- data.frame(siteID = substr(sampleID, 1, 4), sampleID = sampleID, stringsAsFactors = F) %>% 

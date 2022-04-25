@@ -142,6 +142,9 @@ saveRDS(out, "./data/summary/hindcast_div.rds")
 
 out <- readRDS("./data/summary/hindcast_div.rds")
 
+#out$group <- ifelse(grepl("ITS", out$scenario), "ITS", "16S")
+
+
 # View example output
 ggplot(out %>% filter(plotID=="BART_002" & scenario == "full_uncertainty_ITS")) + 
 	facet_grid(#rows=vars(taxon), 
