@@ -130,17 +130,16 @@ taxa_fcast <- function(
 		
 		if (!is_new_site) {
 			plot_est_join <- plot_est %>% 
-				select(-c(truth)) 
+				select(-c(truth, timepoint)) 
 			ci <- left_join(ci, plot_est_join, by = intersect(colnames(ci), colnames(plot_est_join)))
 		}
-		ci$timepoint <- NULL
-		ci$truth <- NULL
-		ci <- left_join(ci, plot_obs, by = c("date_num", "plotID", "siteID", "species"))
+		ci <- left_join(ci, date_key, by=c("date_num"))
+		ci$dates <- fixDate(ci$dateID)
+		ci <- left_join(ci, plot_obs, by = c("date_num", "plotID", "siteID", "species","dateID"))
 		all_tax_single_plot[[i]] <- ci
 	}
 	ci_single_plot <-  do.call(rbind, all_tax_single_plot)
-	ci_single_plot$dates <- fixDate(ci_single_plot$dateID)
-	
+
 	return(ci_single_plot)
 }
 

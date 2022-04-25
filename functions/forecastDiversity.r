@@ -1,294 +1,133 @@
-# Function to forecast functional groups at all NEON sites, using parameters estimated from models (from summary script) 
+# Function to forecast functional groups at all NEON sites, using parameters estimated from model samples
 # 
-# taxon_name <- "copiotroph"
-# 
+##### Use Nmc samples to make predictions, returns a dataframe with Nmc rows 
+#
 
-# library(profvis)
-# group = "ITS"
-# Nmc <- 15000
-# IC = .01
-# NT = 80
-# model_outputs = model_outputs
-# scenario = "full_uncertainty_ITS"
-# model_name = "all_covariates"
-# test = TRUE
-#time_period = "calibration"
-
-fcast_all_plots <- function(model_val,
-														model_outputs,
-														scenario = "full_uncertainty_ITS",
-														group = "ITS",
-														model_name = "all_covariates",
-														NT = 80,
-														time_period = "calibration",
-														taxon_name = NULL,
-														Nmc = 15000,
-														IC = .3){
+diversity_fcast <- function(
+	...
+	# plotID = plotID,
+	# covar = covar,
+	# param_samples = param_samples,
+	# ic = ic,
+	# truth.plot.long = truth.plot.long,
+	# model.inputs = model.inputs,
+	# Nmc = 5000, 
+	# plot_summary = plot_summary,
+	# plot_start_date = plot_start_date
+) {
 	
-
-	require(tidyverse)
-	require(nimble)
-	require(lubridate)
+	siteID <- substr(plotID, 1, 4)
 	
-	# Create key of all available plots for given taxon
-	#truth.plot.long1 <- model_cal$truth.plot.long %>% mutate(dates = fixDate(dateID))
-	truth.plot.long <- model_val$truth.plot.long %>% mutate(dates = fixDate(dateID))
-	#truth.plot.long <- cbind()
-	val_key <- truth.plot.long %>% 
-		select(siteID, plotID, dateID, date_num, plot_num, site_num) %>% distinct()
-	val_plot_key <- val_key %>% select(-c(dateID, date_num)) %>% distinct() #%>% 
-		#filter(plotID %in% model_cal$plotID)
+	print(paste0("Forecasting for group: ", scenario))
 	
-	# val_key <- model_cal$truth.plot.long %>% mutate(dates = fixDate(dateID)) %>% 
-	# 	select(siteID, plotID, dateID, date_num, plot_num, site_num) %>% distinct() 
-	# val_plot_key <- val_key %>% select(-c(dateID, date_num)) %>% distinct()
+	# Check whether there's already an estimated site effect. If not, we'll sample!
+	is_new_site <- ifelse(siteID %in% truth.plot.long$siteID, FALSE, TRUE)
+	if (!is_new_site) {
 		
-	group_name <- truth.plot.long %>% select(name) %>% distinct() %>% unlist()
-	cat(paste0("\nGroup: ", group_name, "\nScenario: ", scenario, "\nModel: ", model_name))
-	
-	
-	if (model_name == "cycl_only"){
-		N.beta = 2
-	} else if(model_name == "all_covariates"){
-		N.beta = 8
-	} else cat("Missing specification of Nimble model.")
-	
-	
-	model_summary <- model_outputs$summary_df 
-	model_plot_est <- model_outputs$plot_est 
-	#model_samples <- model_outputs$samples
-	
-	# Filter to scenario of interest
-	model_out <- model_summary %>% 
-		filter(scenario == !!scenario & time_period == !!time_period & 
-					 	model_name == !!model_name) 
-
-	
-	ci_list <- list()
-	# Loop through all plots
-	for (i in 1:nrow(val_plot_key)) {
-#	for (plot_num in val_plot_key$plot_num) {
-	#	for (plot_num in c(1,20, 30, 50, 85, 87, 100, 150)){
-		plotID <- val_plot_key[i,]$plotID 
-		plot_num <- val_plot_key[i,]$plot_num 
-		site_num <- val_plot_key[i,]$site_num 
-		siteID <- val_plot_key[i,]$siteID 
+		plot_obs <- truth.plot.long %>% filter(plotID==!!plotID) %>% select(-c(plot_num,site_num)) %>% rename(species = name) 
+		site_num <- unique(truth.plot.long[truth.plot.long$siteID==siteID,]$site_num)
+		site_param <- paste0("site_effect[", site_num, "]")
+		site_effect <- 	param_samples[row_samples,] %>% select(!!site_param) %>% unlist()
 		
-		# 
-		# 
-		# site_num <- val_key %>% dplyr::filter(plot_num == !!plot_num) %>% 
-		# 	select(site_num) %>% unique() %>% unlist()
-		# siteID <- val_key %>% dplyr::filter(plot_num == !!plot_num) %>% 
-		# 	select(siteID) %>% unique() %>% unlist()
-		# plotID <- val_key %>% dplyr::filter(plot_num == !!plot_num) %>% 
-		# 	select(plotID) %>% unique() %>% unlist()
-		cat(paste0("\nForecasting for plot: ", plotID))#, "\nGroup: ", group, "\nScenario: ", scenario))
+		plot_est <- plot_summary %>% 
+			filter(plotID == !!plotID) %>% 
+			select(-c(plot_num, site_num, dateID)) %>% rename(species = name) 
 		
+		# Take initial condition & start forecast from last observed value if possible
+		last_obs <- plot_est %>% filter(timepoint==max(timepoint)) 
 		
+		#last_obs <- truth.plot.long %>% filter(!is.na(truth)) %>% tail(1)
+		plot_start_date <- last_obs$timepoint
+		ic <- last_obs$`50%`
 		
-		# Parameters to decide forecast length
-		start_date <- model_val$site_start[siteID]
+	} else {
 		
-		# Get covariates for site/plot/date
-		covar <- array(NA, dim = c(Nmc, N.beta, NT))
+		plot_obs <- model.inputs$truth.plot.long %>% filter(plotID==!!plotID) %>% select(-c(plot_num,site_num)) %>% rename(species = name) 
+		# Sample from site effect variance
+		site_effect_tau <- param_samples[row_samples,] %>% select(grep("sig$", colnames(.))) %>% unlist()
+		# Convert precision to SD
+		site_effect_tau <- unlist(lapply(site_effect_tau, 
+																		 function(y) lapply(y, function(x) 1/sqrt(x))))
+		site_tau <- mean(site_effect_tau)
+		new_site_effect <- data.frame(rnorm(Nmc, 0, site_tau))
+		site_effect <- unlist(new_site_effect)
 		
-		# Desperately tried to vectorize this loop but couldn't figure it out.
-		# time_vec <- start_date:NT
-		# covar[,,time_vec] <- c(rnorm(Nmc, model_val$temp[site_num, time_vec], 
-		# 												 model_val$temp_sd[site_num, time_vec]),
-		# 									 rnorm(Nmc, model_val$mois[site_num, time_vec], 
-		# 									 			model_val$mois_sd[site_num, time_vec]),
-		# 									 rnorm(Nmc, model_val$pH[plot_num], 
-		# 									 			model_val$pH_sd[plot_num]),
-		# 									 rnorm(Nmc, model_val$pC[plot_num], 
-		# 									 			model_val$pC_sd[plot_num]),
-		# 									 rep(model_val$nspp[plot_num, 80], Nmc),
-		# 									 rep(model_val$relEM[plot_num, 80], Nmc))
+		# Take initial condition & start forecast from mean observed value if possible
+		plot_start_date <- model.inputs$plot_index[plotID]
+		ic <- mean(as.numeric(plot_obs$truth), na.rm = T)
 		
-		set.seed(1)
-		
-		
-		mo <- month(as.Date(paste0(colnames(model_val$mois), "01"), format="%Y%m%d"))
-		y_sin = sin((2*pi*mo)/12)
-		y_cos = cos((2*pi*mo)/12)
-		
-		for (time in start_date:NT) {
-			
-			if (model_name == "all_covariates") {
-			covar[,,time] <- c(rnorm(Nmc, model_val$temp[site_num, time],
-															 model_val$temp_sd[site_num, time]),
-												 rnorm(Nmc, model_val$mois[site_num, time],
-												 			model_val$mois_sd[site_num, time]),
-												 rnorm(Nmc, model_val$pH[plot_num],
-												 			model_val$pH_sd[plot_num]),
-												 rnorm(Nmc, model_val$pC[plot_num],
-												 			model_val$pC_sd[plot_num]),
-												 rep(model_val$relEM[plot_num, 80], Nmc),
-												 rep(model_val$LAI[site_num, time], Nmc),
-												 rep(y_sin[time], Nmc),
-												 rep(y_cos[time], Nmc))
-			} else if (model_name == "cycl_only") {
-				covar[,,time] <- c(rep(y_sin[time], Nmc),
-													 rep(y_cos[time], Nmc))
-			}
-		}
-		
-		# Check whether there's already an estimated site effect. If not, we'll sample!
-		is_new_site <- ifelse(siteID %in% model_out$siteID, FALSE, TRUE)
-		if (!is_new_site) {
-			site_effect <- model_out %>% filter(model_out$siteID == !!siteID & 
-																						grepl("site_effect", rowname) &
-																										time_period == !!time_period & 
-																						model_name == !!model_name) #%>% 
-			site_effect_samp <- rnorm(Nmc, site_effect$Mean, site_effect$SD)
-			#select(`50%`) %>% unlist()
-			plot_est <- model_plot_est %>% 
-				filter(group==!!group & 
-							 	scenario == !!scenario & 
-							 	plotID == !!plotID &
-							 	time_period == !!time_period & 
-							 	model_name == !!model_name) %>% 
-				select(-c(date_num,plot_num, site_num, uncert))
-			
-		} else {
-			# Sample from site effect variance
-			site_effect_tau <- model_out %>% filter(grepl("sig$", rowname))
-			# Convert precision to SD
-			site_effect_tau <- unlist(lapply(site_effect_tau$Mean, 
-																			 function(y) lapply(y, function(x) 1/sqrt(x))))
-			site_tau <- mean(site_effect_tau)
-			new_site_effect <- data.frame(rnorm(Nmc, 0, site_tau))
-			site_effect_samp <- unlist(new_site_effect)
-			plot_est <- structure(list(siteID = siteID, 
-																 plotID = plotID, dateID = NA, name = NA,
-																  truth = NA, fcast_type = NA, fcast_period = NA,
-																 `2.5%` = NA, `25%` = NA, `50%` = NA, `75%` = NA, `97.5%` = NA, 
-																  scenario = scenario, group = group), row.names = 1L, class = "data.frame")
-		}
-		
-		### Get other parameter estimates
-		
-		rho <- model_out[model_out$rowname=="rho",]
-		rho_samp <-  rnorm(Nmc, rho$Mean, rho$SD)
-		
-		beta <- model_out[grepl("beta", model_out$rowname),]
-		beta_samp <- apply(beta, 1, function(x) {
-			rnorm(Nmc, as.numeric(x[["Mean"]]), as.numeric(x[["SD"]]))
-		})
-		
-		int <- model_out[model_out$rowname=="intercept",]
-		if (nrow(int) == 0) { # temporary till intercept is monitored
-			int_samp <- rep(0, Nmc) 
-			} else {
-				int_samp <-  rnorm(Nmc, int$Mean, int$SD) 
-			}
-		
-		sigma <- model_out[model_out$rowname=="sigma",]
-		sigma_samp <-  rnorm(Nmc, sigma$Mean, sigma$SD)
-		sigma_samp <- suppressWarnings(1/sqrt(sigma_samp))
-#		sigma_samp <- suppressWarnings(unlist(lapply(sigma_samp, function(y) lapply(y, function(x) 1/sqrt(x)))))
-		# Replace any NAs
-		to_replace <- length(sigma_samp[is.na(sigma_samp)])
-		sigma_samp[is.na(sigma_samp)] <- sample(na.omit(sigma_samp), to_replace)
-		
-		
-		#cat(paste0("\nIC: ", IC, " sigma: ", sigma[1], " beta[1]: ", beta[1], " rho: ", rho, " site_effect: ", site_effect[1]))
-		#### MAKE PREDICTIONS!!! ####
-		### Initial condition uncertainty??? # Yes: input as argument
-		x <- IC 
-		## set up storage
-		predict <- matrix(NA, Nmc, NT)
-		## simulate
-		for (time in (start_date):NT) {
-		#for (time in (start_date+1):NT) {
-			Z  <- covar[, ,time]
-			#mu <- unlist(rho)  * logit(x) + apply(Z * beta[, ], 1, sum) + site_effect
-			
-			
-			if (model_name == "cycl_only"){
-				
-				mu <- rho_samp * x + 
-					beta_samp[,1]*Z[,1] + 
-					beta_samp[,2]*Z[,2] + 
-					site_effect_samp + int_samp
-				
-			} else if(model_name == "all_covariates"){
-
-			mu <- rho_samp * x +
-				beta_samp[,1]*Z[,1] +
-				beta_samp[,2]*Z[,2] +
-				beta_samp[,3]*Z[,3] +
-				beta_samp[,4]*Z[,4] +
-				beta_samp[,5]*Z[,5] +
-				beta_samp[,6]*Z[,6] +
-				beta_samp[,7]*Z[,7] +
-				beta_samp[,8]*Z[,8] +
-				site_effect_samp + int_samp
-
-			} else cat("Missing specification of Nimble model.")
-			# } else if(model_name == "all_covariates"){
-			# 
-			# mu <- rho_samp * x +
-			# 	beta_samp[1,1]*Z[,1] +
-			# 	beta_samp[1,2]*Z[,2] +
-			# 	beta_samp[1,3]*Z[,3] +
-			# 	beta_samp[1,4]*Z[,4] +
-			# 	beta_samp[1,5]*Z[,5] +
-			# 	beta_samp[1,6]*Z[,6] +
-			# 	beta_samp[1,7]*Z[,7] +
-			# 	beta_samp[1,8]*Z[,8] +
-			# 	site_effect_samp[1] + int_samp
-			# 
-			# } else cat("Missing specification of Nimble model.")
-				
-				
-			#at("\nmu: "); print(head(mu))
-			# Add process error 
-			#	x <- rep(expit(unlist(mu)), Nmc)
-			#x <- expit(unlist(mu))
-			#x  <- rnorm(Nmc, expit(mu), sigma_samp)
-			x  <- rnorm(Nmc, mu, sigma_samp)
-			predict[, time] <- x
-			#cat("\nx: "); cat(x[1:2])
-		}
-		ci <- as.data.frame(t(apply(predict, 2, quantile, c(0.025,0.5,0.975), na.rm=T)))
-		ci$mean <- apply(predict, 2, mean, na.rm=T)
-		ci$sd <- apply(predict, 2, sd, na.rm=T)
-		ci$date_num <- as.numeric(1:NT)
-		#colnames(ci)[1:5] <- paste0(colnames(ci)[1:5], "_", paste0(include, collapse="")) 
-		colnames(ci)[1:3] <- c("lo","med","hi")
-		ci$plotID <- plotID
-		ci$siteID <- siteID
-		ci$group <- group
-		ci$scenario <- scenario
-		ci$model_name <- model_name
-		ci$new_site <- ifelse(is_new_site, T, F) 
-		
-		ci <- left_join(ci, truth.plot.long, by = c("date_num", "plotID", "siteID"))
-		plot_est$truth <- NULL
-		ci$timepoint<- as.numeric(ci$timepoint)
-		ci <- suppressWarnings(left_join(ci, plot_est))
-		ci$time_period <- time_period
-		# Check concurrence between model and formula estimates
-		# plot(ci$med, ci$`50%`); abline(0,1)
-		
-#		print(tail(ci, 2))
-		ci_list[[plotID]] <- ci
 	}
-	ci_allplots <- data.table::rbindlist(ci_list, fill = T)
-	#plot(ci_allplots$med, ci_allplots$`50%`); abline(0,1)
-	return(ci_allplots)
+	
+	### Get other parameter estimates
+	### Rho
+	rho <- param_samples[row_samples,] %>% select(grep("rho", colnames(.))) %>% unlist()
+	### Betas
+	betas <- param_samples[row_samples,] %>% select(grep("beta", colnames(.)))
+	### Intercept
+	intercept <- param_samples[row_samples,] %>% select(grep("intercept", colnames(.))) %>% unlist()
+	### Process error 
+	sigma_samp <- param_samples[row_samples,] %>% select(grep("sigma", colnames(.))) %>% unlist()
+	sigma <- lapply(sigma_samp, function(y) lapply(y, function(x) 1/sqrt(x))) %>% unlist()
+	
+	sig_mean <- mean(sigma)
+	
+	# If the model only had sin/cosine, remove the other covariate data
+	if (ncol(betas)==2) {
+		if(ncol(covar)==8) {
+			covar <- covar[,c(7,8),]
+		}
+	}
+	
+	predict <- matrix(NA, Nmc, NT)
+	## simulate
+	
+	# In case initial condition wasn't set
+	if(is.na(ic)) ic <- .0001
+	
+	x <- ic
+	predict <- matrix(NA, Nmc, NT)
+	## simulate
+	for (time in (plot_start_date):NT) {
+		Z  <- covar[, ,time]
+		#mu <- rho * x + apply(Z * betas[, ], 1, sum) + site_effect + intercept
+		mu <- rho * x + apply(Z * betas, 1, sum) + site_effect + intercept
+		#x  <- Rfast::Rnorm(Nmc, unlist(mu), sig_mean)
+		x <- lapply(mu, function(mu) Rfast::Rnorm(1, mu, sig_mean)) %>% unlist()
+		predict[, time] <- x
+	}
+	
+	ci <- as.data.frame(t(apply(predict, 2, quantile, c(0.025,0.5,0.975), na.rm=T)))
+	ci <- ci %>% mutate(mean = apply(predict, 2, mean, na.rm=T),
+											sd = apply(predict, 2, sd, na.rm=T),
+											date_num = as.numeric(1:NT),
+											plotID = plotID,
+											siteID = siteID,
+											scenario = scenario,
+											new_site = ifelse(is_new_site, T, F))
+	colnames(ci)[1:3] <- c("lo","med","hi")
+	
+	if (!is_new_site) {
+		plot_est_join <- plot_est %>% 
+			select(-c(truth, timepoint, species)) 
+		ci <- left_join(ci, plot_est_join, by = intersect(colnames(ci), colnames(plot_est_join)))
+	}
+	ci <- left_join(ci, date_key, by=c("date_num"))
+	ci$dates <- fixDate(ci$dateID)
+	
+	ci <- left_join(ci, plot_obs, by = c("date_num", "plotID", "siteID", "dateID"))
+	
+	return(ci)
 }
 
 
 
 # 
-# 
 # ggplot(ci) +
-# 	geom_line(aes(x = dates, y = mean), show.legend = F, linetype=2) +
+# 	facet_grid(rows=vars(species), drop=T, scales="free") +
+# 	geom_line(aes(x = dates, y = med), show.legend = F, linetype=2) +
 # 	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
-# 	geom_ribbon(aes(x = dates, ymin = lo, ymax = hi), alpha=0.6, fill="blue") +
 # 	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`),fill="red", alpha=0.6) +
+# 	geom_ribbon(aes(x = dates, ymin = lo, ymax = hi), alpha=0.6, fill="blue") +
 # 	theme_bw()+
 # 	scale_fill_brewer(palette = "Paired") +
 # 	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
