@@ -1,6 +1,7 @@
-library(NISTunits)
-library(ggrepel)
-library(ggforce)
+
+# Visualize phenological parameters from all models
+source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+pacman::p_load(ggrepel, ggforce, gridExtra, ggpubr) 
 
 
 #######
@@ -62,7 +63,7 @@ if(model_name == "cycl_only") cov_key <- cycl_only_key
 #####
 
 
-df_orig <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/all_fcast_effects.rds")
+df_orig <- readRDS("./data/summary/all_fcast_effects.rds")
 
 
 df_orig$taxon <- ifelse(is.na(df_orig$taxon), 
@@ -113,7 +114,7 @@ ggplot(vals)  +
 	geom_polygon(data = seasons, aes(mo_sin, mo_cos, fill = season), # season colors
 							 size = 3, alpha = .2, show.legend = F) +
 	geom_point(data = vals, aes(plot_sin, plot_cos, 
-															color = pretty_group, size = amplitude*10), 
+															color = pretty_group, size = (amplitude*100)^2), 
 						 shape = 18,  alpha = 1) + # mean estimate +
 geom_text_repel(aes(x = plot_sin, y = plot_cos, label = taxon), force = 5) + xlab(NULL) + ylab(NULL) 
 

@@ -18,6 +18,7 @@ summaries <- readRDS("./data/summary/div_summaries.rds")
 model_name = "cycl_only"
 #model_name = "all_covariates"
 scenario = "full_uncertainty_ITS"
+scenario = "full_uncertainty_16S"
 
 #Run for multiple groups at once, in parallel (via PSOCK)
 cl <- makeCluster(2, type="FORK", outfile="")
@@ -94,7 +95,7 @@ output.list = foreach(scenario = c("full_uncertainty_ITS","full_uncertainty_16S"
 				plot_list <- unique(plot_key$plotID)
 			}
 			plot_output_list <- list()
-			#plot_list <- plot_list[1:2] #testing
+			plotID <- plot_list[[1]] #testing
 			for (plotID in plot_list){
 				message("PlotID: ", plotID)
 				#Sample covariate data
@@ -132,18 +133,34 @@ output.list = foreach(scenario = c("full_uncertainty_ITS","full_uncertainty_16S"
 	}
 	group_output <- rbindlist(model_output_list)	
 	#rank_output_list[[rank.name]] = rank_output
-	output.list[[2]] <- group_output
+	#output.list[[2]] <- group_output
 	return(group_output)
 }				
-
 out <- rbindlist(output.list)	
 out$fcast_period <- ifelse(out$dates < "2017-01-01", "calibration", "hindcast")
 saveRDS(out, "./data/summary/hindcast_div.rds")
 
 out <- readRDS("./data/summary/hindcast_div.rds")
 
-#out$group <- ifelse(grepl("ITS", out$scenario), "ITS", "16S")
+# Merging in some truth values that weren't added correctly. Not ideal but it works.
+group <- "16S"
+div_in <- readRDS("./data/clean/alpha_div_16S.rds")
+rank.df = div_in$full %>% filter(!siteID %in% c("ABBY","LAJA"))
+model.inputs_16S <- prepDivData(rank.df = rank.df, min.prev = 3, max.date = "20200101", full_timeseries = T)
+truth_16S <- model.inputs_16S$truth.plot.long  %>% select(-c(plot_num, site_num, timepoint))
+truth_16S$scenario = "full_uncertainty_16S"
 
+group <- "ITS"
+div_in <- readRDS("./data/clean/alpha_div_ITS.rds")
+rank.df = div_in$full %>% filter(!siteID %in% c("ABBY","LAJA"))
+model.inputs_ITS <- prepDivData(rank.df = rank.df, min.prev = 3, max.date = "20200101", full_timeseries = T)
+truth_ITS <- model.inputs_ITS$truth.plot.long %>% select(-c(plot_num, site_num, timepoint))
+truth_ITS$scenario = "full_uncertainty_ITS"
+
+out <- out %>% select(-c(Shannon_orig, Shannon_scale_site, truth))
+truth <- rbind(truth_16S, truth_ITS)
+out_fixed <- left_join(out, truth)
+saveRDS(out_fixed, "./data/summary/hindcast_div.rds")
 
 # View example output
 ggplot(out %>% filter(plotID=="BART_002" & scenario == "full_uncertainty_ITS")) + 

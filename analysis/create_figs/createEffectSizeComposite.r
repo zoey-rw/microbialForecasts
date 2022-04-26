@@ -1,36 +1,14 @@
 # Visualize effect size estimates (beta covariates) from all model
+source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+pacman::p_load(stringr, forestplot, gridExtra, ggpubr) 
 
-library(stringr)
-library(forestplot)
-library(ggplot2)
-library(gridExtra)
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
+sum.all <- readRDS("./data/summary/all_fcast_effects.rds")
+df_refit <- sum.all %>% filter(time_period == "refit" & model_name == "all_covariates")
+df_refit_fg_tax <- df_refit %>% filter(fcast_type != "Diversity")
 
-
-sum.all <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/all_fcast_effects.rds")
-
-
-library(ggpubr)
-a <- ggplot(data=sum.all[sum.all$time_period=="calibration",],
-			 aes(x = beta,y = effSize)) +
-		geom_jitter(aes(#shape = as.factor(significant), 
-										color = beta), size = 5, height = 0, width=.1, alpha = .5,
-								shape = 16, show.legend = F) + ylim(c(0,.9)) +
-	labs(col = "Parameter", title = "Absolute effect size (calibration)") + 
-	xlab("Parameter")+ 
-	ylab(NULL) +
-	facet_grid(rows = vars(fcast_type), cols = vars(group), drop = T,
-						 scales = "free_x", space = "free_x") + #,strip.position="bottom",nrow=2) +
-	theme_bw() + theme(#axis.ticks.x=element_blank(),
-		text = element_text(size = 16),
-		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
-			angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=22,face="bold")
-		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
-	) 
-
-b <- ggplot(data=sum.all[sum.all$time_period=="refit",],
-			 aes(x = beta,y = effSize)) +
+####### Absolute effect sizes per rank ------
+a <- ggplot(df_refit,
+						aes(x = beta,y = effSize)) +
 	geom_jitter(aes(#shape = as.factor(significant), 
 		color = beta), size = 5, height = 0, width=.1, alpha = .5,
 		shape = 16, show.legend = F) + ylim(c(0,.9)) +
@@ -46,152 +24,46 @@ b <- ggplot(data=sum.all[sum.all$time_period=="refit",],
 		axis.title=element_text(size=22,face="bold")
 		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
 	) #+ scale_shape_manual(values = c(21, 16), name = NULL, 
-		#										 labels = c("Not significant","Significant")) 
+#										 labels = c("Not significant","Significant")) 
 
+###### Relative effect sizes per rank -----
+b <- ggplot(df_refit,
+						aes(x = beta,y = Mean)) +
+	geom_jitter(aes(#shape = as.factor(significant), 
+		color = beta), size = 5, height = 0, width=.1, alpha = .5,
+		shape = 16, show.legend = F) + ylim(c(-.9,.9)) +
+	labs(col = "Parameter", title = "Effect size (refit)") + 
+	xlab("Parameter")+ 
+	ylab(NULL) +
+	geom_hline(yintercept = 0, linetype=2) +
+	facet_grid(rows = vars(fcast_type), cols = vars(group), drop = T,
+						 scales = "free_x", space = "free_x") + #,strip.position="bottom",nrow=2) +
+	theme_bw() + theme(#axis.ticks.x=element_blank(),
+		text = element_text(size = 16),
+		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
+			angle = 320, vjust=1, hjust = -0.05),
+		axis.title=element_text(size=22,face="bold")
+		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
+	) + scale_shape_manual(values = c(21, 16), name = NULL, 
+												 labels = c("Not significant","Significant")) 
+#####
 ggarrange(a,b)
 
 
-
-
-
-
-c <- ggplot(data=sum.all[sum.all$time_period=="calibration",],
-						aes(x = beta,y = Mean)) +
-	geom_jitter(aes(#shape = as.factor(significant), 
-		color = beta), size = 5, height = 0, width=.1, alpha = .5,
-		shape = 16, show.legend = F) + ylim(c(-.9,.9)) +
-	labs(col = "Parameter", title = "Effect size (calibration)") + 
-	xlab("Taxon")+ 
-	ylab(NULL) +
-	geom_hline(yintercept = 0, linetype=2) +
-	facet_grid(rows = vars(fcast_type), cols = vars(group), drop = T,
-						 scales = "free_x", space = "free_x") + #,strip.position="bottom",nrow=2) +
-	theme_bw() + theme(#axis.ticks.x=element_blank(),
-		text = element_text(size = 16),
-		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
-			angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=22,face="bold")
-		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
-	) + scale_shape_manual(values = c(21, 16), name = NULL, 
-												 labels = c("Not significant","Significant")) 
-
-d <- ggplot(data=sum.all[sum.all$time_period=="refit",],
-						aes(x = beta,y = Mean)) +
-	geom_jitter(aes(#shape = as.factor(significant), 
-		color = beta), size = 5, height = 0, width=.1, alpha = .5,
-		shape = 16, show.legend = F) + ylim(c(-.9,.9)) +
-	labs(col = "Parameter", title = "Effect size (refit)") + 
-	xlab("Taxon")+ 
-	ylab(NULL) +
-	geom_hline(yintercept = 0, linetype=2) +
-	facet_grid(rows = vars(fcast_type), cols = vars(group), drop = T,
-						 scales = "free_x", space = "free_x") + #,strip.position="bottom",nrow=2) +
-	theme_bw() + theme(#axis.ticks.x=element_blank(),
-		text = element_text(size = 16),
-		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
-			angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=22,face="bold")
-		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
-	) + scale_shape_manual(values = c(21, 16), name = NULL, 
-												 labels = c("Not significant","Significant")) 
-
-ggarrange(c,d)
-
-ggplot(data=sum.all[sum.all$time_period=="refit",],
-			 aes(x = beta,y = Mean)) +
-	geom_jitter(aes(color = time_period), size = 5, height = 0, width=.1, alpha = .5,
-		shape = 16, show.legend = F) +
-	labs(col = "Parameter", title = "Effect size (refit)") + 
-	xlab("Taxon")+ 
-	ylab(NULL) +
-	geom_hline(yintercept = 0, linetype=2) +
-	facet_grid(rows = vars(fcast_type), 
-						 cols = vars(group), 
-						 drop = T,
-						 scales = "free_x", space = "free_x") + #,strip.position="bottom",nrow=2) +
-	theme_bw() + theme(#axis.ticks.x=element_blank(),
-		text = element_text(size = 16),
-		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
-			angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=22,face="bold")
-		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
-	) + scale_shape_manual(values = c(21, 16), name = NULL, 
-												 labels = c("Not significant","Significant")) 
-
-
-
-
-
-
-
-
-
-
-
-
-# 
-# 
-# ## Violin plots of parameter estimates
-# div_ITS_samps <- sum.div.all$samples$full_uncertainty_ITS
-# div_ITS_samps_long <- do.call(rbind.data.frame, 
-# 															div_ITS_samps[,grep("beta|rho", colnames(div_ITS_samps[[1]]))]) %>% 
-# 	rownames_to_column("rowname") %>% pivot_longer(2:8) %>% 
-# 	mutate(beta_num = gsub("beta\\[|\\]", "", name)) %>% 
-# 	mutate(beta = recode(beta_num,
-# 											 "1" = "Temperature",
-# 											 "2" = "Moisture",
-# 											 "3" = "pH",
-# 											 "4" = "pC",
-# 											 "5" = "Plant species richness",
-# 											 "6" = "Ectomycorrhizal trees",
-# 											 "rho" = "Autocorrelation",
-# 											 .missing = "Autocorrelation"),
-# 				 fcast_period = "calibration")
-# 
-# div_ITS_samps_refit <- sum.div.all_refit$samples$full_uncertainty_ITS
-# div_ITS_samps_refit_long <- do.call(rbind.data.frame, div_ITS_samps_refit[,grep("beta|rho", colnames(div_ITS_samps_refit[[1]]))]) %>% 
-# 	rownames_to_column("rowname") %>% pivot_longer(2:8) %>% 
-# 	mutate(beta_num = gsub("beta\\[|\\]", "", name)) %>% 
-# 	mutate(beta = recode(beta_num,
-# 											 "1" = "Temperature",
-# 											 "2" = "Moisture",
-# 											 "3" = "pH",
-# 											 "4" = "pC",
-# 											 "5" = "Plant species richness",
-# 											 "6" = "Ectomycorrhizal trees",
-# 											 "rho" = "Autocorrelation",
-# 											 .missing = "Autocorrelation"),
-# 				 fcast_period = "refit")
-# 
-# ggplot(data=samps_long,
-# 			 aes(x = reorder(beta, value),y = value)) +
-# 	geom_violin(aes(fill = beta), trim=FALSE, show.legend = F) + 
-# 	ylab("Effect size") + 
-# 	xlab("Parameter")+ ggtitle("Drivers of fungal evenness (calibration: 2013-2016)") + 
-# 	theme_minimal(base_size = 16) + geom_hline(aes(yintercept=0), linetype=2) + 
-# 	theme(
-# 		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
-# 			angle = 320, vjust=1, hjust = -0.05),
-# 		axis.title=element_text(size=18,face="bold")
-# 	) 
-
-
-# Refit parameter estimates, row = fcast type, col = parameter
-df_refit <- df[df$fcast_period=="refit",]
-
-b_vs_f_fcast_type_plot <- ggplot(data=df_refit,
-			 aes(x = pretty_group, 
-			 		color = pretty_group, y = effSize)) +
+###### # Plot with Tukey, fungi vs bacteria effect sizes -----
+b_vs_f_fcast_type_plot <- ggplot(data=df_refit %>% filter(!beta %in% c("sin","cos")),
+																 aes(x = pretty_group, 
+																 		color = pretty_group, y = effSize)) +
 	geom_jitter(aes(#shape = as.factor(significant), 
 		color = pretty_group), size = 5, height = 0, width=.2, alpha = .5,
 		shape = 16, show.legend = F) +
 	geom_boxplot(color = 1) +
 	labs(col = "Parameter", title = "Parameter effects across forecast types") + 
-	xlab("Kingdom")+ 
+	xlab("Domain")+ 
 	ylab("Absolute effect size") +
 	facet_grid(rows = vars(fcast_type),
-		cols = vars(beta), 
-		drop = T,
+						 cols = vars(beta), as.table = T,
+						 drop = T,
 						 scales = "free") + #,strip.position="bottom",nrow=2) +
 	theme_bw() + theme(#axis.ticks.x=element_blank(),
 		text = element_text(size = 22),
@@ -201,15 +73,67 @@ b_vs_f_fcast_type_plot <- ggplot(data=df_refit,
 		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
 	) 
 
+tukey_list <- list()
+beta_names <- c(#"sin", "cos", 
+	"Ectomycorrhizal\ntrees", "LAI", "pC", 
+	"pH", "Temperature", "Moisture")
+for(b in beta_names) {
+	x = "pretty_group"
+	y = "effSize"
+	df <- df_refit[which(df_refit$beta == b),]
+	new.df <- cbind.data.frame(x = df$pretty_group, y = df$effSize)
+	abs_max <- max(new.df[,"y"], na.rm = T)
+	maxs <- new.df %>% group_by(x) %>%
+		summarise(tot=max(y, na.rm=T)+ 0.3 * abs_max)
+	Tukey_test <- aov(y ~ x, data=new.df) %>%
+		agricolae::HSD.test("x", group=TRUE) %>%
+		.$groups %>%
+		as_tibble(rownames="x") %>%
+		rename("Letters_Tukey"="groups") %>% 
+		dplyr::select(-y) %>%
+		left_join(maxs, by="x") %>% 
+		rename("pretty_group"="x")
+	Tukey_test$beta <- b
+	tukey_list[[b]] <- Tukey_test
+}
 
+tukey_list_tax <- data.table::rbindlist(tukey_list)
+tukey_list_tax$fcast_type <- "Taxonomic"
 
-sum_fg_tax <- sum.all[sum.all$fcast_period=="refit" & sum.all$fcast_type != "Diversity",]
-sum_fg_tax$pretty_group <- ifelse(sum_fg_tax$group=="16S", "Bacteria", "Fungi")
+tukey_list <- list()
+for(b in beta_names) {
+	x = "pretty_group"
+	y = "effSize"
+	df <- df_refit[which(df_refit$beta == b),]
+	new.df <- cbind.data.frame(x = df$pretty_group, y = df$effSize)
+	abs_max <- max(new.df[,"y"], na.rm = T)
+	maxs <- new.df %>% group_by(x) %>%
+		summarise(tot=max(y, na.rm=T)+ 0.3 * abs_max)
+	Tukey_test <- aov(y ~ x, data=new.df) %>%
+		agricolae::HSD.test("x", group=TRUE) %>%
+		.$groups %>%
+		as_tibble(rownames="x") %>%
+		rename("Letters_Tukey"="groups") %>% 
+		dplyr::select(-y) %>%
+		left_join(maxs, by="x") %>% 
+		rename("pretty_group"="x")
+	Tukey_test$beta <- b
+	tukey_list[[b]] <- Tukey_test
+}
+tukey_list_fg <- data.table::rbindlist(tukey_list)
+tukey_list_fg$fcast_type <- "Functional group"
+tukey <- rbind(tukey_list_fg, tukey_list_tax)
 
-# Compare bac and fun tax & functional ranks for each beta
-ggplot(data=sum_fg_tax[grepl("beta", sum_fg_tax$rowname),],
-			 aes(x = only_rank,y = effSize)) +
-	geom_jitter(aes(fill = pretty_group), shape=21, color="black", width=.1, height = 0, size=4) + 
+b_vs_f_fcast_type_plot <- b_vs_f_fcast_type_plot + geom_text(data = tukey, aes(x = pretty_group, y = tot+.1, 
+																										 label = Letters_Tukey), show.legend = F, color = 1) 
+######
+b_vs_f_fcast_type_plot
+
+###### # Plot with Tukey, effect sizes across ranks ----
+ranks_beta_plot <- ggplot(df_refit_fg_tax %>% filter(!beta %in% c("sin","cos"))) +
+	geom_jitter(aes(x = only_rank,y = effSize,
+									fill = pretty_group), 
+							shape=21, color="black", width=.1, height = 0, size=4) + 
 	labs(title = "Absolute effect size") + 
 	xlab("Rank")+ 
 	ylab(NULL) +
@@ -221,51 +145,20 @@ ggplot(data=sum_fg_tax[grepl("beta", sum_fg_tax$rowname),],
 			angle = 320, vjust=1, hjust = -0.05),
 		axis.title=element_text(size=22,face="bold"),
 		strip.text.y = element_text(size=12,face="bold")
-	) + geom_smooth(aes(as.numeric(only_rank)), show.legend = F) + scale_fill_manual(values = c("grey30","grey90"))
-
-
-
-df_refit
-
-df <- sum.all[sum.all$time_period=="refit",]
+	) + geom_smooth(aes(x = as.numeric(only_rank), y = effSize), show.legend = F) + scale_fill_manual(values = c("grey30","grey90"))
 
 tukey_list <- list()
-for(b in 1:8) {
-	x = "pretty_group"
+beta_names <- c(#"sin", "cos", 
+	"Ectomycorrhizal\ntrees", "LAI", "pC", 
+	"pH", "Temperature", "Moisture")
+for(b in beta_names) {
+	x = "only_rank"
 	y = "effSize"
-	beta_name <-  as.character(unique(sum.all[which(sum.all$beta_num == b),]$beta))
- df <- sum.all[which(sum.all$time_period=="refit" & sum.all$beta_num == as.character(b)),]
-new.df <- cbind.data.frame(x = df$pretty_group, y = df$effSize)
-abs_max <- max(new.df[,"y"], na.rm = T)
-maxs <- new.df %>%
-	group_by(x) %>%
-	summarise(tot=max(y, na.rm=T)+ 0.3 * abs_max)
-Tukey_test <- aov(y ~ x, data=new.df) %>%
-	agricolae::HSD.test("x", group=TRUE) %>%
-	.$groups %>%
-	as_tibble(rownames="x") %>%
-	rename("Letters_Tukey"="groups") %>% 
-	dplyr::select(-y) %>%
-	left_join(maxs, by="x") %>% 
-	rename("pretty_group"="x")
-Tukey_test$beta <- beta_name
-tukey_list[[b]] <- Tukey_test
-}
-
-tukey_list_tax <- data.table::rbindlist(tukey_list)
-#tukey_list_tax$fcast_type <- "Taxonomic"
-
-tukey_list <- list()
-for(b in 1:6) {
-	x = "pretty_group"
-	y = "effSize"
-	beta_name <-  as.character(unique(sum.all[sum.all$beta_num == b,]$beta))
-	df <- sum.all[sum.all$fcast_period=="refit" & sum.all$fcast_type == "Functional group" & sum.all$beta_num == b,]
-	new.df <- cbind.data.frame(x = df$pretty_group, y = df$effSize)
+	df <- df_refit_fg_tax[which(df_refit_fg_tax$beta == b),]
+	new.df <- cbind.data.frame(x = df$only_rank, y = df$effSize)
 	abs_max <- max(new.df[,"y"], na.rm = T)
-	maxs <- new.df %>%
-		group_by(x) %>%
-		summarise(tot=max(y, na.rm=T)+ 0.3 * abs_max)
+	maxs <- new.df %>% group_by(x) %>%
+		summarise(tot=max(y, na.rm=T)+ 0.2 * abs_max)
 	Tukey_test <- aov(y ~ x, data=new.df) %>%
 		agricolae::HSD.test("x", group=TRUE) %>%
 		.$groups %>%
@@ -273,64 +166,32 @@ for(b in 1:6) {
 		rename("Letters_Tukey"="groups") %>% 
 		dplyr::select(-y) %>%
 		left_join(maxs, by="x") %>% 
-		rename("pretty_group"="x")
-	Tukey_test$beta <- beta_name
+		rename("only_rank"="x")
+	Tukey_test$beta <- b
 	tukey_list[[b]] <- Tukey_test
 }
 
+tukey_list_tax_fg <- data.table::rbindlist(tukey_list)
 
-tukey_list_fg <- data.table::rbindlist(tukey_list)
-tukey_list_fg$fcast_type <- "Functional group"
-
-tukey <- rbind(tukey_list_fg, tukey_list_tax)
-
-b_vs_f_fcast_type_plot + geom_text(data = tukey, aes(x = pretty_group, y = tot+.1, 
-																										 label = Letters_Tukey), show.legend = F, color = 1) 
-																	 	
-
-
+ranks_beta_plot <- ranks_beta_plot + geom_text(data = tukey_list_tax_fg, 
+														aes(x = only_rank, y = tot, 
+																label = Letters_Tukey), show.legend = F, color = 2, size =6) 
+######
+ranks_beta_plot
 
 
 # View actual taxa and effects
-
-df <- sum.all[sum.all$time_period=="refit",]
-ggplot(data=df,
-			 aes(x = taxon,y = Mean)) +
-	geom_jitter(aes(color = group, shape = as.factor(significant)), size = 5, height = 0, width=.1, alpha = .8) +
+df_refit_fg <- df_refit_fg_tax %>% filter(fcast_type == "Functional group")
+ggplot(data=df_refit_fg %>% filter(!beta %in% c("sin","cos")),
+			 aes(x = fg_cat,y = Mean)) +
+	geom_jitter(aes(color = beta, shape = as.factor(significant)), size = 5, height = 0, width=.1, alpha = .8) +
 	labs(col = "Parameter", title = "Effect size (refit)") + 
 	xlab("Taxon")+ 
 	ylab(NULL) +
 	geom_hline(yintercept = 0, linetype=2) +
 	facet_grid(#rows = vars(only_rank), 
 		cols = vars(pretty_group), drop = T,
-						 scales = "free", space = "free_x") + #,strip.position="bottom",nrow=2) +
-	theme_bw() + theme(#axis.ticks.x=element_blank(),
-		text = element_text(size = 16),
-		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
-			#angle = 320, vjust=1, hjust = -0.05
-		#),
-		axis.title=element_text(size=22,face="bold")
-		#strip.text.y = element_text(size=24,hjust=0,vjust = 1,angle=180,face="bold")
-	) + scale_shape_manual(values = c(21, 16), name = NULL, 
-												 labels = c("Not significant","Significant")) + 
-	# ggrepel::geom_text_repel(data =df[df$beta_num==1, ], aes(label=taxon, x = taxon),
-	# 												 nudge_y = -0.6, #direction="y",
-	# 												 min.segment.length = Inf) + 
-	geom_hline(yintercept = 0, linetype=2) + ylim(c(-1,1))
-
-
-
-## Fungi vs bacteria for each beta
-ggplot(data=df,
-			 aes(x = beta,y = effSize, group=group)) +
-	geom_point(aes(color = group, shape = as.factor(significant)), size = 5, #height = 0, width=.1, 
-						 alpha = .8, position=position_jitterdodge(jitter.height = 0)) +
-	labs(col = "Parameter", title = "Effect size (refit)") + 
-	xlab("Taxon")+ 
-	ylab(NULL) +
-	geom_hline(yintercept = 0, linetype=2) +
-	##facet_grid(rows = vars(group),  drop = T,
-	#					 scales = "free", space = "free_x") + #,strip.position="bottom",nrow=2) +
+		scales = "free", space = "free_x") + #,strip.position="bottom",nrow=2) +
 	theme_bw() + theme(#axis.ticks.x=element_blank(),
 		text = element_text(size = 16),
 		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
@@ -343,4 +204,23 @@ ggplot(data=df,
 	# ggrepel::geom_text_repel(data =df[df$beta_num==1, ], aes(label=taxon, x = taxon),
 	# 												 nudge_y = -0.6, #direction="y",
 	# 												 min.segment.length = Inf) + 
-	geom_hline(yintercept = 0, linetype=2) #+ ylim(c(-1,1))
+	geom_hline(yintercept = 0, linetype=2) + ylim(c(-1,1))
+
+
+##### Cyclical parameter effects (cycl_only) -----
+df_cycl <- sum.all %>% filter(time_period == "refit" & model_name == "cycl_only")
+f_vs_b_cycl <- ggplot(df_cycl,
+						aes(x = beta,y = effSize)) +
+	geom_jitter(aes(#shape = as.factor(significant), 
+		color = beta), size = 5, height = 0, width=.1, alpha = .5,
+		shape = 16, show.legend = F) + ylim(c(0,.9)) +
+	labs(col = "Parameter", title = "Absolute effect size (refit)") + 
+	xlab("Parameter")+ 
+	ylab(NULL) +
+	facet_grid(rows = vars(fcast_type), cols = vars(group), drop = F,
+						 scales = "free_x", space = "free_x") + #,strip.position="bottom",nrow=2) +
+	theme_bw() + theme(#axis.ticks.x=element_blank(),
+		text = element_text(size = 16),
+		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
+			angle = 320, vjust=1, hjust = -0.05),
+		axis.title=element_text(size=22,face="bold"))

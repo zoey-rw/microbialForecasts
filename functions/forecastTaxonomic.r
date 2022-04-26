@@ -48,6 +48,13 @@ taxa_fcast <- function(
 			plot_est <- plot_summary %>% 
 				filter(taxon==!!taxon_name & plotID == !!plotID) %>% 
 				select(-c(plot_num, site_num, dateID)) 
+			
+			# Take initial condition & start forecast from last observed value if possible
+			last_obs <- plot_est %>% filter(timepoint==max(timepoint)) 
+			
+			#last_obs <- truth.plot.long %>% filter(!is.na(truth)) %>% tail(1)
+			plot_start_date <- last_obs$timepoint
+			ic <- last_obs$`50%`
 		} else {
 			
 			plot_obs <- model.inputs$truth.plot.long %>% filter(plotID==!!plotID) %>% select(-c(plot_num,site_num))
@@ -59,6 +66,10 @@ taxa_fcast <- function(
 			site_tau <- mean(site_effect_tau)
 			new_site_effect <- data.frame(rnorm(Nmc, 0, site_tau))
 			site_effect <- unlist(new_site_effect)
+			
+			# Take initial condition & start forecast from mean observed value if possible
+			plot_start_date <- model.inputs$plot_index[plotID]
+			ic <- mean(as.numeric(plot_obs$truth), na.rm = T)
 		}
 		
 		### Get other parameter estimates
@@ -85,7 +96,6 @@ taxa_fcast <- function(
 			}
 		}
 		
-		plot_start_date <- model.inputs$plot_index[plotID]
 		predict <- matrix(NA, Nmc, NT)
 		## simulate
 		x <- exp(ic)

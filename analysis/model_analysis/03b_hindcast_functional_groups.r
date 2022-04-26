@@ -139,16 +139,13 @@ output.list = foreach(k=1:length(keep_fg_names), .errorhandling = 'pass') %dopar
 	return(rank_output)
 }				
 
-out <- rbindlist(rank_output_list)	
 out <- rbindlist(output.list)	
 out$fcast_period <- ifelse(out$dates < "2017-01-01", "calibration", "hindcast")
-saveRDS(out, "./data/summary/hindcast_fg.rds")
-
-out <- readRDS("./data/summary/hindcast_fg.rds")
 out$category <- assign_fg_categories(out$taxon)
 out$group <- assign_fg_kingdoms(out$category)
 saveRDS(out, "./data/summary/hindcast_fg.rds")
 
+out <- readRDS("./data/summary/hindcast_fg.rds")
 
 # View example output
 ggplot(out %>% filter(plotID=="BART_002" & taxon == "oligotroph")) + 
