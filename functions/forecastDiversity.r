@@ -24,7 +24,8 @@ diversity_fcast <- function(
 	is_new_site <- ifelse(siteID %in% truth.plot.long$siteID, FALSE, TRUE)
 	if (!is_new_site) {
 		
-		plot_obs <- model.inputs$truth.plot.long %>% filter(plotID==!!plotID) %>% select(-c(plot_num,site_num)) %>% rename(species = name) 
+		plot_obs <- model.inputs$truth.plot.long %>% filter(plotID==!!plotID) %>% 
+			select(-c(plot_num,site_num)) %>% rename(species = name) 
 		site_num <- unique(truth.plot.long[truth.plot.long$siteID==siteID,]$site_num)
 		site_param <- paste0("site_effect[", site_num, "]")
 		site_effect <- 	param_samples[row_samples,] %>% select(!!site_param) %>% unlist()
@@ -42,7 +43,8 @@ diversity_fcast <- function(
 		
 	} else {
 		
-		plot_obs <- model.inputs$truth.plot.long %>% filter(plotID==!!plotID) %>% select(-c(plot_num,site_num)) %>% rename(species = name) 
+		plot_obs <- model.inputs$truth.plot.long %>% filter(plotID==!!plotID) %>% 
+			select(-c(plot_num,site_num)) %>% rename(species = name) 
 		# Sample from site effect variance
 		site_effect_tau <- param_samples[row_samples,] %>% select(grep("sig$", colnames(.))) %>% unlist()
 		# Convert precision to SD
@@ -54,7 +56,7 @@ diversity_fcast <- function(
 		
 		# Take initial condition & start forecast from mean observed value if possible
 		plot_start_date <- model.inputs$plot_index[plotID]
-		ic <- mean(as.numeric(plot_obs$truth), na.rm = T)
+		#ic <- mean(as.numeric(plot_obs$truth), na.rm = T)
 		
 	}
 	
@@ -114,7 +116,8 @@ diversity_fcast <- function(
 	ci <- left_join(ci, date_key, by=c("date_num"))
 	ci$dates <- fixDate(ci$dateID)
 	
-	ci <- left_join(ci, plot_obs, by = c("date_num", "plotID", "siteID", "dateID"))
+	#ci <- left_join(ci, plot_obs, by = c("date_num", "plotID", "siteID", "dateID"))
+	ci <- left_join(ci, plot_obs, by = intersect(colnames(ci), colnames(plot_obs)))
 	
 	return(ci)
 }
@@ -123,7 +126,7 @@ diversity_fcast <- function(
 
 # 
 # ggplot(ci) +
-# 	facet_grid(rows=vars(species), drop=T, scales="free") +
+# 	facet_grid(rows=vars(group), drop=T, scales="free") +
 # 	geom_line(aes(x = dates, y = med), show.legend = F, linetype=2) +
 # 	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
 # 	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`),fill="red", alpha=0.6) +

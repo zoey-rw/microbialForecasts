@@ -1,6 +1,6 @@
 
 # Create forecasts for taxonomic groups, using structure from SOBOL code
-source("./source.R")
+source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 source("./functions/prepTaxonomicData.r")
 source("./functions/forecastTaxonomic.r")
 
@@ -94,7 +94,9 @@ rank_output_list = foreach(k=1:10, .errorhandling = 'pass') %dopar% {
 		
 		full_site_list <- c(site_list, new_site_list)
 		site_output_list <- list()
-		for (siteID in full_site_list[c(1, 21)]){
+		#siteID = new_site_list[[1]]
+		#full_site_list <- c(site_list[[1]], new_site_list[[1]])
+		for (siteID in full_site_list){
 			message("SiteID: ", siteID)
 			
 			# Change based on each site
@@ -110,7 +112,7 @@ rank_output_list = foreach(k=1:10, .errorhandling = 'pass') %dopar% {
 			}
 			plot_output_list <- list()
 			plotID <- plot_list[[1]]
-			for (plotID in plot_list[1:2]){
+			for (plotID in plot_list){
 				message("PlotID: ", plotID)
 				
 				#Sample covariate data
@@ -165,14 +167,11 @@ for (i in 1:10){
 	} else keep[[i]] <- F
 }			
 rank_output_save <- rank_output_list[unlist(keep)] 
-all_out <- rbindlist(rank_output_save, fill = T)		 
+all_out <- rbindlist(rank_output_save, fill = T)	
+all_out$group <- ifelse(grepl("_bac", all_out$rank, fixed = T), "16S", "ITS")
 saveRDS(all_out, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/hindcast_tax_test.rds")
 
-
-
-out <- readRDS("./data/summary/hindcast_tax_test.rds")
-out$group <- ifelse(grepl("_bac", out$rank, fixed = T), "16S", "ITS")
-saveRDS(out, "./data/summary/hindcast_tax_test.rds")
+all_out <- readRDS("./data/summary/hindcast_tax_test.rds")
 
 
 ggplot(all_out %>% filter(plotID=="BART_002" & rank == "phylum_fun")) + 

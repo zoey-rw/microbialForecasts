@@ -3,9 +3,9 @@ pacman::p_load(nimble, coda, tidyverse)
 source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
 model_name <- "cycl_only"
-
-#for (model_name in c("cycl_only")){
-for (model_name in c("all_covariates")){
+model_name <- "all_covariates"
+for (model_name in c("cycl_only")){
+#for (model_name in c("all_covariates")){
 	
 #for (model_name in c("all_covariates", "cycl_only")){
 		print(model_name)
@@ -15,23 +15,21 @@ for (model_name in c("all_covariates")){
 													full.names = T)
 	
 	# info <- file.info(file.list)
-	# newer <- rownames(info[which(info$mtime > "2022-04-19 13:00:00 EDT"),])
+	# newer <- rownames(info[which(info$mtime > "2022-04-23 01:00:00 EDT"),])
 	# file.list <- file.list[file.list %in% newer]
-
-	rank <- "genus_bac"
+	rank <- "order_bac"
 	rank <- "phylum_bac"
-	rank <- "class_fun"
+	rank <- "class_bac"
 	time_period <- "calibration"
+	time_period <- "refit"
 	
-	for (rank in tax_names[3]){
+	for (rank in tax_names[1:10]){
 		print(rank)
 		
 		chain_paths <- file.list[grepl(rank, file.list)]
 		if(length(chain_paths)==0) next()
 		for (time_period in c("calibration","refit")){
 		#for (time_period in c("refit")){
-			
-
 				print(time_period)
 			
 			chain_paths_time_period <- chain_paths[grepl(time_period, chain_paths)]
@@ -40,12 +38,10 @@ for (model_name in c("all_covariates")){
 			savepath <- gsub("_chain[1234]","_summary",chain_paths_time_period[[1]])
 			print(savepath)
 			#if (!file.exists(savepath)){
-
-				
 				# TO DO: remove the problematic chain here
 				#if (rank == "phylum_fun" & model_name == "all_covariates" & time_period == "calibration") chain_paths_time_period <- chain_paths_time_period[c(1,3:4)]#
-				if (rank == "class_bac" & model_name == "cycl_only") chain_paths_time_period <- chain_paths_time_period[2:4]#
-				if (rank == "family_bac" & model_name == "cycl_only") chain_paths_time_period <- chain_paths_time_period[2:4]#
+				#if (rank == "class_bac" & model_name == "cycl_only") chain_paths_time_period <- chain_paths_time_period[2:4]#
+				#if (rank == "family_bac" & model_name == "cycl_only") chain_paths_time_period <- chain_paths_time_period[2:4]#
 				
 				print(chain_paths_time_period)
 				

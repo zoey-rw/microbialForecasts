@@ -1,12 +1,9 @@
+# Create summary objects:
+# abundance estimates per-plot, summary stats for linear model effects, other parameter convergence values, etc.
+
 library(scales) 
-library(coda)
-library(tidyverse)
-
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepTaxonomicData.r")
 source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
-
-summary_list <- list()
-taxon_key_list <- list()
+source("./functions/prepTaxonomicData.r")
 
 # Create lists for outputs.
 plot_est_df_all <- list()
@@ -14,28 +11,13 @@ summary_df_all <- list()
 gelman_list <- list()
 allplots.scores.list <- list()
 
+# Read in all summary files (produced by the script ./analysis/fit_models/combine_taxa_chains.r)
+file.list <- list.files(path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/taxa/", recursive = T,
+												pattern = "summary",
+												full.names = T)
 # For testing.
 scenario <- "full_uncertainty"
 rank.name <- "phylum_bac"
-
-all_covariates_key <- c("1" = "Temperature",
-												"2" = "Moisture",
-												"3" = "pH",
-												"4" = "pC",
-												"5" = "Ectomycorrhizal trees",
-												"6" = "LAI",
-												"7" = "sin",
-												"8" = "cos",
-												"NA" = "NA")
-
-cycl_only_key <- list("1" = "sin",
-											"2" = "cos")
-
-
-file.list <- list.files(path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/taxa/", recursive = T,
-												#pattern = "^refit_samples",
-												pattern = "summary",
-												full.names = T)
 f <- file.list[[1]]
 
 metadata_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/taxa/mcmc_metadata.rds")
@@ -77,14 +59,6 @@ for (f in file.list) {
 		names(taxon_key) <- seq(1, length(taxon_key))
 		
 		
-		# truth.plot.long <- cbind.data.frame(plotID = read_in$metadata$model_data.plotID,
-		# 																	plot_num = read_in$metadata$model_data.plot_num,
-		# 																	timepoint = read_in$metadata$model_data.timepoint,
-		# 																	truth = read_in$metadata$model_data.truth,
-		# 																	dateID = read_in$metadata$model_data.dateID,
-		# 																	taxon = read_in$metadata$model_data.species,
-		# 																	site_num = read_in$metadata$model_data.site_num,
-		# 																	siteID = read_in$metadata$model_data.siteID)
 		truth.plot.long <- truth.plot.long %>% 
 			mutate(dates = as.Date(paste0(dateID, "01"), "%Y%m%d")) %>% 
 						 rename(taxon = species)
@@ -211,14 +185,14 @@ for (f in file.list) {
 saveRDS(list(plot_est = plot_est_df_all_ranks,
 						 summary_df = summary_df_all_ranks,
 						 gelman_list = gelman_list,
-						 scores.list = scores.list_all_ranks), "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/taxa_summaries.rds")
+						 scores.list = scores.list_all_ranks), "./data/summary/taxa_summaries.rds")
 
 
 # s <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/taxa_summaries.rds")
 # gelman_list <- s$gelman_list
 
-out_gelman_top <- lapply(gelman_list, head, 20)
-out_gelman_top_unconverged <- lapply(out_gelman_top, function(x) if(any(x[,1] > 3)) return(x))
+out_gelman_top <- lapply(gelman_list, head, 10)
+out_gelman_top_unconverged <- lapply(out_gelman_top, function(x) if(any(x[,1] > 10)) return(x))
 out_gelman_top_unconverged <- unlist(out_gelman_top_unconverged, recursive = F)
 out_gelman_top_unconverged <- as.data.frame(out_gelman_top_unconverged) %>% 
 	rownames_to_column("filename") %>% 
