@@ -50,6 +50,19 @@ div_scenarios <- c("no_uncertainty_ITS", "spatial_uncertainty_ITS", "temporal_un
 									 "temporal_uncertainty_16S", "full_uncertainty_16S")
 
 
+all_covariates_key <- c("1" = "Temperature",
+												"2" = "Moisture",
+												"3" = "pH",
+												"4" = "pC",
+												"5" = "Ectomycorrhizal trees",
+												"6" = "LAI",
+												"7" = "sin",
+												"8" = "cos",
+												"NA" = "NA")
+
+cycl_only_key <- list("1" = "sin",
+											"2" = "cos")
+
 # Combine MCMC chains using paths, shortening each chain due to RAM constraints
 combine_chains <- function(chain_paths, 
 													 save = FALSE, 
@@ -551,6 +564,21 @@ pretty_names_old <- list("cellulolytic" = "Cellulolytic bacteria",
                      "Cyanobacteria" = "Phylum Cyanobacteria"
 )
 
+pretty_rank_names <- list("genus_bac" = "Genus",
+													 "family_bac" = "Family",
+													 "order_bac" = "Order", 
+													 "class_bac" = "Class", 
+													 "phylum_bac" = "Phylum",
+													 "genus_fun" = "Genus",
+													 "family_fun" = "Family",
+													 "order_fun" = "Order", 
+													 "class_fun" = "Class", 
+													 "phylum_fun" = "Phylum",
+													 "functional_group" = "Functional group",
+													"diversity_16S" = "Diversity",
+													"diversity_ITS" = "Diversity"
+													)
+
 pretty_names <- list("cellulolytic" = "Cellulose degraders",
                      "assim_nitrite_reduction" = "Assimilatory nitrite reducers",
                      "dissim_nitrite_reduction" = "Dissimilatory nitrite reducers",
@@ -599,13 +627,12 @@ FG_kingdoms <- list("cellulolytic" = "Bacterial_functional_group",
 
 N_cyclers <- c("assim_nitrite_reduction", "dissim_nitrite_reduction","assim_nitrate_reduction","n_fixation","dissim_nitrate_reduction","nitrification","denitrification")
 
-
-tukey <- function(df, x, y, extra_info = NULL){
-  new.df <- cbind.data.frame(x = df[,x], y = df[,y])
-  abs_max <- max(new.df[,"y"])
+tukey <- function(x, y, extra_info = NULL, y.offset = .3){
+	new.df <- cbind.data.frame("x" = x, "y" = y)
+	abs_max <- max(new.df[,2])
   maxs <- new.df %>%
     group_by(x) %>%
-    summarise(tot=max(y)+ 0.3 * abs_max)
+    summarise(tot=max(y)+ y.offset * abs_max)
   Tukey_test <- aov(y ~ x, data=new.df) %>%
     agricolae::HSD.test("x", group=TRUE) %>%
     .$groups %>%
@@ -614,7 +641,7 @@ tukey <- function(df, x, y, extra_info = NULL){
     dplyr::select(-y) %>%
     left_join(maxs, by="x") 
   if (!is.null(extra_info)){
-    Tukey_test <- cbind.data.frame(Tukey_test, extra_info)
+    Tukey_test <- cbind.data.frame(Tukey_test)
   }
   return(Tukey_test)
 }
