@@ -4,8 +4,8 @@ source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
 model_name <- "cycl_only"
 model_name <- "all_covariates"
-for (model_name in c("cycl_only")){
-#for (model_name in c("all_covariates")){
+#for (model_name in c("cycl_only")){
+for (model_name in c("all_covariates")){
 	
 #for (model_name in c("all_covariates", "cycl_only")){
 		print(model_name)
@@ -14,13 +14,13 @@ for (model_name in c("cycl_only")){
 													pattern = "full_uncertainty_chain",
 													full.names = T)
 	
-	# info <- file.info(file.list)
-	# newer <- rownames(info[which(info$mtime > "2022-04-23 01:00:00 EDT"),])
-	# file.list <- file.list[file.list %in% newer]
+	info <- file.info(file.list)
+	newer <- rownames(info[which(info$mtime > "2022-04-26 01:00:00 EDT"),])
+	file.list <- file.list[file.list %in% newer]
 	rank <- "order_bac"
-	rank <- "phylum_bac"
+	rank <- "family_fun"
 	rank <- "class_bac"
-	time_period <- "calibration"
+	#time_period <- "calibration"
 	time_period <- "refit"
 	
 	for (rank in tax_names[1:10]){

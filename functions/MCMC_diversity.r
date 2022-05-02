@@ -1,21 +1,21 @@
-
+source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 iter <- 1000
 burnin <- 500
 thin <- 1
 
-iter <- 50000
-burnin <- 10000
-thin <- 2
+# iter <- 50000
+# burnin <- 10000
+# thin <- 2
 test = T
 test = F
 n.chains = 3
 group = "ITS"
 temporalDriverUncertainty <- TRUE
 spatialDriverUncertainty <- TRUE
-scenario = "full_uncertainty_ITS"
-model_name = "cycl_only"
 model_name = "all_covariates"
-time_period = "refit"
+model_name = "cycl_only"
+min.date = "20160101"
+max.date = "20180101"
 
 run_MCMC <- function(group = "ITS", 	
 										 iter = 1000,
@@ -26,107 +26,58 @@ run_MCMC <- function(group = "ITS",
 										 temporalDriverUncertainty = TRUE,
 										 spatialDriverUncertainty = TRUE,
 										 scenario = NULL,
+										 min.date = "20160101",
+										 max.date = "20180101",
 										 model_name = "cycl_only",
 										 time_period = "calibration") {
+	message("\nBeginning model fit for run: ", group, 
+					"\nModel: ", model_name)
 	
 	pacman::p_load(reshape2, parallel, lubridate, nimble, coda, tidyverse) 
 	
-	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
-	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepDiversityData.r")
-	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/cyclical_model_source.r")
-	
+	source("./source.R")
+	source("./functions/prepDiversityData.r")
 	
 	div_in = switch(group,
-									"ITS" = 
-										readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds"),
-									"16S" = 
-										readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S.rds"))
+									"ITS" = readRDS("./data/clean/alpha_div_ITS.rds"),
+									"16S" = readRDS("./data/clean/alpha_div_16S.rds"))
+	if (min.date == "20160101") {
+		rank.df = div_in$recent # since values are center-scaled 
+	} else rank.df = div_in$full
 	
-	
-	
-	if (time_period == "refit"){
-		
-		out.path <- 
-			paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/diversity/refit", 
-						 model_name, "/samples_div_", scenario, ".rds")
-		
-		rank.df = div_in$full
-		rank.df <- rank.df[which(!rank.df$siteID %in% c("ABBY","LAJA")),] #Remove sites missing key covariates
 
-		if (test == T) rank.df = rank.df[1:500,]
-		
-		
-		# Custom function for organizing model data.
-		# model.cal.dat <- prepDivData(rank.df = rank.df, min.prev = 3, max.date = "20170101")
-		# # Only keep plots that were in calibration data
-		# model.dat <- prepDivData(rank.df = rank.df[rank.df$plotID %in% model.cal.dat$plotID,], min.prev = 3, max.date = "20200101")
-		
-		
-		model.dat <- prepDivData(rank.df = rank.df, min.prev = 3, max.date = "20200101")
-		
-	} else if (time_period == "calibration") {
-		
-		rank.df = div_in$cal
-		
-		if (test == T) rank.df = rank.df[1:500,]
-		
-		
-		# Custom function for organizing model data.
-		model.dat <- prepDivData(rank.df = rank.df, min.prev = 3)
-	} else cat("Missing specification of time period.")
-	
-	# Reduce size for testing
-	if (test == T) {
 		out.path <- 
-			paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/diversity/", 
-						 model_name,"/test_",time_period, "_samples_div_", scenario, ".rds")
-	} else {
-		out.path <- 
-			paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/diversity/", 
-						 model_name,"/", time_period, "_samples_div_", scenario, ".rds")
+			paste0("./data/model_outputs/diversity/", 
+						 model_name, "/div_", group,"_",min.date,"_",max.date, ".rds")
 		
-	}
-	
-	
+		# Reduce size if testing
+		if (test == T){ 
+			rank.df = rank.df %>% filter(siteID %in% c("BART","HARV","WREF"))
+			out.path <- 
+				paste0("./data/model_outputs/diversity/", 
+							 model_name, "/test_div_", group,"_",min.date,"_",max.date, ".rds")
+		}
+		
+		model.dat <- prepDivData(rank.df = rank.df, min.prev = 3, min.date = "20160101",max.date = "20200101")
+		constants <- model.dat[c("plotID",  "timepoint","plot_site", "site_start", "plot_start", "plot_index", 
+																 "plot_num", "plot_site_num", 
+																 "N.plot", "N.spp", "N.core", "N.site", "N.date",
+																 "mois", "mois_sd", "temp", "temp_sd", "pH", "pH_sd", 
+																 "pC", "pC_sd", "LAI", "relEM", "sin_mo", "cos_mo")]
+		
+		# for output.
+		metadata <- list(niter = iter,
+										 nburnin = burnin,
+										 thin = thin,
+										 model_data = model.dat$truth.plot.long)
+		
 	if (model_name == "cycl_only"){
-		n.beta = 2
+		constants$N.beta = 2
 		Nimble_model = nimbleMod_shannon_cycl_only
 	} else if(model_name == "all_covariates"){
-		n.beta = 8
+		constants$N.beta = 8
 		Nimble_model = nimbleMod_shannon
-	} else cat("Missing specification of Nimble model.")
-	
-
-	
-	constants <- list(N.plot =  length(unique(model.dat$plotID)), 
-										N.spp = ncol(model.dat$y), 
-										N.core = nrow(model.dat$y), 
-										N.date = model.dat$N.date,
-										N.site = length(unique(model.dat$siteID)),
-										timepoint = model.dat$timepoint,
-										mois = model.dat[["mois"]],
-										temp = model.dat[["temp"]],
-										mois_sd = model.dat[["mois_sd"]],
-										temp_sd = model.dat[["temp_sd"]],
-										pH = model.dat[["pH"]],
-										pC = model.dat[["pC"]],
-										pH_sd = model.dat[["pH_sd"]],
-										pC_sd = model.dat[["pH_sd"]],
-										relEM = model.dat[["relEM"]],
-										nspp = model.dat[["nspp"]],
-										LAI = model.dat[["LAI"]],
-										rc_grass = model.dat[["rc_grass"]],
-										sin_mo = model.dat[["y_sin"]],
-										cos_mo = model.dat[["y_cos"]],
-										plotID = model.dat$plotID,
-										plot_site = model.dat$plot_site,
-										plot_num = model.dat$plot_num,
-										plot_site_num = model.dat$plot_site_num,
-										plot_start = model.dat[["plot_start"]],
-										plot_index = model.dat[["plot_index"]],
-										site_start = model.dat[["site_start"]],
-										N.beta = n.beta)
-	truth <- model.dat$truth.plot.long # for output.
+	} else message("Missing specification of Nimble model.")
 	
 	# Configure & compile model
 	Rmodel <- nimbleModel(code = Nimble_model,
@@ -134,7 +85,7 @@ run_MCMC <- function(group = "ITS",
 												inits = initsFun(constants))
 	
 	# Remove large objects due to data usage
-	rm(model.dat, div_in, rank.df, constants); gc()
+	#rm(model.dat, div_in, rank.df, constants); gc()
 	
 	cModel <- compileNimble(Rmodel)
 	
@@ -148,38 +99,29 @@ run_MCMC <- function(group = "ITS",
 														monitors2 = c("plot_mu"))
 	myMCMC <- buildMCMC(mcmcConf)
 	compiled <- compileNimble(myMCMC, project = Rmodel, resetFunctions = TRUE)
-	
-	
 	samples.out <- runMCMC(compiled, niter = iter,
 												 nchains = n.chains, nburnin = burnin,
 												 samplesAsCodaMCMC = T, thin = thin, thin2 = 20)
-	cat(paste0("\nFinished sampling for run: ", group))
 	
-	metadata <- list(niter = iter,
-									 nburnin = burnin,
-									 thin = thin,
-									 model_data = truth)
+	message("\nFinished sampling for run: ", group, 
+					"\nModel: ", model_name)
 	
+	# Save just in case something goes wrong during the model summary
 	out <- list(samples = samples.out, metadata = metadata)
 	saveRDS(out, out.path)
-	cat(paste0("\nDiversity raw samples saved for fit for run: ", group, 
-						 "\n Model: ", model_name, 
-						 "\n Scenario: ", scenario)) 
+	message("\nDiversity raw samples saved for fit for run: ", group, 
+						 "\nModel: ", model_name)
 	
-	# Calculate summary and save output.
+	# Calculate summary and save this output instead
 	param_summary <- fast.summary.mcmc(samples.out$samples)
 	plot_summary <- fast.summary.mcmc(samples.out$samples2)
-	
-	# Create outputs and clear compiled code
-	
 	out <- list(samples = samples.out$samples, 
 							param_summary = param_summary, 
 							metadata = metadata, 
 							plot_summary = plot_summary)
 	saveRDS(out, out.path)
 	
-	cat(paste0("Diversity output saved for fit for run: ", group, 
-						 "\n Model: ", model_name, 
-						 "\n Scenario: ", scenario)) 
+	message("Diversity output saved for fit for run: ", group, 
+						 "\nModel: ", model_name)
 	return(out)
 }

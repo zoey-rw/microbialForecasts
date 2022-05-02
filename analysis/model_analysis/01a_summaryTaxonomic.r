@@ -20,6 +20,8 @@ scenario <- "full_uncertainty"
 rank.name <- "phylum_bac"
 f <- file.list[[1]]
 
+f = "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/taxa/all_covariates/refit_samples_family_fun_full_uncertainty_summary.rds"
+
 metadata_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/taxa/mcmc_metadata.rds")
 
 for (f in file.list) {

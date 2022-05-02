@@ -126,10 +126,10 @@ ggplot(skill_score %>% filter(model_name == "all_covariates"),
 
 # Compare plot-mean CRPS across ranks
 ggplot(scored_hindcasts_plot  %>% filter(model_name == "all_covariates")) + 
-	geom_point(aes(x = only_rank, y = crps_mean, color = pretty_group), 
+	geom_point(aes(x = pretty_name, y = crps_mean, color = pretty_group), 
 						 alpha = .1, size=4,
 						 position=position_jitterdodge(dodge.width = 1)) + 
-	geom_violin(aes(x = only_rank, y = crps_mean, color = pretty_group), 
+	geom_violin(aes(x = pretty_name, y = crps_mean, color = pretty_group), 
 							draw_quantiles = c(0.5), show.legend=F) + 
 	coord_trans(y = "log10") +
 	facet_grid(cols=vars(fcast_type), drop = T, scales = "free", space = "free", as.table = T) +  

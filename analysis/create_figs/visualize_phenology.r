@@ -114,7 +114,7 @@ ggplot(vals)  +
 	geom_polygon(data = seasons, aes(mo_sin, mo_cos, fill = season), # season colors
 							 size = 3, alpha = .2, show.legend = F) +
 	geom_point(data = vals, aes(plot_sin, plot_cos, 
-															color = pretty_group, size = (amplitude*100)^2), 
+															color = pretty_group, size = (amplitude*1000)^2), 
 						 shape = 18,  alpha = 1) + # mean estimate +
 geom_text_repel(aes(x = plot_sin, y = plot_cos, label = taxon), force = 5) + xlab(NULL) + ylab(NULL) 
 

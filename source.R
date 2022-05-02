@@ -63,8 +63,8 @@ nimbleMod_shannon <- nimbleCode({
 	# Add spatial uncertainty (values are constant over time)
 	if(spatialDriverUncertainty) {
 		for(p in 1:N.plot){
-			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
-			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
+			pH_est[p,1] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
+			pC_est[p,1] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
 		}
 	} else {
 		for(p in 1:N.plot){
@@ -152,8 +152,8 @@ nimbleModTaxa <- nimbleCode({
 	# Using 40th time point (values are constant over time)
 	if(spatialDriverUncertainty) {
 		for(p in 1:N.plot){
-				pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
-				pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
+				pH_est[p,1] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
+				pC_est[p,1] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
 		}
 	} else {
 		for(p in 1:N.plot){
@@ -498,8 +498,8 @@ nimbleMod_shannon_cycl_only <- nimbleCode({
 	# Add spatial uncertainty (values are constant over time)
 	if(spatialDriverUncertainty) {
 		for(p in 1:N.plot){
-			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
-			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
+			pH_est[p,1] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
+			pC_est[p,1] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
 		}
 	} else {
 		for(p in 1:N.plot){

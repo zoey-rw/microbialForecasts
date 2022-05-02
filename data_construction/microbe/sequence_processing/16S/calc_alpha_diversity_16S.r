@@ -1,10 +1,8 @@
 # Calculate alpha diversity
-library(tidyr)
 library(phyloseq)
-library(dplyr)
 library(lubridate)
+source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
 
 # Output from reformat_taxonomy.r
 # master_ps <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_16S.rds")
@@ -21,16 +19,23 @@ source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperF
 dat <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S_full.rds")
 
 
-# Mean center and scale data (within each site)
-dat <- dat %>% group_by(siteID) %>% mutate(Shannon_orig = Shannon,
-																					 Shannon_scale_site = scale(Shannon_orig, scale = T)) %>% 
+
+# Mean center and scale data (within each site), for only non-legacy (recent) data
+recent <- dat[dat$asDate >= "2016-01-01",]
+recent <- recent %>% group_by(siteID) %>% mutate(Shannon_orig = Shannon,
+																								 Shannon_scale_site = scale(Shannon_orig, scale = T)) %>% 
 	ungroup() %>% mutate(Shannon = scale(Shannon_orig, scale = T))
 
 
+# Mean center and scale data (within each site), for all data
+dat <- dat %>% group_by(siteID) %>% mutate(Shannon_orig = Shannon,
+																					 Shannon_scale_site = scale(Shannon_orig, scale = T)) %>% 
+	ungroup() %>% mutate(Shannon = scale(Shannon_orig, scale = T))
 cal_dat <- dat[dat$asDate < "2017-01-01",]
 val_dat <- dat[dat$asDate >= "2017-01-01",]
 
-saveRDS(list(cal = cal_dat, val = val_dat, full = dat), "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S.rds")
+
+saveRDS(list(cal = cal_dat, val = val_dat, full = dat, recent= recent), "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S.rds")
 
 
 
