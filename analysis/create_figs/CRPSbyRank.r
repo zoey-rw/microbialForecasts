@@ -13,8 +13,9 @@ crps_fg <- crps_fg_tax[crps_fg_tax$fcast_type=="Functional group",]
 crps_fg_tax <- crps_fg_tax[!crps_fg_tax$new_site,]
 
 
-skill_score <- crps_in$skill_score
 scored_hindcasts_plot <- crps_in$scored_hindcasts_plot
+
+skill_score <- crps_in$skill_score_rank
 skill_score_taxon <- crps_in$skill_score_taxon
 
 ##### Compare CRPS for all in-site predictions by rank (fg/tax) -----
@@ -56,27 +57,33 @@ in_site_rank
 ##### Skill score by each taxon -----
 pseudoLog <- scales::pseudo_log_trans(base = 10)
 
-ggplot(skill_score_taxon %>% filter(fcast_type != "Diversity")) + 
+skill_taxon <- skill_score_taxon %>% filter(fcast_type != "Diversity")
+skill_score_taxon_plot <- ggplot(skill_taxon) + 
 	geom_point(aes(x = pretty_name, y = skill_score, color = pretty_group), 
 						 alpha = .3, size=4,
 						 position=position_jitterdodge(dodge.width = 1)) + 
 	geom_violin(aes(x = pretty_name, y = skill_score, color = pretty_group), 
 							draw_quantiles = c(0.5), show.legend=F) + 
 	facet_grid(rows=vars(pretty_group), drop=T, scales = "free") +  
-	ylab("Continuous ranked probability score (CRPS)") + xlab(NULL) + 
-	theme_minimal(base_size=20) + ggtitle("Predictability at observed sites") + 
+	ylab("Skill score (% change in CRPS)") + xlab(NULL) + 
+	theme_minimal(base_size=18) + ggtitle("Change in predictability at new sites") + 
 	theme(text = element_text(size = 22),
 				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
 				axis.title=element_text(size=24), legend.position = c(.9,1)) + 
 	guides(color=guide_legend(title=NULL)) + 
 	coord_trans(y=pseudoLog)
-
-
+Tukey_test <- tukey(skill_taxon$pretty_name, skill_taxon$skill_score, y.offset = .1) 
+colnames(Tukey_test)[[1]] <- c("pretty_name")
+skill_score_taxon_plot <- skill_score_taxon_plot + 	
+	geom_text(data = Tukey_test, aes(x = pretty_name, y = tot, label = Letters_Tukey), col = 2, size = 6, 
+						show.legend = F) 
+skill_score_taxon_plot
 ##### 
 
 ##### Compare skill score for ranks ------
 
-skill_score_rank <- ggplot(skill_score %>% filter(model_name == "all_covariates"), 
+skill_score_rank_allcov <- skill_score %>% filter(model_name == "all_covariates")
+skill_score_rank <- ggplot(skill_score_rank_allcov, 
 			 aes(x = only_rank, y = skill_score, 
 			 		color = pretty_group, shape = fcast_type)) + 
 	#	geom_violin(aes(fill = uncert), draw_quantiles = c(0.5), show.legend=F) + 
@@ -90,6 +97,11 @@ skill_score_rank <- ggplot(skill_score %>% filter(model_name == "all_covariates"
 				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
 				axis.title=element_text(size=22)) + 
 	coord_trans(y=pseudoLog)
+Tukey_test <- tukey(skill_taxon$pretty_name, skill_taxon$skill_score, y.offset = .1) 
+colnames(Tukey_test)[[1]] <- c("pretty_name")
+skill_score_rank <- skill_score_rank + 	
+	geom_text(data = Tukey_test, aes(x = pretty_name, y = tot, label = Letters_Tukey), col = 2, size = 6, 
+						show.legend = F) 
 skill_score_rank
 #####
 
