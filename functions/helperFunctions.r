@@ -648,5 +648,60 @@ tukey <- function(x, y, extra_info = NULL, y.offset = .3){
 
 
 
+# return sin and cosine components from month or day
+# get_sin_cos("202101")
+# get_sin_cos("20210130")
+get_sin_cos <- function(input_dates) {
 
+	# if input is month, divide by 12
+	if (class(input_dates[[1]]) == "character" 
+			& nchar(input_dates[[1]]) == 6) {
+		mo <- lubridate::month(as.Date(paste0(input_dates, "01"), format="%Y%m%d"))
+		y_sin = sin((2*pi*mo)/12)
+		y_cos = cos((2*pi*mo)/12)
+		
+		# if input is day, divide by 365
+	} else if (class(input_dates[[1]]) == "character" &
+						 nchar(input_dates[[1]]) == 8) {
+		doy <- lubridate::yday(as.Date(input_dates, format="%Y%m%d"))
+		y_sin = sin((2*pi*doy)/365.25)
+		y_cos = cos((2*pi*doy)/365.25)
+	}  else {
+		message("Inputs must be in the character format '201601' or date format '20160101'") 
+		return()
+	}
+return(list(sin=y_sin, cos=y_cos))
+}
+
+
+
+# return data matrix filtered by date/plot/site
+filter_date_site <- function(input_df, keep_sites, keep_plots, 
+														 min.date, max.date, max.predictor.date = NULL, ...) {
+require(tidyverse)
+	
+	if (!is.null(max.predictor.date)) {
+		filt.date = max.predictor.date
+	} else filt.date = max.date
+	# filter by date
+	col_dates <- colnames(input_df) %>% fixDate()
+	filt_date <- input_df[,which(col_dates <= filt.date & col_dates >= min.date)]
+	
+	# filter by site
+		if (nchar(rownames(input_df)[[1]]) == 4){ 
+			filt <- filt_date %>% 
+				filter(rownames(.) %in% keep_sites) %>% 
+				data.matrix() 
+		# filter by plot
+		} else if (nchar(rownames(input_df)[[1]]) == 8){ 
+			filt <- filt_date %>% 
+				filter(rownames(.) %in% keep_plots) %>% 
+				data.matrix() 
+			} else {
+				message("Did not filter rows: data must have plot or site rownames, e.g. 'HARV' or 'HARV_001'") 
+	return(filt_date)
+	}
+	
+	return(filt)
+}
 

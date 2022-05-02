@@ -173,9 +173,29 @@ saveRDS(all_out, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/sum
 
 all_out <- readRDS("./data/summary/hindcast_tax_test.rds")
 
+all_out
 
 ggplot(all_out %>% filter(plotID=="BART_002" & rank == "phylum_fun")) + 
 	facet_grid(rows=vars(taxon), cols = vars(model_name), drop=T, scales="free") +
+	geom_line(aes(x = dates, y = mean), show.legend = F, linetype=2) +
+	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
+	geom_ribbon(aes(x = dates, ymin = lo, ymax = hi), alpha=0.6, fill="blue") +
+	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`),fill="red", alpha=0.6) +
+	theme_bw()+
+	scale_fill_brewer(palette = "Paired") +
+	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
+				legend.position = "bottom",legend.title = element_text(NULL),
+				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
+	geom_point(aes(x = dates, y = as.numeric(truth))) + xlab(NULL) + labs(fill='')
+
+
+
+
+
+ggplot(hindcast.plot %>% filter(taxon == "armatimonadota")) + 
+	facet_grid(rows=vars(taxon), 
+						 #cols = vars(model_name), 
+						 drop=T, scales="free") +
 	geom_line(aes(x = dates, y = mean), show.legend = F, linetype=2) +
 	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
 	geom_ribbon(aes(x = dates, ymin = lo, ymax = hi), alpha=0.6, fill="blue") +

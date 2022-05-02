@@ -32,6 +32,7 @@ taxa_fcast <- function(
 	n.taxa <- length(taxon_names)
 	all_tax_abs <- array(dim = c(Nmc, n.taxa, NT))
 	
+	plot_est_list <- list()
 	for (i in 1:n.taxa){
 		taxon_name <- taxon_names[i]
 		print(paste0("Forecasting for taxon: ", taxon_name))
@@ -55,6 +56,8 @@ taxa_fcast <- function(
 			#last_obs <- truth.plot.long %>% filter(!is.na(truth)) %>% tail(1)
 			plot_start_date <- last_obs$timepoint
 			ic <- last_obs$`50%`
+			
+			plot_est_list[[i]] <- plot_est
 		} else {
 			
 			plot_obs <- model.inputs$truth.plot.long %>% filter(plotID==!!plotID) %>% select(-c(plot_num,site_num))
@@ -99,6 +102,8 @@ taxa_fcast <- function(
 		predict <- matrix(NA, Nmc, NT)
 		## simulate
 		x <- exp(ic)
+		#x <- ic
+		
 		for (time in (plot_start_date+1):NT) {
 			Z  <- covar[, ,time]
 			mu <- rho * log(x) + apply(Z * betas, 1, sum) + site_effect + intercept
@@ -139,7 +144,7 @@ taxa_fcast <- function(
 		colnames(ci)[1:3] <- c("lo","med","hi")
 		
 		if (!is_new_site) {
-			plot_est_join <- plot_est %>% 
+			plot_est_join <- plot_est_list[[i]] %>% 
 				select(-c(truth, timepoint)) 
 			ci <- left_join(ci, plot_est_join, by = intersect(colnames(ci), colnames(plot_est_join)))
 		}
