@@ -8,17 +8,17 @@ source("./functions/forecastDiversity.r")
 pacman::p_load(readxl, rjags, Rfast, moments, scales, data.table, doParallel)
 
 # Set some global parameters
-Nmc_AB <- 5000 # Number of samples for subset
-Nmc <- 5000 
+Nmc <- 5000 # Number of samples for subset
 N.beta = 8 
 
 summaries <- readRDS("./data/summary/div_summaries.rds")
 
 # for testing
 model_name = "cycl_only"
-#model_name = "all_covariates"
+model_name = "all_covariates"
 scenario = "full_uncertainty_ITS"
 scenario = "full_uncertainty_16S"
+group = "ITS"
 
 #Run for multiple groups at once, in parallel (via PSOCK)
 cl <- makeCluster(2, type="FORK", outfile="")
@@ -26,105 +26,89 @@ registerDoParallel(cl)
 
 #for (scenario in c("full_uncertainty_ITS","full_uncertainty_16S")) {
 # Loop through each group
-output.list = foreach(scenario = c("full_uncertainty_ITS","full_uncertainty_16S"), 
-											.errorhandling = 'pass') %dopar% {
-												
-																								
-	message("Beginning forecast loop for: ", scenario)
-	
+output.list = foreach(group = c("ITS","16S"), 
+											.errorhandling = 'pass') %dopar% {															
+	message("Beginning forecast loop for: ", group)
+	time_period = "2015-11_2018-01"
+	#for (time_period in c("2015-11_2018-01", "2016-01_2020-01")){
+	#for (time_period in c("2015-11_2018-01")){
+		message("Calibration time period: ", time_period)
 	# Read in observations and covariate data
+	div_in = switch(group,
+									"ITS" = readRDS("./data/clean/alpha_div_ITS.rds"),
+									"16S" = readRDS("./data/clean/alpha_div_16S.rds"))
 	
-	if (grepl("ITS", scenario)){
-		group <- "ITS"
-		div_in <- readRDS("./data/clean/alpha_div_ITS.rds")
+	if (time_period %in% c("2015-11_2018-01", "2016-01_2020-01")) {
+		rank.df = div_in$recent # since values are center-scaled 
+		
+		if (time_period == "2015-11_2018-01") {
+			min.date = "20151101"
+			max.date = "20180101"		
+		} else if (time_period == "2016-01_2020-01") {
+			min.date = "20160101"
+			max.date = "20200101"
+		}
 	} else {
-		group <- "16S"
-		div_in <- readRDS("./data/clean/alpha_div_16S.rds")
+		rank.df = div_in$full
+		min.date = "20130601"
 	}
-	# Prep validation data
-	rank.df = div_in$full %>% filter(!siteID %in% c("ABBY","LAJA"))
-	model.inputs <- prepDivData(rank.df = rank.df, min.prev = 3, max.date = "20200101", full_timeseries = T)
-
+	# Get forecasting time series
+	model.inputs <- prepDivData(rank.df = rank.df, min.prev = 3, 
+															min.date = min.date, max.date = "20200101", 
+															full_timeseries = T)
+	
 	# Loop through linear model versions
 	model_output_list <- list()
 	for (model_name in c("all_covariates", "cycl_only")){
 		message("Forecasting with model: ", model_name)
 		
 		# Filter model estimates for each plot abundance
-		plot_summary <- summaries$plot_est %>% filter(time_period == "calibration" & 
+		plot_summary <- summaries$plot_est %>% filter(time_period == !!time_period & 
 																										model_name == !!model_name &
-																										scenario == !!scenario)
+																										group == !!group)
 		
 		# Get actual model MCMC samples & inputs
-		f <- file.path("./data/model_outputs/diversity/", model_name, paste0("/calibration_samples_div_", scenario, ".rds"))
+		f <- paste0("./data/model_outputs/diversity/", model_name, "/samples_div_", group,"_", min.date, "_", max.date, ".rds")
 		read_in <- readRDS(f)
-		param_samples_orig <- read_in$samples
+		param_samples <- as.data.frame(as.matrix(read_in$samples))
 		truth.plot.long <- model.dat <- read_in$metadata$model_data
 		plot_site_key <- model.dat %>% select(siteID, plotID, dateID, date_num, plot_num, site_num) %>% distinct()
 		site_list <- unique(plot_site_key$siteID)
 		
 		# Use new model inputs for full date, site, and plot keys
-		date_key <- model.inputs$truth.plot.long %>% select(dateID, date_num) %>% distinct()
-		new_plot_site_key <- model.inputs$truth.plot.long %>% select(siteID, plotID, dateID, date_num, plot_num, site_num) %>% 
+		date_key <- model.inputs$truth.plot.long %>% 
+			select(dateID, date_num) %>% distinct()
+		new_plot_site_key <- model.inputs$truth.plot.long %>% 
+			select(siteID, plotID, dateID, date_num, plot_num, site_num) %>% 
 			distinct() %>% filter(!siteID %in% plot_site_key$siteID)
 		new_site_list <- unique(new_plot_site_key$siteID)
 		
-		# Prep MCMC sampling IDs
-		param_samples <- as.data.frame(as.matrix(param_samples_orig))
-		Nmc_large <- max(nrow(param_samples)) #20000 # Larger sample number for covariate/IC set of values
-		row_samples <- sample.int(max(nrow(param_samples)),Nmc_AB)
-		ic = Rfast::Rnorm(Nmc_AB,0,1) # Initial condition uncertainty
-		
 		full_site_list <- c(site_list, new_site_list)
+		#full_site_list <- site_list[1:2] #testing
+				
 		site_output_list <- list()
-		
-		siteID <- site_list[[1]] #testing
-		siteID <- new_site_list[[1]] #testing
 		for (siteID in full_site_list){
 			message("SiteID: ", siteID)
-			
-			# Change based on each site
-			start_date <- model.inputs$site_start[siteID]
-			NT = model.inputs$N.date
-			
 			if (siteID %in% new_plot_site_key$siteID) {
 				plot_key <- new_plot_site_key %>% filter(siteID == !!siteID)
-				plot_list <- unique(plot_key$plotID)
 			} else {
 				plot_key <- plot_site_key %>% filter(siteID == !!siteID)
-				plot_list <- unique(plot_key$plotID)
 			}
+			plot_list <- unique(plot_key$plotID)
 			plot_output_list <- list()
 			plotID <- plot_list[[1]] #testing
 			for (plotID in plot_list){
 				message("PlotID: ", plotID)
-				#Sample covariate data
-				covar_full <- array(NA, dim = c(Nmc_large, N.beta, NT))
-				set.seed(1)
-				for (time in start_date:NT) {
-					covar_full[,,time] <- c(Rfast::Rnorm(Nmc_large, model.inputs$temp[siteID, time],
-																							 model.inputs$temp_sd[siteID, time]),
-																	Rfast::Rnorm(Nmc_large, model.inputs$mois[siteID, time],
-																							 model.inputs$mois_sd[siteID, time]),
-																	Rfast::Rnorm(Nmc_large, model.inputs$pH[plotID,],
-																							 model.inputs$pH_sd[plotID,]),
-																	Rfast::Rnorm(Nmc_large, model.inputs$pC[plotID,],
-																							 model.inputs$pC_sd[plotID,]),
-																	rep(model.inputs$relEM[plotID, time], Nmc_large),
-																	rep(model.inputs$LAI[siteID, time], Nmc_large),
-																	rep(model.inputs$y_sin[time], Nmc_large),
-																	rep(model.inputs$y_cos[time], Nmc_large))}
-				
-				covar <- covar_full[row_samples,,]
 				#go for it!!!
-				hindcast.plot <- diversity_fcast(plotID, covar, param_samples, scenario,
-																	ic, truth.plot.long, Nmc = 5000,  model.inputs,
-																	plot_summary, plot_start_date, date_key)
-				hindcast.plot <- hindcast.plot %>% mutate(dates = fixDate(dateID),
-																									model_name = !!model_name,
-																									scenario = !!scenario,
+				hindcast.plot <- diversity_fcast(plotID, model.inputs, 
+																				 param_samples, group,
+																	ic, truth.plot.long, Nmc = 5000, Nmc_large,
+																	plot_summary, #plot_start_date, 
+																	date_key)
+				
+				hindcast.plot <- hindcast.plot %>% mutate(model_name = !!model_name,
 																									group = !!group,
-																									time_period = "calibration")
+																									time_period = !!time_period)
 				plot_output_list[[plotID]] <- hindcast.plot
 			}
 			site_output_list[[siteID]] <- rbindlist(plot_output_list)	
@@ -137,7 +121,7 @@ output.list = foreach(scenario = c("full_uncertainty_ITS","full_uncertainty_16S"
 	return(group_output)
 }				
 out <- rbindlist(output.list)	
-out$fcast_period <- ifelse(out$dates < "2017-01-01", "calibration", "hindcast")
+out$fcast_period <- ifelse(out$dates < "2018-01-01", "calibration", "hindcast")
 saveRDS(out, "./data/summary/hindcast_div.rds")
 
 out <- readRDS("./data/summary/hindcast_div.rds")
@@ -163,7 +147,7 @@ out_fixed <- left_join(out, truth)
 saveRDS(out_fixed, "./data/summary/hindcast_div.rds")
 
 # View example output
-ggplot(out %>% filter(plotID=="BART_002" & scenario == "full_uncertainty_ITS")) + 
+ggplot(out %>% filter(plotID=="BART_002")) + 
 	facet_grid(#rows=vars(taxon), 
 		cols = vars(model_name), drop=T, scales="free") +
 	geom_line(aes(x = dates, y = med), show.legend = F, linetype=2) +
@@ -175,5 +159,22 @@ ggplot(out %>% filter(plotID=="BART_002" & scenario == "full_uncertainty_ITS")) 
 	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
 				legend.position = "bottom",legend.title = element_text(NULL),
 				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	geom_point(aes(x = dates, y = as.numeric(truth))) + xlab(NULL) + labs(fill='')
+	geom_point(aes(x = dates, y = as.numeric(truth))) + xlab(NULL) + labs(fill='') + 
+	xlim(c(as.Date("2013-06-01"), as.Date("2020-01-01"))) + ylim(c(-2,2))
 
+old_hindcast <- readRDS("./data/summary/hindcast_div_legacy_incl.rds")
+# View example output
+ggplot(old_hindcast %>% filter(plotID=="BART_002" & group=="ITS" & model_name == "all_covariates")) + 
+	facet_grid(#rows=vars(taxon), 
+		cols = vars(model_name), drop=T, scales="free") +
+	geom_line(aes(x = dates, y = med), show.legend = F, linetype=2) +
+	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
+	geom_ribbon(aes(x = dates, ymin = lo, ymax = hi), alpha=0.6, fill="blue") +
+	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`),fill="red", alpha=0.6) +
+	theme_bw()+
+	scale_fill_brewer(palette = "Paired") +
+	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
+				legend.position = "bottom",legend.title = element_text(NULL),
+				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
+	geom_point(aes(x = dates, y = as.numeric(truth))) + xlab(NULL) + labs(fill='') + 
+	xlim(c(as.Date("2013-06-01"), as.Date("2020-01-01"))) + ylim(c(-2,2))

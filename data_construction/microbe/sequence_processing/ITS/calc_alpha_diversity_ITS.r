@@ -18,7 +18,7 @@ dat <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean
 
 
 # Mean center and scale data (within each site), for only non-legacy (recent) data
-recent <- dat[dat$asDate >= "2016-01-01",]
+recent <- dat[dat$asDate >= "2015-11-01",]
 recent <- recent %>% group_by(siteID) %>% mutate(Shannon_orig = Shannon,
 																								 Shannon_scale_site = scale(Shannon_orig, scale = T)) %>% 
 	ungroup() %>% mutate(Shannon = scale(Shannon_orig, scale = T))
