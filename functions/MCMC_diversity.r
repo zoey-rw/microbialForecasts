@@ -14,7 +14,7 @@ temporalDriverUncertainty <- TRUE
 spatialDriverUncertainty <- TRUE
 model_name = "all_covariates"
 model_name = "cycl_only"
-min.date = "20160101"
+min.date = "20151101"
 max.date = "20180101"
 
 run_MCMC <- function(group = "ITS", 	
@@ -41,14 +41,14 @@ run_MCMC <- function(group = "ITS",
 	div_in = switch(group,
 									"ITS" = readRDS("./data/clean/alpha_div_ITS.rds"),
 									"16S" = readRDS("./data/clean/alpha_div_16S.rds"))
-	if (min.date == "20160101") {
+	if (min.date == "20151101") {
 		rank.df = div_in$recent # since values are center-scaled 
 	} else rank.df = div_in$full
 	
 
 		out.path <- 
 			paste0("./data/model_outputs/diversity/", 
-						 model_name, "/div_", group,"_",min.date,"_",max.date, ".rds")
+						 model_name, "/samples_div_", group,"_",min.date,"_",max.date, ".rds")
 		
 		# Reduce size if testing
 		if (test == T){ 
@@ -58,7 +58,7 @@ run_MCMC <- function(group = "ITS",
 							 model_name, "/test_div_", group,"_",min.date,"_",max.date, ".rds")
 		}
 		
-		model.dat <- prepDivData(rank.df = rank.df, min.prev = 3, min.date = "20160101",max.date = "20200101")
+		model.dat <- prepDivData(rank.df = rank.df, min.prev = 3, min.date = "20151101",max.date = "20180101")
 		constants <- model.dat[c("plotID",  "timepoint","plot_site", "site_start", "plot_start", "plot_index", 
 																 "plot_num", "plot_site_num", 
 																 "N.plot", "N.spp", "N.core", "N.site", "N.date",

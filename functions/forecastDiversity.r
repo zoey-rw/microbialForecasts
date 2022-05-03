@@ -18,7 +18,18 @@ diversity_fcast <- function(
 	
 	siteID <- substr(plotID, 1, 4)
 	
-	print(paste0("Forecasting for group: ", scenario))
+	print(paste0("Forecasting for group: ", group))
+	
+	# Prep MCMC sampling IDs
+	row_samples <- sample.int(max(nrow(param_samples)),Nmc)
+	ic = Rfast::Rnorm(Nmc,0,1) # Initial condition uncertainty
+	NT = model.inputs$N.date
+	Nmc_large <- max(nrow(param_samples)) #20000 # Larger sample number for covariate/IC set of values
+	
+	
+	#Sample covariate data
+	covar <- create_covariate_samples(model.inputs, plotID, siteID, 
+																		Nmc_large, Nmc)
 	
 	# Check whether there's already an estimated site effect. If not, we'll sample!
 	is_new_site <- ifelse(siteID %in% truth.plot.long$siteID, FALSE, TRUE)
@@ -35,7 +46,7 @@ diversity_fcast <- function(
 			select(-c(plot_num, site_num, dateID)) %>% rename(species = name) 
 		
 		# Take initial condition & start forecast from last observed value if possible
-		last_obs <- plot_est %>% filter(timepoint==max(timepoint)) 
+		last_obs <- plot_est %>% filter(!is.na(`50%`) & timepoint==max(timepoint)) 
 		
 		#last_obs <- truth.plot.long %>% filter(!is.na(truth)) %>% tail(1)
 		plot_start_date <- last_obs$timepoint
@@ -79,10 +90,7 @@ diversity_fcast <- function(
 			covar <- covar[,c(7,8),]
 		}
 	}
-	
-	predict <- matrix(NA, Nmc, NT)
-	## simulate
-	
+
 	# In case initial condition wasn't set
 	if(is.na(ic)) ic <- .0001
 	
@@ -104,7 +112,7 @@ diversity_fcast <- function(
 											date_num = as.numeric(1:NT),
 											plotID = plotID,
 											siteID = siteID,
-											scenario = scenario,
+											group = group,
 											new_site = ifelse(is_new_site, T, F))
 	colnames(ci)[1:3] <- c("lo","med","hi")
 	

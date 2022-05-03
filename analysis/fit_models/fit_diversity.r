@@ -10,14 +10,14 @@ params = data.frame(group = c("ITS", "16S"),
 										spatialDriverUncertainty = c(T, T))
 params <- rbind(cbind(params, model_name = "cycl_only"),
 								cbind(params, model_name = "all_covariates"))
-params <- rbind(cbind(params, min.date = "20160101", max.date = "20180101"),
+params <- rbind(cbind(params, min.date = "20151101", max.date = "20180101"),
 								cbind(params, min.date = "20130601", max.date = "20170101"))
 
 # Create function that calls run_MCMC for each uncertainty scenario
 run_scenarios <- function(j) {
 	out <- run_MCMC(#iter = 1000000, burnin = 500000, thin = 15, 
 									#iter = 600000, burnin = 300000, thin = 10, 
-		iter = 30000, burnin = 15000, thin = 3, 
+		iter = 100000, burnin = 50000, thin = 5, 
 									test=F, 
 									group = params$group[[j]], 
 									model_name = params$model_name[[j]],

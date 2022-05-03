@@ -705,3 +705,32 @@ require(tidyverse)
 	return(filt)
 }
 
+
+
+create_covariate_samples <- function(model.inputs, plotID, siteID, 
+																		 Nmc_large, Nmc,
+																		 N.beta = 8, ...) {
+	
+	start_date <- model.inputs$site_start[siteID]
+	NT = model.inputs$N.date
+	covar_full <- array(NA, dim = c(Nmc_large, N.beta, NT))
+
+	set.seed(1)
+
+	for (time in start_date:NT) {
+	covar_full[,,time] <- c(Rfast::Rnorm(Nmc_large, model.inputs$temp[siteID, time],
+																			 model.inputs$temp_sd[siteID, time]),
+													Rfast::Rnorm(Nmc_large, model.inputs$mois[siteID, time],
+																			 model.inputs$mois_sd[siteID, time]),
+													Rfast::Rnorm(Nmc_large, model.inputs$pH[plotID,start_date],
+																			 model.inputs$pH_sd[plotID,start_date]),
+													Rfast::Rnorm(Nmc_large, model.inputs$pC[plotID,start_date],
+																			 model.inputs$pC_sd[plotID,start_date]),
+													rep(model.inputs$relEM[plotID, time], Nmc_large),
+													rep(model.inputs$LAI[siteID, time], Nmc_large),
+													rep(model.inputs$sin_mo[time], Nmc_large),
+													rep(model.inputs$cos_mo[time], Nmc_large))
+}
+covar <- covar_full[sample.int(Nmc_large,Nmc),,]
+return(covar)
+}
