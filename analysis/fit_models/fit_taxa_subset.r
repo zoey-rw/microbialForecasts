@@ -26,12 +26,10 @@ params <- rbind(cbind(params, time_period = "calibration"),
 								cbind(params, time_period = "refit"))
 params$temporalDriverUncertainty <- T
 params$spatialDriverUncertainty <- T
-params$scenario <- "full_uncertainty"
-
-to_run1 <- grep("full_uncertainty", params$scenario) 
-to_run2 <- grep("calibration", params$time_period) 
-#to_run2 <- grep("refit", params$time_period) 
-to_run <- intersect(to_run1, to_run2)
+params <- rbind(cbind(params, min.date = "20151101", max.date = "20180101", scenario =  "2 year current methods"),
+								cbind(params, min.date = "20130601", max.date = "20170101", scenario = "Legacy + 1 year current methods"),
+								cbind(params, min.date = "20130601", max.date = "20150101", scenario = "Legacy only"),
+								cbind(params, min.date = "20130601", max.date = "20200101", scenario = "Legacy + current (full dataset)"))
 
 
 # Running dirichlet model 
@@ -61,7 +59,9 @@ run_scenarios <- function(j, chain) {
 									spatialDriverUncertainty = params$spatialDriverUncertainty[[j]],
 									scenario = params$scenario[[j]],
 									model_name = params$model_name[[j]],
-									time_period = params$time_period[[j]])
+									time_period = params$time_period[[j]],
+									min.date = params$min.date[[j]],
+									max.date = params$max.date[[j]])
 	return(out)
 }
 

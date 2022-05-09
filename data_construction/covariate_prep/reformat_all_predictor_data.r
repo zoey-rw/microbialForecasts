@@ -6,14 +6,14 @@ require(dplyr)
 require(tidyr)	
 source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
-# # Read in covariate data chem_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")
-moisture <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/monthly_soil_moisture.rds")
-temp <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/monthly_soil_temperature.rds")
-plant <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/annual_plant_data.rds")
-relEM <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/mean_relEM_data.rds")
-LAI <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/mean_LAI_data.rds")
-dom_soil_horizons <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/dominantHorizonsSite.rds")
-chem <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")
+# # Read in covariate data chem_in <- readRDS("./data/clean/soilChemPlot.rds")
+moisture <- readRDS("./data/clean/monthly_soil_moisture.rds")
+temp <- readRDS("./data/clean/monthly_soil_temperature.rds")
+plant <- readRDS("./data/clean/annual_plant_data.rds")
+relEM <- readRDS("./data/clean/mean_relEM_data.rds")
+LAI <- readRDS("./data/clean/mean_LAI_data.rds")
+dom_soil_horizons <- readRDS("./data/clean/dominantHorizonsSite.rds")
+chem <- readRDS("./data/clean/soilChemPlot.rds")
 
 
 # reformat moisture to be site x date
@@ -195,5 +195,5 @@ all_predictors <- list("mois" = mois_site,
 )
 
 
-saveRDS(all_predictors, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/all_predictor_data.rds")
+saveRDS(all_predictors, "./data/clean/all_predictor_data.rds")
 

@@ -15,6 +15,55 @@ rank.df <- d[[rank.name]]
 cellulolytic <- d$cellulolytic$cellulolytic
 acidobacteriota <- d$phylum_bac$acidobacteriota
 
+
+sapply(data, function(x) sd(x) / mean(x) * 100)
+
+
+
+scores <- readRDS("./data/summary/CRPS_hindcasts.rds")
+scored_casts_tax <- scores$scored_hindcasts %>% filter(fcast_type=="Taxonomic" & model_name == "all_covariates" & taxon != "other")
+
+scored_casts_tax_wide <- scored_casts_tax %>% 
+	pivot_wider(id_cols = c(timepoint, plotID), names_from = taxon, values_from = truth) %>% 
+	select(-c(timepoint, plotID))
+
+tax_cv <- sapply(scored_casts_tax_wide, function(x) sd(x, na.rm = T) / mean(x, na.rm = T) * 100)
+tax_cv_long <- tax_cv %>% stack()
+colnames(tax_cv_long) <- c("CV", "taxon")
+
+tax_scores <- scores$scored_hindcasts_taxon
+tax_scores <- merge(tax_scores, tax_cv_long)
+
+
+scores_in <- tax_scores %>% filter(model_name == "all_covariates") %>%
+	group_by(pretty_group, pretty_name) %>% 
+	mutate(outlier = ifelse(crps_mean == min(crps_mean), taxon, as.numeric(NA))) 
+	
+p <- ggplot(scores_in, aes(x = CV, y = crps_mean)) + 
+	coord_trans(y = "log10") +
+	geom_point(aes(shape = pretty_group, color = pretty_name), #width=.2, #height = 0, 
+							alpha = .4, size=4, 
+							position=position_jitterdodge(dodge.width = 1)) + 
+	facet_wrap(~newsite) +  
+	ylab("Mean continuous ranked probability score (CRPS)") + xlab("Coefficient of Variation") + 
+	ggtitle("Predictability ~ variability") +
+	theme_minimal(base_size=18) + geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) 
+
+
+ggplot(scores_in, aes(x = CV, y = crps_mean)) + 
+	coord_trans(y = "log10") +
+	geom_point(aes(shape = pretty_group, color = pretty_group), #width=.2, #height = 0, 
+						 alpha = .4, size=4, 
+						 position=position_jitterdodge(dodge.width = 1)) + 
+	ylab("Mean continuous ranked probability score (CRPS)") + xlab("Coefficient of Variation") + 
+	ggtitle("Predictability ~ variability") +
+	theme_minimal(base_size=18) + geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) + 
+	facet_grid(pretty_name ~pretty_group, scales="free")+ geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) 
+
+
+#### prev attempts #####
+
+
 # why aren't these working??
 # if you are reading this. yes you. tell me what I am doing wrong here?
 asymptotic_test(seed = 1, cellulolytic, acidobacteriota)

@@ -36,7 +36,7 @@ ggplot(overdispersion) +
 				axis.title=element_text(size=24), legend.position = c(.9,1)) + 
 	guides(color=guide_legend(title=NULL)) +
 	geom_rect(data=dispersion_ribbons, mapping=aes(xmin=x1, xmax=x2, ymin=y1, ymax=y2, fill=t), alpha=0.5) +
-	geom_text(data=dispersion_ribbons, aes(x=8, y=1.1, label=r), size=4) 
+	geom_text(data=dispersion_ribbons, aes(x=8, y=1.1, label=r), size=4)
 	# 
 	# 
 	# annotate("rect", ymin = 0, ymax =.95, xmin=0, xmax=8,

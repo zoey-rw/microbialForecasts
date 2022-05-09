@@ -1,15 +1,17 @@
 # Source script for Nimble models (w/ environmental covariates, & cyclical covariates only)
 setwd("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/")
+here::i_am("source.R")
 
 # Contains miscellaneous functions and objects to make model scripts clearer.
 message("Loading source.R, with Nimble model objects")
 
 # Pacman package loader is used throughout scripts
 if (!require("pacman")) install.packages("pacman") 
-pacman::p_load(nimble, coda, lubridate, tidyverse) 
+pacman::p_load(nimble, coda, lubridate, tidyverse, here) 
 
-# Load all helper functions
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
+# Load all helper functions and variables
+source(here("functions", "helperFunctions.r"))
+source(here("functions", "globalVariables.r"))
 
 #####
 
@@ -31,8 +33,8 @@ nimbleMod_shannon <- nimbleCode({
 			Ex[p,t] <- rho * plot_mu[p,t-1] + 
 				beta[1]*temp_est[plot_site_num[p],t] + 
 				beta[2]*mois_est[plot_site_num[p],t] + 
-				beta[3]*pH_est[p,1] + 
-				beta[4]*pC_est[p,1] +
+				beta[3]*pH_est[p,plot_start[p]] + 
+				beta[4]*pC_est[p,plot_start[p]] +
 				beta[5]*relEM[p,t] +
 				beta[6]*LAI[plot_site_num[p],t] +
 				beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
@@ -63,13 +65,13 @@ nimbleMod_shannon <- nimbleCode({
 	# Add spatial uncertainty (values are constant over time)
 	if(spatialDriverUncertainty) {
 		for(p in 1:N.plot){
-			pH_est[p,1] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
-			pC_est[p,1] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
+			pH_est[p,plot_start[p]] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
+			pC_est[p,plot_start[p]] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
 		}
 	} else {
 		for(p in 1:N.plot){
-			pH_est[p,1] <- pH[p,1]
-			pC_est[p,1] <- pC[p,1]
+			pH_est[p,plot_start[p]] <- pH[p,plot_start[p]]
+			pC_est[p,plot_start[p]] <- pC[p,plot_start[p]]
 		}
 	}
 	
@@ -117,8 +119,8 @@ nimbleModTaxa <- nimbleCode({
 				log(Ex[p,s,t]) <- rho[s] * log(plot_mu[p,s,t-1]) + 
 					beta[s,1]*temp_est[plot_site_num[p],t] +
 					beta[s,2]*mois_est[plot_site_num[p],t] +
-					beta[s,3]*pH_est[p,1] +
-					beta[s,4]*pC_est[p,1] +
+					beta[s,3]*pH_est[p,plot_start[p]] +
+					beta[s,4]*pC_est[p,plot_start[p]] +
 					beta[s,5]*relEM[p,t] +
 					beta[s,6]*LAI[plot_site_num[p],t] +
 					beta[s,7]*sin_mo[t] + beta[s,8]*cos_mo[t] +
@@ -152,13 +154,13 @@ nimbleModTaxa <- nimbleCode({
 	# Using 40th time point (values are constant over time)
 	if(spatialDriverUncertainty) {
 		for(p in 1:N.plot){
-				pH_est[p,1] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
-				pC_est[p,1] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
+				pH_est[p,plot_start[p]] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
+				pC_est[p,plot_start[p]] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
 		}
 	} else {
 		for(p in 1:N.plot){
-				pH_est[p,1] <- pH[p,1]
-				pC_est[p,1] <- pC[p,1]
+				pH_est[p,plot_start[p]] <- pH[p,plot_start[p]]
+				pC_est[p,plot_start[p]] <- pC[p,plot_start[p]]
 		} 
 	}
 	
@@ -215,8 +217,8 @@ nimbleModFunctional <- nimbleCode({
 			logit(Ex[p,t]) <- rho * logit(plot_mu[p,t-1]) + 
 				beta[1]*temp_est[plot_site_num[p],t] +
 				beta[2]*mois_est[plot_site_num[p],t] +
-				beta[3]*pH_est[p,1] +
-				beta[4]*pC_est[p,1] +
+				beta[3]*pH_est[p,plot_start[p]] +
+				beta[4]*pC_est[p,plot_start[p]] +
 				#beta[5]*nspp[p,t] +
 				beta[5]*relEM[p,t] +
 				beta[6]*LAI[plot_site_num[p],t] +
@@ -251,13 +253,13 @@ nimbleModFunctional <- nimbleCode({
 	# Using 40th time point (values are constant over time)
 	if(spatialDriverUncertainty) {
 		for(p in 1:N.plot){
-			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
-			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
+			pH_est[p,plot_start[p]] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
+			pC_est[p,plot_start[p]] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
 		}
 	} else {
 		for(p in 1:N.plot){
-			pH_est[p,1] <- pH[p,1]
-			pC_est[p,1] <- pC[p,1]
+			pH_est[p,plot_start[p]] <- pH[p,plot_start[p]]
+			pC_est[p,plot_start[p]] <- pC[p,plot_start[p]]
 		} 
 	}
 	
@@ -303,8 +305,8 @@ nimbleModFunctional_trunc <- nimbleCode({
 			logit(Ex[p,t]) <- rho * logit(plot_mu[p,t-1]) + 
 				beta[1]*temp_est[plot_site_num[p],t] +
 				beta[2]*mois_est[plot_site_num[p],t] +
-				beta[3]*pH_est[p,1] +
-				beta[4]*pC_est[p,1] +
+				beta[3]*pH_est[p,plot_start[p]] +
+				beta[4]*pC_est[p,plot_start[p]] +
 				beta[5]*relEM[p,t] +
 				beta[6]*LAI[plot_site_num[p],t] +
 				beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
@@ -338,13 +340,13 @@ nimbleModFunctional_trunc <- nimbleCode({
 	# Using 40th time point (values are constant over time)
 	if(spatialDriverUncertainty) {
 		for(p in 1:N.plot){
-			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
-			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
+			pH_est[p,plot_start[p]] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
+			pC_est[p,plot_start[p]] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
 		}
 	} else {
 		for(p in 1:N.plot){
-			pH_est[p,1] <- pH[p,1]
-			pC_est[p,1] <- pC[p,1]
+			pH_est[p,plot_start[p]] <- pH[p,plot_start[p]]
+			pC_est[p,plot_start[p]] <- pC[p,plot_start[p]]
 		} 
 	}
 	
@@ -400,38 +402,6 @@ nimbleModFunctional_cycl_only <- nimbleCode({
 		}
 	}
 	
-	
-	# Add driver uncertainty if desired ----
-	if(temporalDriverUncertainty) {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
-				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
-			}
-		}
-	} else {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] <- mois[k,t]
-				temp_est[k,t] <- temp[k,t]
-			}
-		} 
-	}
-	
-	# Using 40th time point (values are constant over time)
-	if(spatialDriverUncertainty) {
-		for(p in 1:N.plot){
-			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
-			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
-		}
-	} else {
-		for(p in 1:N.plot){
-			pH_est[p,1] <- pH[p,1]
-			pC_est[p,1] <- pC[p,1]
-		} 
-	}
-	
-	
 	# Priors for site effect covariance matrix ----
 	sig ~ dgamma(.5,1)
 	# Priors for site effects----
@@ -445,9 +415,9 @@ nimbleModFunctional_cycl_only <- nimbleCode({
 	sigma ~ dgamma(.5, .1)
 	intercept ~ dnorm(0, sd = 1)
 	
-	#for (n in 1:2){
-	beta[1:2] ~ dnorm(0, sd = 1)
-	#}
+	for (n in 1:2){
+	beta[n] ~ dnorm(0, sd = 1)
+	}
 }) #end NIMBLE model.
 
 
@@ -477,37 +447,7 @@ nimbleMod_shannon_cycl_only <- nimbleCode({
 			plot_mu[p,t] ~ dnorm(Ex[p,t], sigma)
 		}
 	}
-	
-	# Add driver uncertainty if desired ----
-	if(temporalDriverUncertainty) {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
-				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
-			}
-		}
-	} else {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] <- mois[k,t]
-				temp_est[k,t] <- temp[k,t]
-			}
-		} 
-	}
-	
-	# Add spatial uncertainty (values are constant over time)
-	if(spatialDriverUncertainty) {
-		for(p in 1:N.plot){
-			pH_est[p,1] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
-			pC_est[p,1] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
-		}
-	} else {
-		for(p in 1:N.plot){
-			pH_est[p,1] <- pH[p,1]
-			pC_est[p,1] <- pC[p,1]
-		}
-	}
-	
+
 	rho ~ dnorm(0, sd = 1)
 	#core_sd ~ dinvgamma(3, .5)
 	core_sd ~ dgamma(.1, 1)
@@ -563,45 +503,8 @@ nimbleModTaxa_cycl_only <- nimbleCode({
 		}
 	}
 	
-	# Add driver uncertainty if desired ----
-	if(temporalDriverUncertainty) {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
-				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
-			}
-		}
-	} else {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] <- mois[k,t]
-				temp_est[k,t] <- temp[k,t]
-			}
-		} 
-	}
-	
-	# Using 40th time point (values are constant over time)
-	if(spatialDriverUncertainty) {
-		for(p in 1:N.plot){
-			pH_est[p,1] ~ dnorm(pH[p,1], sd = pH_sd[p,1])
-			pC_est[p,1] ~ dnorm(pC[p,1], sd = pC_sd[p,1])
-		}
-	} else {
-		for(p in 1:N.plot){
-			pH_est[p,1] <- pH[p,1]
-			pC_est[p,1] <- pC[p,1]
-		} 
-	}
-	
 	# Priors for site effect covariance matrix ----
 	sig ~ dgamma(3,1)
-	# SIGMA[1:N.spp,1:N.spp] <- diag(rep(sig^2, N.spp))		
-	# 
-	# # Priors for site random effects:
-	# for(k in 1:N.site){
-	# 	site_effect[k,1:N.spp] ~ dmnorm(alpha0[1:N.spp], # vector of zeros
-	# 																	cov = SIGMA[1:N.spp,1:N.spp])
-	# }
 	
 	# Priors for site random effects:
 	for(s in 1:N.spp){
