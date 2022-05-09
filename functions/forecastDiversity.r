@@ -4,28 +4,27 @@
 #
 
 diversity_fcast <- function(
-	...
+	...,
 	# plotID = plotID,
 	# covar = covar,
 	# param_samples = param_samples,
 	# ic = ic,
 	# truth.plot.long = truth.plot.long,
 	# model.inputs = model.inputs,
-	# Nmc = 5000, 
+	Nmc = 5000
 	# plot_summary = plot_summary,
 	# plot_start_date = plot_start_date
 ) {
 	
 	siteID <- substr(plotID, 1, 4)
 	
-	print(paste0("Forecasting for group: ", group))
-	
 	# Prep MCMC sampling IDs
 	row_samples <- sample.int(max(nrow(param_samples)),Nmc)
 	ic = Rfast::Rnorm(Nmc,0,1) # Initial condition uncertainty
 	NT = model.inputs$N.date
 	Nmc_large <- max(nrow(param_samples)) #20000 # Larger sample number for covariate/IC set of values
-	
+	date_key <- model.inputs$truth.plot.long %>% 
+		select(dateID, date_num) %>% distinct()
 	
 	#Sample covariate data
 	covar <- create_covariate_samples(model.inputs, plotID, siteID, 
@@ -67,8 +66,6 @@ diversity_fcast <- function(
 		
 		# Take initial condition & start forecast from mean observed value if possible
 		plot_start_date <- model.inputs$plot_index[plotID]
-		#ic <- mean(as.numeric(plot_obs$truth), na.rm = T)
-		
 	}
 	
 	### Get other parameter estimates
@@ -91,9 +88,6 @@ diversity_fcast <- function(
 		}
 	}
 
-	# In case initial condition wasn't set
-	if(is.na(ic)) ic <- .0001
-	
 	x <- ic
 	predict <- matrix(NA, Nmc, NT)
 	## simulate
@@ -116,9 +110,10 @@ diversity_fcast <- function(
 											new_site = ifelse(is_new_site, T, F))
 	colnames(ci)[1:3] <- c("lo","med","hi")
 	
+	# Add model estimates
 	if (!is_new_site) {
 		plot_est_join <- plot_est %>% 
-			select(-c(truth, timepoint, species)) 
+			select(-c(truth, timepoint, species, Shannon_orig, Shannon_scale_site)) 
 		ci <- left_join(ci, plot_est_join, by = intersect(colnames(ci), colnames(plot_est_join)))
 	}
 	ci <- left_join(ci, date_key, by=c("date_num"))

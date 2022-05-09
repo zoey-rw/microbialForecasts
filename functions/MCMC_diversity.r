@@ -70,6 +70,7 @@ run_MCMC <- function(group = "ITS",
 										 nburnin = burnin,
 										 thin = thin,
 										 model_data = model.dat$truth.plot.long)
+		if (!is.null(scenario)) metadata$scenario = scenario
 		
 	if (model_name == "cycl_only"){
 		constants$N.beta = 2
@@ -123,5 +124,5 @@ run_MCMC <- function(group = "ITS",
 	
 	message("Diversity output saved for fit for run: ", group, 
 						 "\nModel: ", model_name)
-	return(out)
+	return("Success!")
 }
