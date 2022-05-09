@@ -13,7 +13,7 @@ dat_sequenceMetadata <- read.csv("/projectnb/dietzelab/zrwerbin/NEON_soil_microb
 # Read in soil sample data
 dat_soil <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/soilSample_data_allsites.rds")
 
-div_dat <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds")[[1]] %>% select(siteID, plotID, horizon) %>% distinct()
+div_dat <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds")$full %>% select(siteID, plotID, horizon) %>% distinct()
 
 # plot(dat_soil$pH, dat_soil$CNratio)
 # plot(dat_soil$pH, dat_soil$organicCPercent)
@@ -27,7 +27,7 @@ core.level <- dat_soil[,c('geneticSampleID','year','sampleID','collectDate','sit
 
 # Add in plots from microbial data
 core.level <- merge(core.level, div_dat, all=T)
-core.level <- merge(core.level, dat_sequenceMetadata, all=T)
+core.level <- left_join(core.level, dat_sequenceMetadata)
 
 # Scale by mean and standard deviation
 core.level$pH <- scale(core.level$pH)

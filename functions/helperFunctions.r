@@ -1,76 +1,14 @@
 # Helper functions and global variables for soil microbial forecasts
 
 message("Loading helper functions")
-
-
-pacman::p_load(nimble, coda, lubridate, tidyverse, ggpubr, reshape2) 
-
-
-
-#### global variables ####
-keep_fg_names <- c("cellulolytic", "assim_nitrite_reduction", "dissim_nitrite_reduction", 
-									 "assim_nitrate_reduction", "n_fixation", "dissim_nitrate_reduction", 
-									 "nitrification", "denitrification", "chitinolytic", "lignolytic", 
-									 "copiotroph", "oligotroph", "benomyl_antibiotic", "glucose_simple",  "pyruvate_simple", 
-									 "streptomycin_antibiotic", "sucrose_complex", "acetogen_anaerobic", 
-									 "chloramphenicol_antibiotic", "erythromycin_antibiotic", 
-									 "gentamycin_antibiotic", "glycerol_simple", 
-									 "acetate_simple",
-									 "acidic_stress", "cellobiose_complex", 
-									 "cellulose_complex", "chitin_complex", "galactose_simple", 
-									 "xylose_simple", "salt_stress", "herbicide_stress", "osmotic_stress", 
-									 "heat_stress", "light_stress", "endophyte", "plant_pathogen", 
-									 "animal_pathogen", "ectomycorrhizal", "lichenized", "saprotroph")
-
-fg_names <- c("cellulolytic", "assim_nitrite_reduction", "dissim_nitrite_reduction", 
-							"assim_nitrate_reduction", "n_fixation", "dissim_nitrate_reduction", 
-							"nitrification", "denitrification", "chitinolytic", "lignolytic", 
-							"methanotroph", "copiotroph", "oligotroph", "benomyl_antibiotic", 
-							"citrate_simple", "glucose_simple", "glycine_simple", "pyruvate_simple", 
-							"streptomycin_antibiotic", "sucrose_complex", "acetogen_anaerobic", 
-							"fsfeso4_anaerobic", "ironcitrate_anaerobic", "nonfsfeso4_anaerobic", 
-							"potassiumnitrate_anaerobic", "chloramphenicol_antibiotic", "erythromycin_antibiotic", 
-							"gentamycin_antibiotic", "nystatin_antibiotic", "glycerol_simple", 
-							"acetate_simple", "glutamate_simple", "late_stress", "propionate_simple", 
-							"acidic_stress", "alkaline_stress", "d_galacturonicacid_simple", 
-							"d_glucuronicacid_simple", "arabinose_simple", "cellobiose_complex", 
-							"cellulose_complex", "chitin_complex", "galactose_simple", "glucosamine_simple", 
-							"mannose_simple", "n_acetylglucosamine_simple", "pectin_complex", 
-							"rhamnose_simple", "trehalose_complex", "xylan_complex", "xylose_simple", 
-							"salt_stress", "herbicide_stress", "lowcarbon_stress", "osmotic_stress", 
-							"heat_stress", "light_stress", "endophyte", "plant_pathogen", 
-							"animal_pathogen", "ectomycorrhizal", "lichenized", "wood_saprotroph", 
-							"soil_saprotroph", "litter_saprotroph", "saprotroph")
-
-tax_names <- c("phylum_bac", "class_bac", "order_bac", "family_bac", "genus_bac", 
-							 "phylum_fun", "class_fun", "order_fun", "family_fun", "genus_fun")
-
-div_scenarios <- c("no_uncertainty_ITS", "spatial_uncertainty_ITS", "temporal_uncertainty_ITS", 
-									 "full_uncertainty_ITS", "no_uncertainty_16S", "spatial_uncertainty_16S", 
-									 "temporal_uncertainty_16S", "full_uncertainty_16S")
-
-
-all_covariates_key <- c("1" = "Temperature",
-												"2" = "Moisture",
-												"3" = "pH",
-												"4" = "pC",
-												"5" = "Ectomycorrhizal trees",
-												"6" = "LAI",
-												"7" = "sin",
-												"8" = "cos",
-												"NA" = "NA")
-
-cycl_only_key <- list("1" = "sin",
-											"2" = "cos")
+pacman::p_load(ggpubr, reshape2) 
 
 # Combine MCMC chains using paths, shortening each chain due to RAM constraints
 combine_chains <- function(chain_paths, 
 													 save = FALSE, 
 													 cut_size1 = NULL, 
 													 cut_size2 = NULL){
-	require(coda)
-	require(tidyverse)
-	
+	pacman::p_load(coda, tidyverse)
 	
 	if (is.null(cut_size1)) cut_size1 <- 19999 
 	if (is.null(cut_size2)) cut_size2 <- 9999 
@@ -140,7 +78,8 @@ norm_sample <- function(x, y) Rfast::Rnorm(1, x, y)
 
 # Determine whether MCMC should continue running, based on the minimum effective sample size
 check_continue <- function(run1, min_eff_size = 50) {
-	require(coda)
+	pacman::p_load(coda)
+	
 	
 	cat(paste0("\n Current size: ", nrow(run1)))
 	
@@ -164,8 +103,8 @@ check_continue <- function(run1, min_eff_size = 50) {
 # Version of coda::summary.mcmc(), except using datatable for speed
 fast.summary.mcmc <- function (object, quantiles = c(0.025, 0.25, 0.5, 0.75, 0.975), 
 															 ...) {
-	require(matrixStats)
-	require(data.table)
+	pacman::p_load(matrixStats, data.table)
+	
 	setDTthreads(threads = 8)
 	
 	x <- mcmc.list(object)
@@ -177,9 +116,9 @@ fast.summary.mcmc <- function (object, quantiles = c(0.025, 0.25, 0.5, 0.75, 0.9
 	if (is.matrix(x[[1]])) {
 		for (i in 1:nchain(x)) {
 			print(paste0("Summarizing chain ", i))
-			pb <- txtProgressBar(min = 0, max = nvar(x), style = 3)
+			#pb <- txtProgressBar(min = 0, max = nvar(x), style = 3)
 			for (j in 1:nvar(x)) {
-				setTxtProgressBar(pb, j)
+				#setTxtProgressBar(pb, j)
 				if (all(na.omit(x[[i]][, j])==0)) xtsvar[i,j] <- 0; next()
 				xtsvar[i,j] <- fast.spectrum0.ar(x[[i]][, j])$spec
 			}}
@@ -264,7 +203,7 @@ initsFun <- function(constants, type = NULL){
 									 ncol = constants$N.spp, nrow = constants$N.core)
 	
 	plot_mu_init <- array(rnorm(constants$N.plot  * constants$N.spp * constants$N.date,
-															1,.1), 
+															2,.1), 
 												dim = c(constants$N.plot, constants$N.spp, constants$N.date))
 	plot_rel_init <- array(rep(rep(rep(1/constants$N.spp, constants$N.spp), constants$N.plot), constants$N.date),
 												 dim = c(constants$N.plot, constants$N.spp, constants$N.date))
@@ -328,6 +267,7 @@ initsFun <- function(constants, type = NULL){
 		)
 	} else { # For taxa 
 		SIGMA <- diag(rep(.1, constants$N.spp))		
+		site_effect_init = diag(0, constants$N.site, constants$N.spp)
 		
 		out <- list(
 			y = y_init,
@@ -338,7 +278,7 @@ initsFun <- function(constants, type = NULL){
 			rho = rho_init,
 			sigma = sigma_init,
 			plot_rel = plot_rel_init,
-			site_effect <- diag(rep(sig_init, constants$N.spp)),
+			site_effect = site_effect_init, 
 			Ex = plot_mu_init,
 			SIGMA = SIGMA,
 			mois_est = mois_est,
@@ -375,12 +315,6 @@ gel <- function(samples){
   vars <- allvars[allvars %in% colnames(samples[[1]])]
   coda::gelman.diag(samples[,vars])
 }
-
-var_list <- c("tau_obs","tau_proc","plot_var","site_var", "plot_effect", "time_var", "beta", "site_effect","plot_mean_hat","alpha")
-var_listSimple <- c("tau_obs","tau_proc","plot_var", "plot_effect",#"glob_mean",
-                    #"time_var", 
-                    "plot_mean",
-                    "beta","plot_mean_hat","alpha")
 
 
 # Remove NAs from MCMC objects
@@ -466,6 +400,7 @@ assign_fg_categories <- function(vector) {
 	out[which(grepl("nitr|fixa", vector))] <- "N-cycling"
 	out[which(grepl("sapr|path|arbusc|ecto|endo|lichen", vector))] <- "Trophic guild"
 	out[which(grepl("copio|oligo", vector))] <- "Life-history"
+	out[which(grepl("other", vector))] <- NA
 	return(out)
 }
 
@@ -540,92 +475,6 @@ rbind.df.list <- function(pl.out){
 }
 
 
-pretty_names_old <- list("cellulolytic" = "Cellulolytic bacteria",
-                     "assim_nitrite_reduction" = "Assimilatory nitrite reducing bacteria",
-                     "dissim_nitrite_reduction" = "Dissimilatory nitrite reducing bacteria",
-                     "assim_nitrate_reduction" = "Assimilatory nitrate reducing bacteria",
-                     "n_fixation" = "Nitrogen fixing bacteria",
-                     "dissim_nitrate_reduction" = "Dissimilatory nitrate reducing bacteria",
-                     "nitrification" = "Nitrifying bacteria",
-                     "denitrification" = "Denitrifying bacteria",
-                     "chitinolytic" = "Chitinolytic bacteria",
-                     "lignolytic" = "Ligninolytic bacteria",
-                     "methanotroph" = "Methanotrophic bacteria",
-                     "copiotroph" = "Copiotrophic bacteria",
-                     "oligotroph" = "Oligotrophic bacteria",
-                     "Arbuscular" = "Arbuscular mycorrhizal fungi",
-                     "Animal_Pathogen" = "Animal pathogen fungi",
-                     "Plant_Pathogen" = "Plant pathogen fungi",
-                     "Saprotroph" = "Saprotrophs fungi",
-                     "Wood_Saprotroph" = "Wood saprotrophs (fungi)",
-                     "Ectomycorrhizal" = "Ectomycorrhizal fungi",
-                     "Bdellovibrio" = "Genus Bdellovibrio",
-                     "Pseudogymnoascus" = "Genus Pseudogymnoascus",
-                     "Cyanobacteria" = "Phylum Cyanobacteria"
-)
-
-pretty_rank_names <- list("genus_bac" = "Genus",
-													 "family_bac" = "Family",
-													 "order_bac" = "Order", 
-													 "class_bac" = "Class", 
-													 "phylum_bac" = "Phylum",
-													 "genus_fun" = "Genus",
-													 "family_fun" = "Family",
-													 "order_fun" = "Order", 
-													 "class_fun" = "Class", 
-													 "phylum_fun" = "Phylum",
-													 "functional_group" = "Functional group",
-													"diversity_16S" = "Diversity",
-													"diversity_ITS" = "Diversity"
-													)
-
-pretty_names <- list("cellulolytic" = "Cellulose degraders",
-                     "assim_nitrite_reduction" = "Assimilatory nitrite reducers",
-                     "dissim_nitrite_reduction" = "Dissimilatory nitrite reducers",
-                     "assim_nitrate_reduction" = "Assimilatory nitrate reducers",
-                     "n_fixation" = "Nitrogen fixers",
-                     "dissim_nitrate_reduction" = "Dissimilatory nitrate reducers",
-                     "nitrification" = "Nitrifiers",
-                     "denitrification" = "Denitrifiers",
-                     "chitinolytic" = "Chitin degraders",
-                     "lignolytic" = "Lignin degraders",
-                     "methanotroph" = "Methanotrophs",
-                     "copiotroph" = "Copiotrophs",
-                     "oligotroph" = "Oligotrophs",
-                     "Arbuscular" = "Arbuscular mycorrhizae",
-                     "Animal_Pathogen" = "Animal pathogens",
-                     "Plant_Pathogen" = "Plant pathogens",
-                     "Saprotroph" = "Saprotrophs",
-                     "Wood_Saprotroph" = "Wood saprotrophs",
-                     "Ectomycorrhizal" = "Ectomycorrhizae",
-                     "Bdellovibrio" = "Genus Bdellovibrio",
-                     "Pseudogymnoascus" = "Genus Pseudogymnoascus",
-                     "Cyanobacteria" = "Phylum Cyanobacteria"
-)
-
-
-FG_kingdoms <- list("cellulolytic" = "Bacterial_functional_group",
-                     "assim_nitrite_reduction" = "Bacterial_functional_group",
-                     "dissim_nitrite_reduction" = "Bacterial_functional_group",
-                     "assim_nitrate_reduction" = "Bacterial_functional_group",
-                     "n_fixation" = "Bacterial_functional_group",
-                     "dissim_nitrate_reduction" = "Bacterial_functional_group",
-                     "nitrification" = "Bacterial_functional_group",
-                     "denitrification" = "Bacterial_functional_group",
-                     "chitinolytic" = "Bacterial_functional_group",
-                     "lignolytic" = "Bacterial_functional_group",
-                     "methanotroph" = "Bacterial_functional_group",
-                     "copiotroph" = "Bacterial_functional_group",
-                     "oligotroph" = "Bacterial_functional_group",
-                     "Arbuscular" = "Fungal_functional_group",
-                     "Animal_Pathogen" = "Fungal_functional_group",
-                     "Plant_Pathogen" = "Fungal_functional_group",
-                     "Saprotroph" = "Fungal_functional_group",
-                     "Wood_Saprotroph" = "Fungal_functional_group",
-                     "Ectomycorrhizal" = "Fungal_functional_group")
-
-
-N_cyclers <- c("assim_nitrite_reduction", "dissim_nitrite_reduction","assim_nitrate_reduction","n_fixation","dissim_nitrate_reduction","nitrification","denitrification")
 
 tukey <- function(x, y, extra_info = NULL, y.offset = .3){
 	new.df <- cbind.data.frame("x" = x, "y" = y)
@@ -678,13 +527,15 @@ return(list(sin=y_sin, cos=y_cos))
 # return data matrix filtered by date/plot/site
 filter_date_site <- function(input_df, keep_sites, keep_plots, 
 														 min.date, max.date, max.predictor.date = NULL, ...) {
-require(tidyverse)
+pacman::p_load(tidyverse, anytime)
 	
 	if (!is.null(max.predictor.date)) {
 		filt.date = max.predictor.date
-	} else filt.date = max.date
+	} else filt.date = anydate(max.date)
 	# filter by date
-	col_dates <- colnames(input_df) %>% fixDate()
+	col_dates <- colnames(input_df) %>% fixDate() %>% anydate()
+	min.date <- anydate(min.date)
+	
 	filt_date <- input_df[,which(col_dates <= filt.date & col_dates >= min.date)]
 	
 	# filter by site
@@ -706,6 +557,28 @@ require(tidyverse)
 }
 
 
+
+#' crib_fun 
+#' stolen from colin's NEFI_microbe repo
+#' converts a vector of [0,1] values to (0,1) a la Cribari-Neto & Zeileis 2010
+#' @param x a vector of values on the interval [0,1]
+#' @param N alternative sample size. This is useful when tranforming a matrix in the dirchlet case, rather than just a vector as in the beta case.
+#'
+#' @return  a vector of values on the interval (0,1)
+#' @export
+#'
+#' @examples
+crib_fun <- function(x,N = NA){
+	#default use length of vector.
+	if( is.na(N)){
+		out <- (x * (length(x) - 1) + 0.5) / length(x)  
+	}
+	#custom- useful when I am in multivariate case.
+	if(!is.na(N)){
+		out <- (x * (N - 1) + 0.5) / N
+	}
+	return(out)
+}
 
 create_covariate_samples <- function(model.inputs, plotID, siteID, 
 																		 Nmc_large, Nmc,
@@ -733,4 +606,288 @@ create_covariate_samples <- function(model.inputs, plotID, siteID,
 }
 covar <- covar_full[sample.int(Nmc_large,Nmc),,]
 return(covar)
+}
+
+
+
+# parse MCMC rowname output from summary matrix
+parse_plot_mu_vars <- function(input_df) {
+	require(stringr)
+	
+	with_rowname_col <-input_df %>% as.data.frame() %>%  
+		rownames_to_column() 
+	
+	# check number of commas for how to split values (i.e. should there be a "species_num" value)
+	if (str_count(with_rowname_col$rowname[1], ',') == 2) {
+		parsed <- with_rowname_col %>%
+			separate(rowname, sep=", ", into=c("plot_num","species_num","timepoint")) %>%
+			mutate(plot_num = as.integer(gsub("plot_rel\\[", "", plot_num)),
+						 timepoint = as.integer(gsub("\\]", "", timepoint)))
+	} else if (str_count(with_rowname_col$rowname[1], ',') == 1) {
+	parsed <- with_rowname_col %>%
+		separate(rowname, sep=", ", into=c("plot_num","timepoint"))  %>%
+		mutate(plot_num = as.integer(gsub("plot_mu\\[", "", plot_num)),
+				 timepoint = as.integer(gsub("\\]", "", timepoint)))
+	}
+	return(parsed)
+}
+
+
+# extract MCMC summary by rowname from summary matrix
+extract_summary_row <- function(input_df, var = "sigma") {
+	
+	out <- input_df %>% as.data.frame() %>% 
+		rownames_to_column("rowname") %>% 
+		filter(grepl(!!var, rowname))
+	return(out)
+}
+																				
+
+# extract MCMC summary by rowname from summary matrix
+extract_bracketed_vals <- function(input_df, varname1 = "beta_num", varname2 = NULL) {
+	
+	
+	if (!"rowname" %in% colnames(input_df)){
+		input_df <-input_df %>% as.data.frame() %>%  
+			rownames_to_column() 
+	}
+	
+	if (str_count(input_df$rowname[1], ',') == 1) {
+		out <- input_df %>% 
+			separate(rowname, sep="\\[|, |\\]", into=c("rowname",
+																								 "values1",
+																								 "values2"), remove = F, 
+							 fill = "right", extra = "drop") %>% 
+			rename_with(~varname1, values1) %>% 
+			rename_with(~varname2, values2) 
+	
+		} else if (str_count(input_df$rowname[1], ',') == 0) {
+
+				out <- input_df %>%
+		separate("rowname", sep = "\\[|\\]", 
+						 into = c("rowname","values1",NA), 
+						 fill = "right") %>% 
+		rename_with(~varname1, values1)
+		}
+	return(out)
+}	
+# extract_bracketed_vals(beta_out, "beta_num") 
+# extract_bracketed_vals(plot_summary[[1]], "timepoint") 
+
+# Does confidence interval include 0? If so, not significant (0) otherwise significant (1)
+is_significant <- function(lo, hi) {
+	ifelse(lo < 0 & hi < 0 |
+				 	lo > -0 & lo > -0, 1, 0)
+}
+
+
+
+
+
+summarize_fg_div_model <- function(file_path){
+	
+	# Read in file, assign named contents to global environment
+	read_in <- readRDS(file_path)
+	#list2env(read_in,globalenv())
+	
+	samples <- read_in$samples
+	param_summary <- read_in$param_summary
+	plot_summary <- read_in$plot_summary
+	truth.plot.long <- read_in$metadata$model_data
+
+	# Extract run information
+	info <- basename(file_path) %>% str_split("_") %>% unlist()
+	model_name <- basename(dirname(file_path))
+	rank.name <- info %>% head(-2) %>% tail(-1) %>% paste0(collapse = "_")
+	time_period <- tail(info, 2) %>% paste0(collapse = "_") %>% str_replace(".rds", "")
+	
+	message("\nSummarizing ", rank.name, ", ", time_period, ", ", model_name)
+	
+	cov_key <- switch(model_name,
+										"all_covariates" = all_covariates_key,
+										"cycl_only" = cycl_only_key)
+	
+	
+	# Add some info to observational data for merging
+	truth.plot.long <- truth.plot.long %>%
+		mutate(dates = fixDate(dateID),
+					 truth = as.numeric(truth),
+					 model_name = !!model_name,
+					 taxon = rank.name,
+					 time_period = !!time_period)
+	
+	if (grepl("functional_groups", file_path)) {
+		truth.plot.long <- truth.plot.long %>% mutate(
+			fcast_type = "Functional group",
+			rank = "functional_group",
+			fg_cat = assign_fg_categories(species),
+			group = assign_fg_kingdoms(fg_cat),
+			pretty_group = ifelse(group == "16S", "Bacteria", "Fungi"))
+	} else if (grepl("div", file_path)) {
+		truth.plot.long <- truth.plot.long %>% mutate(
+			fcast_type = "Diversity",
+			rank = "diversity",
+			group = ifelse(grepl("16S", rank.name), "16S", "ITS"),
+			pretty_group = ifelse(group == "16S", "Bacteria", "Fungi"))
+	} else {
+		message("File path does not contain 'div' or 'functional_groups'")
+	}
+	
+	
+	# Calculate plot median and quantiles
+	pred.quantiles <- plot_summary[[2]] %>% parse_plot_mu_vars() %>%  
+		merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
+	
+	# For scoring the predictions, need mean and SD
+	pred.means <- plot_summary[[1]] %>% parse_plot_mu_vars() %>% 
+		merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
+	
+	# Get mean values for parameters
+	means <- param_summary[[1]]
+	eff_list <- lapply(c("sigma", "sig$", "core", "intercept"),
+										 function(x) extract_summary_row(means, var = x)) %>% 
+		plyr::rbind.fill()
+	
+	# Get site effect sizes per rank
+	site_eff_out <- extract_summary_row(means, var = "site")  %>%
+		extract_bracketed_vals("site_num") %>%
+		mutate(siteID = truth.plot.long[match(site_num, truth.plot.long$site_num), ]$siteID)
+	
+	# Get beta sizes per rank
+	beta_out <- extract_summary_row(means, var = "beta|rho") %>%
+		extract_bracketed_vals("beta_num") %>%
+		mutate(beta = recode(beta_num, !!!cov_key))
+	beta_out[grep("rho", beta_out$rowname), ]$beta = "rho"
+	beta_out[grep("rho", beta_out$rowname), ]$beta_num = "0"
+	
+	
+	# Use quantiles to assign significance to beta parameters.
+	beta_ci <- extract_summary_row(param_summary[[2]], var = "beta|rho") %>% 
+		extract_bracketed_vals("beta_num")
+	beta_out$significant <- is_significant(beta_ci$`2.5%`, beta_ci$`97.5%`)
+	beta_out$effSize <- abs(beta_out$Mean)
+	
+	# Combine parameter estimates into summary
+	summary_df <-
+		plyr::rbind.fill(beta_out, eff_list, site_eff_out) %>%
+		cbind(truth.plot.long[1, 11:17])
+	
+	## Calculate gelman diagnostics to assess convergence
+	gd <- cbind(gelman.diag(samples, multivariate = FALSE)[[1]], effSize = effectiveSize(samples))
+	gd <- gd %>% mutate(taxon.name = !!taxon.name,
+											niter = read_in$metadata[[2]],
+											nburnin = read_in$metadata[[3]])
+	out <- list(summary_df, pred.means, pred.quantiles, gd)
+	return(out)
+}
+
+
+summarize_tax_model <- function(file_path){
+	
+	# Read in file, assign named contents to global environment
+	read_in <- readRDS(file_path)
+	#list2env(read_in,globalenv())
+	
+	# Read in samples
+	samples <- read_in$samples
+	param_summary <- read_in$param_summary
+	plot_summary <- read_in$plot_summary
+	truth.plot.long <- read_in$metadata$model_data
+
+	# Extract run information
+	info <- basename(file_path) %>% str_split("_") %>% unlist()
+	model_name <- basename(dirname(file_path))
+	rank.name <- info %>% head(-2) %>% tail(-1) %>% paste0(collapse = "_")
+	rank_only <- info[[2]]
+	group <- ifelse(info[[3]] == "bac", "16S", "ITS")
+	time_period <- tail(info, 2) %>% paste0(collapse = "_") %>% str_replace(".rds", "")
+	
+	message("\nSummarizing ",group,", ", rank.name, ", ", time_period, ", ", model_name)
+	
+	if (model_name == "convergence_testing") {
+		model_name = "cycl_only"
+		taxon.name = info[[4]]
+	}
+	
+	
+	cov_key <- switch(model_name,
+										"all_covariates" = all_covariates_key,
+										"cycl_only" = cycl_only_key)
+	
+	taxon_key <- unique(truth.plot.long$species)
+	names(taxon_key) <- seq(1, length(taxon_key))
+	
+	sites <- truth.plot.long %>% select(site_num, siteID) %>% unique()
+	site_key <- sites[["siteID"]]
+	names(site_key) <- sites[["site_num"]]
+	
+	# Add some info to observational data for merging
+	truth.plot.long <- truth.plot.long %>%
+		mutate(dates = fixDate(dateID),
+					 truth = as.numeric(truth),
+					 model_name = !!model_name,
+					 taxon = species,
+					 rank = rank.name,
+					 group = !!group,
+					 rank_only = !!rank_only,
+					 time_period = !!time_period,
+					 fcast_type = "Taxonomic",
+					 pretty_group = ifelse(group == "16S", "Bacteria", "Fungi")) 
+	
+	
+	# Calculate plot median and quantiles
+	pred.quantiles <- plot_summary[[2]] %>% parse_plot_mu_vars() %>%  
+		mutate(taxon = recode(species_num, !!!taxon_key)) %>% 
+		merge(truth.plot.long, by = c("plot_num", "timepoint","taxon"), all = T)
+	
+	
+	# For scoring the predictions, need mean and SD
+	pred.means <- plot_summary[[1]] %>% parse_plot_mu_vars() %>% 
+		mutate(taxon = recode(species_num, !!!taxon_key)) %>% 
+		merge(truth.plot.long, by = c("plot_num", "timepoint","taxon"), all = T)
+	
+	# Get mean values for parameters
+	means <- param_summary[[1]]
+	eff_list <- lapply(c("sigma", "sig$", "intercept", "rho"),
+										 function(x) extract_summary_row(means, var = x)) %>% 
+		plyr::rbind.fill() %>% extract_bracketed_vals("taxon_num") %>% 
+		mutate(taxon = recode(taxon_num, !!!taxon_key))
+	
+	# Get site effect sizes
+	site_eff_out <- extract_summary_row(means, var = "site") %>%
+		extract_bracketed_vals(varname1 = "site_num", varname2 = "taxon_num") %>%
+		mutate(taxon = recode(taxon_num, !!!taxon_key),
+					 siteID = recode(site_num, !!!site_key))
+	
+	# Get beta sizes per rank
+	beta_out <- extract_summary_row(means, var = "beta") %>%
+		extract_bracketed_vals(varname1 = "taxon_num", varname2 = "beta_num") %>%
+		mutate(beta = recode(beta_num, !!!cov_key),
+					 taxon = recode(taxon_num, !!!taxon_key))
+	
+	# Use quantiles to assign significance to beta parameters.
+	beta_ci <- extract_summary_row(param_summary[[2]], var = "beta") %>%
+		extract_bracketed_vals(varname1 = "taxon_num", varname2 = "beta_num") %>%
+		mutate(beta = recode(beta_num, !!!cov_key),
+					 taxon = recode(taxon_num, !!!taxon_key))
+	beta_out$significant <- is_significant(beta_ci$`2.5%`, beta_ci$`97.5%`)
+	beta_out$effSize <- abs(beta_out$Mean)
+	
+	# Combine parameter estimates into summary
+	summary_df <-
+		plyr::rbind.fill(beta_out, eff_list, site_eff_out) %>%
+		cbind(truth.plot.long[1, 11:18])
+	
+	
+	## Calculate gelman diagnostics to assess convergence
+	gd <- cbind.data.frame(gelman.diag(samples, multivariate = FALSE)[[1]], 
+												 effSize = effectiveSize(samples))
+	gd <- gd %>% mutate(rank.name = !!rank.name,
+											taxon.name = !!taxon.name,
+											niter = read_in$metadata[[2]],
+											nburnin = read_in$metadata[[3]])
+	
+	out <- list(summary_df, pred.means, pred.quantiles, gd)
+	return(out)
+	
 }
