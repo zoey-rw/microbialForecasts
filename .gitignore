@@ -1,7 +1,10 @@
-# ignore any log files
+# ignore any log/Rproject files
 *.log
 /log/*
 /tmp/*
+.Rhistory
+.Rproj.user/
+*/.Rproj.user/
 
 # ignore any "old" directories
 */old/
