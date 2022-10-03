@@ -51,7 +51,7 @@ run_scenarios <- function(k, ...) {
 
 		print(s)
 	out <- run_MCMC(k = k, 
-									iter = 500000, burnin = 300000, thin = 10, 
+									iter = 1000000, burnin = 500000, thin = 10, 
 									#iter = 50001, burnin = 20002, thin = 3, 
 									test=F, 
 									temporalDriverUncertainty = TRUE, 

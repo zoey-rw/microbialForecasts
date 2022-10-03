@@ -9,35 +9,44 @@ if (length(argv) > 0){
 
 #### Run on all groups ----
 
- 
-# Running dirichlet model 
-pacman::p_load(doParallel) 
-#source(here::here("source.R"))
+
+# Running dirichlet model
 source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
-source(here("functions", "MCMC_functional_groups.r"))
 
 
-# Create parameters to pass	
-params = data.frame(group = rep(1:length(keep_fg_names)), 
-										ranks = keep_fg_names,
-										min.date = c("20151101", "20130601"),
-										 max.date = c("20180101", "20170101"),
-										 scenario =  c("2 year current methods", 
-										 							"Legacy + 1 year current methods"),
-										model_name = c("cycl_only","all_covariates")) %>% 
-	expand(nesting(min.date, max.date, scenario), 
+# Create parameters to pass
+params = data.frame(group = rep(1:length(microbialForecast:::keep_fg_names)),
+										ranks = microbialForecast:::keep_fg_names,
+										min.date = c("20130601","20151101", "20130601","20151101"),
+										max.date = c("20151101","20180101", "20170101","20200101"),
+										scenario =  c("Legacy only","2 year current methods",
+																	"Legacy + 1 year current methods",
+																	"Full dataset"),
+										model_name = c("cycl_only","all_covariates")) %>%
+	expand(nesting(min.date, max.date, scenario),
 								 nesting(group, ranks),
-								 model_name) %>% 
-	mutate(temporalDriverUncertainty =  T, 
+								 model_name) %>%
+	mutate(temporalDriverUncertainty =  T,
 									spatialDriverUncertainty =  T)
 
+params = params %>% filter(
+	# ranks %in% c("acetate_simple", "animal_pathogen", "gentamycin_antibiotic",
+	# "glycerol_simple", "herbicide_stress", "lichenized", "pyruvate_simple",
+	# "acidic_stress", "cellulolytic", "chitin_complex", "light_stress",
+	# "lignolytic", "oligotroph", "plant_pathogen", "saprotroph") &
+
+		#scenario == "Full dataset" & model_name == "all_covariates")
+scenario == "2 year current methods" & model_name == "all_covariates")
 
 # Create function that calls run_MCMC for each uncertainty scenario
 run_scenarios <- function(j) {
+	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/MCMC_functional_groups_test.r")
+
 	print(params[j,])
 	#run_MCMC(k = params$group[[j]], iter = 1000, burnin = 500, thin = 1, test = F,
-  #run_MCMC(k = params$group[[j]], iter = 30000, burnin = 15000, thin = 1, test = F,
-	run_MCMC(k = params$group[[j]], iter = 300000, burnin = 150000, thin = 10, test=F,
+	#run_MCMC_functional_test(k = params$group[[j]], iter = 250000, burnin = 150000, thin = 3, test = F,
+	run_MCMC_functional_test(k = params$group[[j]], iter = 750000, burnin = 500000, thin = 10, test=F,
 									scenario = params$scenario[[j]],
 					 model_name = params$model_name[[j]],
 					 time_period = params$time_period[[j]],
@@ -58,15 +67,15 @@ run_scenarios(k)
 
 
 # Run in parallel
-cl <- makeCluster(8, type="PSOCK", outfile="")
-registerDoParallel(cl)
-to_run <- grep("2 year", params$scenario) 
-output.list = foreach(j=to_run,
-											.errorhandling = 'pass') %dopar% {
-												run_scenarios(j)
-	return()
-											}
-stopCluster(cl)
+# cl <- makeCluster(8, type="PSOCK", outfile="")
+# registerDoParallel(cl)
+# to_run <- grep("Full", params$scenario)
+# output.list = foreach(j=to_run,
+# 											.errorhandling = 'pass') %dopar% {
+# 												run_scenarios(j)
+# 	return()
+# 											}
+# stopCluster(cl)
 
 
 
@@ -78,7 +87,7 @@ stopCluster(cl)
 # params$specific <- paste(params$ranks, params$scenario)
 # missing_scenarios$specific <- paste(missing_scenarios$scenario, missing_scenarios$rank.name)
 # to_rerun <- as.numeric(rownames(params[params$specific %in% missing_scenarios$specific,]))
-# 
+#
 # fixed_fg_names <- c("cellulolytic", "assim_nitrite_reduction", "dissim_nitrite_reduction",
 # 										"assim_nitrate_reduction", "n_fixation", "dissim_nitrate_reduction",
 # 										"nitrification", "denitrification", "chitinolytic", "lignolytic",
