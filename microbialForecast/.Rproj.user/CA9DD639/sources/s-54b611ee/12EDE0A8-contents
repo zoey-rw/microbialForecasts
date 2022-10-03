@@ -1,0 +1,66 @@
+
+
+flux_file <- "/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_output/extramods/sim_diff_2.11_nh4_0.53_no3_0_mois_0.21_o2_0.156/flux.csv"
+
+
+
+all_flux_files <- scenarios %>%
+	setNames(., sub("\\.csv$", "", dirname(.))) %>%
+	map(data.table::fread, nThread = 16)
+
+
+flux_orig <- data.table::fread(flux_file,  nThread = 16)
+
+
+single_media = read_csv("/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_output/extramods/sim_diff_3.18_nh4_0.74_no3_0_mois_0.22_o2_0.144/media.csv")
+
+single_media = read_csv("/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_output/more_sugars/sim_diff_3.18_nh4_0.74_no3_0_mois_0.22_o2_0.144/media.csv")
+
+
+single_media = read_csv("/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_output/more_sugars/sim_diff_3.18_nh4_4.67_no3_0_mois_0.53_o2_0.008/media.csv")
+
+all_mets <- single_media %>% group_by(metabolite, cycle) %>%
+	summarize(total = sum(conc_mmol))
+
+mets_keep =  c("nh4_e","no2_e", "no3_e","n2o_e","n2_e","no_e","h2o_e","h_e","h_c","co2_e", "nh3_e","biomass_e","o2_e","ch4_e")
+select_mets <- single_media[single_media$metabolite %in% mets_keep,] %>% group_by(metabolite, cycle) %>%
+	summarize(total = sum(conc_mmol))
+
+ggplot(select_mets %>%
+			 				 	filter(!metabolite %in% c("co2_e", "h_e","biomass_e","o2_e","n2o_e",
+			 				 										 "h2o_e")),
+			 aes(y =total, x = cycle, color = metabolite)) +
+	geom_path(size = 1, alpha=.8) +
+	facet_grid(rows=vars(metabolite), scales="free_y") +
+	theme_bw(base_size = 18)
+
+
+
+ggplot(select_mets %>% filter(metabolite %in% c("nh4_e","no2_e","no3_e")),
+			 aes(y =total, x = cycle, color = metabolite)) +
+	geom_path(size = 1, alpha=.8) +
+	facet_wrap(~metabolite) +
+	theme_bw(base_size = 18)
+
+
+
+ggplot(select_mets %>% filter(metabolite %in% c("nh4_e")),
+			 aes(y =total, x = cycle, color = metabolite)) +
+	geom_path(size = 1, alpha=.8) +
+	facet_wrap(~metabolite) +
+	theme_bw(base_size = 18)
+
+ggplot(all_mets %>% filter(metabolite %in% c("glc__D_e")),
+			 aes(y =total, x = cycle, color = metabolite)) +
+	geom_path(size = 1, alpha=.8) +
+	facet_wrap(~metabolite) +
+	theme_bw(base_size = 18)
+
+
+ggplot(all_mets %>% filter(metabolite %in% c("glc__D_e","cit_e","cys__L_e")),
+			 aes(y =total, x = cycle)) +
+	geom_path(size = 1, alpha=.8, show.legend = F) +
+	facet_wrap(~metabolite) +
+	theme_bw(base_size = 18)
+
+

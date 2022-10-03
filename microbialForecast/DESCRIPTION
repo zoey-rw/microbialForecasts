@@ -1,0 +1,19 @@
+Package: microbialForecast
+Type: Package
+Title: Forecasting the Soil Microbiome
+Version: 0.1.0
+Author: Zoey Werbin
+Maintainer: Zoey Werbin <zrwerbin@bu.edu>
+Description: Collection of functions for preparing data and creating forecasts
+License: What license is it under?
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.1.2
+Depends: 
+    tidyverse,
+    here,
+    nimble,
+    coda,
+    lubridate,
+    reshape2,
+    R (>= 2.10)

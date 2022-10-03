@@ -1,0 +1,23 @@
+# Get abundances of nitrifier genera from NEON 16S data
+
+library(phyloseq)
+source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/binTaxGroups.r")
+
+ps <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_16S.rds")
+
+out <- get_tax_level_abun(ps, 
+													tax_rank_list = "genus", 
+													min_seq_depth = 5000)
+
+prev_top <- out$genus$prevalence[order(out$genus$prevalence$prevalence, decreasing = T),]
+
+
+relevant_taxa <- c("nitrospira","nitrosomonadaceae_genus","candidatus.nitrosotalea","nitrolancea",
+									 "candidatus.nitrotoga","nitrosospira",
+									 "nitrobacter","nitrospina","nitrosomonas","nitrosococcus","candidatus.nitrospira")
+rank_abun <- out$genus$rel.abundances
+out_relevant <- rank_abun[,colnames(rank_abun) %in% relevant_taxa, drop=F]
+seqDepth <- rowSums(rank_abun)
+out_relevant$other <- 1-rowSums(out_relevant)
+
+saveRDS(out_relevant, "/projectnb2/talbot-lab-data/zrwerbin/interactions/data/nitrifiers_genus_16S.rds")

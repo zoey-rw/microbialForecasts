@@ -1,0 +1,57 @@
+library(readr)
+source("/projectnb/talbot-lab-data/zrwerbin/soil_genome_db/custom_pavian.r")
+
+
+# Read in the bracken output reports from the original and updated database Kraken2 calls
+original_bracken <- read_tsv("/projectnb2/microbiome/dgolden/Struo2/kraken2_testing2/DB_original_report_HARV_037-O-20190715-COMP-DNA1.bracken")
+updated_bracken <- read_tsv("/projectnb2/microbiome/dgolden/Struo2/kraken2_testing2/DB_updated_report_HARV_037-O-20190715-COMP-DNA1.bracken")
+
+
+# Identify organism names
+original_names <- original_bracken$name  %>% unique
+updated_names <- updated_bracken$name %>% unique
+
+# Identify which organisms were called *only* in either the original database or the updated database
+original_only <- dplyr::filter(original_bracken, name %in% updated_names == FALSE)
+updated_only <- dplyr::filter(updated_bracken, name %in% original_names == FALSE)
+
+original_bracken[grepl("Bradyrhizobium",original_bracken$name),]
+updated_bracken[grepl("Bradyrhizobium",updated_bracken$name),]
+
+# Read in JGI sample TSV and JGI sample names
+sample_tsv <- read_tsv("/projectnb2/microbiome/dgolden/Struo2/custom_dbs/JGI_downloads_data_complete.tsv")
+sample_names <- sample_tsv$unique_ncbi_organism_name %>% unique()
+
+table(sample_tsv$`ORGANISM NCBI GENUS`) %>% sort
+
+updated_names[updated_names %in% sample_names]
+
+updated_names[grepl("Pseudomonas", updated_names)]
+sample_names[grepl("Pseudomonas", sample_names)]
+
+
+updated_names[grepl("Burkholderia", updated_names)]
+sample_names[grepl("Burkholderia", sample_names)]
+sample_names[grepl("Bradyrhizobium", sample_names)]
+
+# Identify overlap between JGI sample names and names of organisms called in Bracken for original and updated dbs
+  # Why is there no overlap here? That's odd. Evidently the added genomes only resulted in different calls for the
+    # genomes in the original GTDB_release207
+# ALSO! I think this indicates that Bracken is not associating read data with *any* organisms from the JGI sample TSV
+sample_original_overlap <- intersect(original_names, sample_names)
+sample_updated_overlap <- intersect(updated_names, sample_names)
+
+# Read in and get organism names for original GTDB_release207 metadata
+arc207 <- read_tsv("/projectnb2/microbiome/dgolden/Struo2/ar53_metadata_r207.tsv")
+bac207 <- read_tsv("/projectnb2/microbiome/dgolden/Struo2/bac120_metadata_r207.tsv")
+full207 <- rbind(arc207, bac207)
+full_names <- full207$ncbi_organism_name
+
+# Identify overlap between GTDB_release207 organism names and names of organisms called in Bracken for original and updated dbs
+full_original_overlap <- intersect(original_names, full_names)
+full_updated_overlap <- intersect(updated_names, full_names)
+
+# These vectors contain the organism names found both in the GTDB_release207 metadata and in the vectors of...
+  # names of organisms called in only the updated database Bracken report or in only the original database Bracken report
+full_original_changed_overlap <- intersect(original_only$name, full_names)
+full_updated_changed_overlap <- intersect(updated_only$name, full_names)

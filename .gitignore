@@ -23,6 +23,8 @@ data/clean/*
 data/clean
 data/*
 
-
 # ignore figures
 figures/*
+
+# ignore functions because they should be in R package
+functions/*

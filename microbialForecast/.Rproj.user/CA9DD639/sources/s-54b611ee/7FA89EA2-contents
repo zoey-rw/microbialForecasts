@@ -1,0 +1,182 @@
+---
+title: "gapfill_analysis"
+output: html_document
+date: '2022-08-01'
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(stringr) #str_split_fixed()
+library(googlesheets4) #read_sheet()
+library(tidyverse)
+library(ggpubr)
+library(ggpmisc) #stat_poly_line(), stat_poly_eq()
+```
+
+```{r}
+gapfill_data <- read.delim("/projectnb/talbot-lab-data/metabolic_models/aeng/gapfill.txt", header = F)
+
+# split the data by the colon
+gapfill_data <- as.data.frame(str_split_fixed(gapfill_data$V1, "aeng/models/", 2))
+gapfill_data <- as.data.frame(str_split_fixed(gapfill_data$V2, ":", 2))
+gapfill_model <- as.data.frame(str_split_fixed(gapfill_data$V1, "\\.xml.*", 2))
+
+#gapfill_data$V2 <- as.numeric(gapfill_data$V2)
+gapfill_data <- as.data.frame(cbind(gapfill_model$V1, gapfill_data$V2))
+colnames(gapfill_data) <- c("model", "gapfill_rxns")
+
+gapfill_data <- gapfill_data %>% separate(col = model, sep = "_", into = c("modelID", "media"))
+gapfill_data <- filter(gapfill_data, modelID != "archived-models")
+gapfill_data <- gapfill_data %>% mutate(media_type = ifelse(media == "M8", "complete", "custom")) 
+```
+
+```{r}
+modelID <- read_sheet("https://docs.google.com/spreadsheets/d/1YWAp-wdQWh9OHmw82w-2QuqsCYh3IgXh4QE17t7en0g/edit#gid=771669281", sheet = "modelID")
+
+genomes <- modelID %>%
+  select(c("modelID", "genome size (bp)", "subgroup"))
+colnames(genomes)[2] <- "genome"
+
+subgroup_1 <- filter(genomes, subgroup == 1)
+```
+
+## Plotting the number of gap filled reactions by genome size
+```{r}
+dat <- merge(gapfill_data, genomes)
+```
+
+```{r}
+ggplot(dat, aes(x = genome, y = gapfill_rxns, color = media_type)) +
+  geom_jitter() +
+  stat_poly_line() +
+  stat_poly_eq(label.x = 0.7) +
+  theme_bw() +
+  ylab("Number of gap filled reactions") +
+  xlab("Genome size (bp)") +
+  guides(color = guide_legend(title = "Media type")) +
+  theme(legend.position = c(0.9,0.9),
+        legend.text = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(size = 14))
+
+# dat$gapfill_rxns <- as.numeric(dat$gapfill_rxns)
+# plot1 <- ggplot(dat, aes(x = genome, y = gapfill_rxns, color = media_type)) + 
+#   geom_jitter(alpha = 0.5, height = 0.1, size=2) +
+# 	geom_smooth(method="lm") +
+#   theme_bw() +
+#   ylab("Number of gap filled reactions") +
+#   xlab("Genome size (bp)") +
+#   guides(color = guide_legend(title = "Media type")) +
+#   theme(legend.position = c(0.9,0.9),
+#         legend.text = element_text(size = 12),
+#         axis.text.x = element_text(size = 12),
+#         axis.text.y = element_text(size = 12),
+#         axis.title = element_text(size = 14)) +
+#   annotate("label", x = 1.9, y = 3.75, label = "t(19.59) = 1.8685 \n p = 0.08")
+```
+
+```{r}
+# calculating variance and mean
+custom <- filter(dat, media_type == "custom")
+custom$gapfill_rxns <- as.numeric(custom$gapfill_rxns)
+complete <- filter(dat, media_type == "complete")
+complete$gapfill_rxns <- as.numeric(complete$gapfill_rxns)
+
+var(custom$gapfill_rxns) # 0.5625
+mean(custom$gapfill_rxns) # 0.8125
+var(complete$gapfill_rxns) # 1.4
+mean(complete$gapfill_rxns) # 1.6
+
+# determining R squared
+model_custom <- lm(gapfill_rxns ~ genome, data = custom)
+summary(model_custom)
+model_complete <- lm(gapfill_rxns ~ genome, data = complete)
+summary(model_complete)
+```
+
+Boxplot to look at (2) the number of gap filled reactions will be higher for microbes with smaller genome sizes in comparison to those with larger genome sizes; and (3) the number of gap filled reactions will be lower when complete media is used in comparison to custom media
+
+```{r}
+# number of gap filled reactions vs. media type
+
+ggboxplot(data = dat, x = "media_type", y = "gapfill_rxns", fill = "media_type", add = "jitter") +
+  stat_compare_means(method ="t.test", label.x = 2, label.y = 3.5) +
+ xlab("Media type") +
+  ylab("Number of gap filled reactions") +
+  theme(axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        legend.position = "none")
+
+# dat$gapfill_rxns <- as.numeric(dat$gapfill_rxns)
+# plot2 <- ggplot(dat) +
+#   geom_boxplot(aes(x = media_type, y = gapfill_rxns, fill = media_type)) +
+#   theme_bw() +
+#   xlab("Media type") +
+#   ylab("Number of gap filled reactions") +
+#   theme(axis.text.x = element_text(size = 12),
+#         axis.text.y = element_text(size = 12),
+#         axis.title = element_text(size = 14),
+#         legend.position = "none") +
+#   annotate("label", x = 2.25, y = 3.75, 
+#            label = "t(19.59) = 1.87 \n p = 0.08",
+#            size = 5)
+# 
+# t.test(gapfill_rxns ~ media_type, data = dat) # p-value = 0.07672
+```
+
+```{r}
+ggarrange(plotlist = list(plot1, plot2), widths = c(2, 1), labels = c("A","B"))
+```
+
+## Analyzing interactions
+
+This allows us to test whether the relationship between genome size and number of gap filled reactions is dependent on the media type
+```{r}
+dat$gapfill_rxns <- as.numeric(dat$gapfill_rxns)
+model.glm <- glm(gapfill_rxns ~ genome * factor(media_type), data = dat)
+summary(model.glm)
+```
+
+## Relationship between number of gap filled reactions and accuracy
+```{r}
+F1_models <- read.csv("F1_models.csv", sep = ",")
+models_accuracy <- F1_models %>% mutate(F1_models, media_type = "custom") %>% select(modelID, Accuracy, media_type)
+F1_models_M8 <- read.csv("F1_models_M8.csv", sep = ",")
+models_accuracy_M8 <- F1_models_M8 %>% mutate(F1_models_M8, media_type = "complete") %>% select(modelID, Accuracy, media_type) 
+accuracy_complete <- rbind(models_accuracy, models_accuracy_M8)
+rownames(accuracy_complete) <- 1:nrow(accuracy_complete)
+accuracy_complete <- filter(accuracy_complete, !is.na(Accuracy))
+
+# merging accuracy with data frame containing gap filled reactions
+dat <- merge(dat, accuracy_complete, by = c("modelID", "media_type"))
+
+model.glm <- glm(Accuracy ~ gapfill_rxns * factor(media_type), data = dat)
+summary(model.glm)
+```
+
+```{r}
+ggplot(dat, aes(x = gapfill_rxns, y = Accuracy, color = media_type)) +
+  geom_jitter() +
+  geom_smooth(method = lm) +
+  theme_bw() +
+  ylab("Model accuracy") +
+  xlab("Number of gap filled reactions") +
+  guides(color = guide_legend(title = "Media type")) +
+  theme(legend.position = c(0.9,0.2),
+        legend.text = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(size = 14))
+
+custom <- filter(dat, media_type == "custom")
+complete <- filter(dat, media_type == "complete")
+
+model_custom <- lm(Accuracy ~ gapfill_rxns, data = custom)
+summary(model_custom)
+model_complete <- lm(Accuracy ~ gapfill_rxns, data = complete)
+summary(model_complete)
+```
+

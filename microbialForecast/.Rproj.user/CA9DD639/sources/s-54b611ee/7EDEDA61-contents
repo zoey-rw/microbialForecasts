@@ -1,0 +1,23 @@
+# Source script for Nimble models (w/ environmental covariates, & cyclical covariates only)
+setwd("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/")
+here::i_am("source.R")
+
+# Pacman package loader is used throughout scripts
+# if (!require("pacman")) install.packages("pacman")
+# if (!require("microbialForecast"))
+
+#install.packages("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/microbialForecast_0.1.0.tar.gz", repos = NULL, type="source")
+
+	suppressPackageStartupMessages(library(tidyverse, warn.conflicts = F))
+	pacman::p_load(pacman, microbialForecast,
+							 nimble, coda, lubridate, here,
+							 doParallel, data.table)
+
+
+	# Convert sin and cos effect sizes to a seasonal amplitude parameter
+	sin_cos_to_seasonality <- function(sin, cos){
+		min_max <- getMaxMin(sin, cos)
+		amplitude <- sqrt(sin^2 + cos^2)
+		out <- cbind.data.frame(max=min_max, amplitude=amplitude)
+		return(out)
+	}

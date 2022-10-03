@@ -1,0 +1,290 @@
+library(tidyverse)
+library(lubridate)
+
+out <- list()
+out2 <- list()
+met_out <- list()
+met_out1 <- list()
+met_out2 <- list()
+
+start_time <- 300
+start_time <- 100 
+start_time <- 10 
+start_time <- 200 
+timestep <- 1 #timestep in hours 
+timestep <- 2 #timestep in hours 
+
+sim_directory <- "/projectnb2/talbot-lab-data/zrwerbin/interactions/data/simulation_output"
+scenarios <- list.files(sim_directory, pattern = "highdiff")
+scenarios <- list.files(sim_directory, pattern = "mois_[12346]$")
+scenarios <- list.files(sim_directory, pattern = "^sim_")
+
+# Let's pull from the simulations where each of the inputs was multiplied by two
+scenarios <- list.files(sim_directory, pattern = "exp_sim_")
+s = "nitro"
+s = scenarios[[1]]
+for (s in scenarios){
+#for (s in scenarios[1:17]){
+	
+	print(s)
+	# Get newest simulation media file
+	dir_to_search <- file.path(sim_directory, s)
+	files <- file.info(list.files(dir_to_search, pattern = "media", full.names = T))
+	if (nrow(files)==0) next()
+	newest_media_path <- rownames(files)[which.max(files$mtime)]
+	media_orig <- data.table::fread(newest_media_path, col.names = c("met","cycle","x","y","value"), data.table = F)
+	
+	# Get simulation area to convert rates to micrograms per gram
+	height <- max(media_orig$y)
+	width <- max(media_orig$x)
+	area <- height * width
+	max_cycles <- max(media_orig$cycle)
+	if (max_cycles < 400) { print("few cycles"); next() }
+	#max_cycles <- 300
+	
+	# Convert cycles to days (to get daily rate)
+	total_hrs <- timestep*(max_cycles - start_time)
+	total_hrs2 <- timestep*max_cycles
+	total_duration <- lubridate::dhours(total_hrs) %>% time_length(unit="days")
+	#total_duration2 <- lubridate::dhours(total_hrs2) %>% time_length(unit="days")
+	
+	#h_ions <- media_orig[media_orig$met %in% c("h_e"),]
+	
+	# Subset to relevant metabolites
+	media <- media_orig %>% filter(is.numeric(value))
+	select_mets <- media_orig[media_orig$met %in% c("nh4_e","no2_e", "no3_e","n2o_e","no_e","h2o_e",
+																									"h_e","h_c", "nh3_e","biomass_e","o2_e"),]
+	
+	#all_met_by_timepoint <- media_orig %>% group_by(met, cycle) %>% 
+	#  summarize(total = sum(value))
+	#size <- nrow(all_met_by_timepoint)
+	#ggplot(all_met_by_timepoint[1:(size/2),]) + geom_line(aes(x = cycle, y = total)) + facet_wrap(~met, scales="free")
+	#ggplot(all_met_by_timepoint[round((size/2)):size,]) + geom_line(aes(x = cycle, y = total)) + facet_wrap(~met, scales="free")
+	
+	met_by_timepoint <- select_mets %>% group_by(met, cycle) %>% 
+		summarize(total = sum(value)) %>% mutate(timepoint = ifelse(cycle == max_cycles, "final", 
+																																ifelse(cycle == start_time, "initial",
+																																			 ifelse(cycle == 0,"zero", cycle))),
+																						 id = s)
+	
+	met_out[[s]] <- met_by_timepoint
+	if (nrow(met_by_timepoint)==0) next()
+	
+	#ggplot(met_by_timepoint) + geom_line(aes(x = cycle, y = total)) + facet_wrap(~met, scales="free")
+	
+	
+	# Get initial and final values for flux calculations
+	met_wide <- met_by_timepoint %>% pivot_wider(names_from = met, values_from = total) %>% mutate(id = s)
+	met_wide <- met_wide %>% mutate(ph = -log10(h_e/area))
+	met_out1[[s]] <- met_wide
+	
+	
+	if (!"nh4_e" %in% colnames(met_wide)) met_wide$nh4_e <- 0
+	met_wider <- met_wide %>%
+		mutate(inorganic = nh4_e+no2_e+no3_e,
+					 nitrateNitrite = no2_e+no3_e) %>% pivot_wider(id = id, names_from = cycle,
+					 																							values_from = c(inorganic, nitrateNitrite))
+	met_out2[[s]] <- met_wider
+	# 	
+	# met_wide
+	# if (!"inorganic_0" %in% colnames(met_wider)) next()
+	# # Minus the "area", this calculation is just from the neon Ntrans method
+	# out_rates <- met_wider %>%
+	# 	mutate(
+	# 		netInorganicN = (inorganic_400 - inorganic_100)  / area,
+	# 		netNitrateNitrite =  (nitrateNitrite_400 - nitrateNitrite_100)  / area,
+	# 		nmin = netInorganicN / total_duration,
+	# 		nitr = netNitrateNitrite / total_duration,
+	# 		ammo = nmin-nitr 
+	# 	) %>% select(id, nmin, nitr, ammo, netInorganicN, netNitrateNitrite)
+	# print(out_rates)
+	# out[[s]] <- out_rates
+	# 
+	# # From the zeroth time point
+	# out_rates2 <- met_wider %>%
+	# 	mutate(
+	# 		netInorganicNugPerGram = inorganic_400 - inorganic_0,
+	# 		netNitrateNitriteNugPerGram =  nitrateNitrite_400 - nitrateNitrite_0,
+	# 		nmin = netInorganicNugPerGram / total_duration2 / area,
+	# 		nitr = netNitrateNitriteNugPerGram / total_duration2 / area,
+	# 		ammo = nmin-nitr 
+	# 	) %>% select(id, nmin, nitr, ammo)
+	# print(out_rates2)
+	# 
+	# out2[[s]] <- out_rates2
+	
+}
+
+
+# Combine and clean up output from loop
+
+# All the metabolites by timepoint
+met_out_df <- data.table::rbindlist(met_out) # all cycles, for more calculation types
+met_out_df2 <- data.table::rbindlist(met_out2) # relevant metabolites
+#colnames(out_df) <- c("id","nmin","nitr","ammo")
+met_out_df2 <- met_out_df2 %>% 
+	separate(col = "id", sep = "_n|_m", into = c("diffusion","ammonium",'nitrate',"mois"), remove=F)
+met_out_df2$diffusion <- as.numeric(gsub("exp_sim_diff_", "", met_out_df2$diff, fixed=T))
+met_out_df2$ammonium <- gsub("h4_", "", met_out_df2$ammonium, fixed=T)
+met_out_df2$nitrate <- gsub("o3_", "", met_out_df2$nitrate, fixed=T)
+met_out_df2$mois <- gsub("ois_", "", met_out_df2$mois, fixed=T)
+met_out_df2$id <- gsub("exp_","",met_out_df2$id)
+
+# Split into specific metabolites
+mois_met <- met_out_df %>% filter(met=="h2o_e" & timepoint %in% c(10, 100, "initial", "final"))
+nh4_met <- met_out_df %>% filter(met=="nh4_e")
+o2_met <- met_out_df %>% filter(met=="o2_e")
+no2_met <- met_out_df %>% filter(met=="no2_e")
+# 
+# ggplot(nh4_met, aes(y =total, x = cycle)) + 
+# 	geom_point(size = 3) + facet_wrap(~ammonium)
+# 
+# ggplot(mois_met, aes(y =total, x = cycle)) + 
+# 	geom_point(size = 3) + facet_wrap(~mois)
+
+# Read in observational data
+obs <- read.csv("/projectnb2/talbot-lab-data/zrwerbin/interactions/data/obs_params.csv")
+obs$netAmmugPerGramPerDay = obs$netNminugPerGramPerDay - obs$netNitugPerGramPerDay
+# Estimate n flux
+area <- 1000
+total_hrs <- 2*400
+total_duration <- lubridate::dhours(total_hrs) %>% time_length(unit="days")
+out_rates2 <- met_out_df2 %>% 
+	mutate(
+		netInorganicNugPerGram = inorganic_400 - inorganic_0,
+		netNitrateNitriteNugPerGram =  nitrateNitrite_400 - nitrateNitrite_0,
+		nmin = netInorganicNugPerGram / total_duration / area,
+		nitr = netNitrateNitriteNugPerGram / total_duration / area,
+		ammo = nmin-nitr 
+	) %>% select(id, nmin, nitr, ammo)
+#print(out_rates2)
+eval <- merge(out_rates2, obs, by="id")
+summary(lm(netNitugPerGramPerDay ~ nitr, eval))
+
+
+area <- 1000
+total_hrs <- 20
+total_duration <- lubridate::dhours(total_hrs) %>% time_length(unit="days")
+out_rates2 <- met_out_df2 %>% 
+	mutate(
+		netInorganicNugPerGram = inorganic_10 - inorganic_0,
+		netNitrateNitriteNugPerGram =  nitrateNitrite_10 - nitrateNitrite_0,
+		nmin = netInorganicNugPerGram / total_duration / area,
+		nitr = netNitrateNitriteNugPerGram / total_duration / area,
+		ammo = nmin-nitr 
+	) %>% select(id, nmin, nitr, ammo)
+eval <- merge(out_rates2, obs, by="id")
+summary(lm(netNitugPerGramPerDay ~ nitr, eval))
+summary(lm(netNminugPerGramPerDay ~ nmin, eval))
+
+
+area = 1000
+RMSE_sim_runtime <- list()
+runtime <- seq(from = 10, to = 400, by = 10)
+for (j in 1:length(runtime)){
+	i = runtime[[j]]
+	print(i)
+	total_hrs <- 2 * i
+	total_duration <- lubridate::dhours(total_hrs) %>% time_length(unit="days")
+	final_inorg_col <- which(grepl(paste0("inorganic_",i,"$"),colnames(met_out_df2)))
+	final_nitrate_col <- which(grepl(paste0("nitrateNitrite_",i,"$"),colnames(met_out_df2)))
+	
+
+		out_rates2 <- met_out_df2 %>% 
+		mutate(
+			netInorganicNugPerGram = final_inorg_col - inorganic_0,
+			netNitrateNitriteNugPerGram =  final_nitrate_col - nitrateNitrite_0,
+			nmin = netInorganicNugPerGram / total_duration / area,
+			nitr = netNitrateNitriteNugPerGram / total_duration / area,
+			ammo = nmin-nitr 
+		) %>% select(id, nmin, nitr, ammo)
+	eval <- merge(out_rates2, obs, by="id")
+	# remove outlier - to investigate QF flags
+	eval <- eval[!eval$sampleID == "HARV_004-O-21-0-20180418",]
+	
+	print(paste("Nitr: ",
+							summary(lm(netNitugPerGramPerDay ~ nitr, eval))$r.squared))
+	print(paste("Ammo: ",
+	summary(lm(netAmmugPerGramPerDay ~ ammo, eval))$r.squared))
+	
+	RMSE_sim_runtime[[j]] <- cbind(runtime = i,
+		nitr_rmse = rmse(eval$netNitugPerGramPerDay, eval$nitr),
+																 nmin_rmse = rmse(eval$netNminugPerGramPerDay, eval$nmin))
+}
+
+
+# Save final output (since it had the lowest RMSE anyways)
+# Actually save at 200 because there's a trade-off with Nmin accuracy?
+saveRDS(eval, "/projectnb2/talbot-lab-data/zrwerbin/interactions/data/simulation_output/eval_summary.rds")
+
+
+RMSE_sim_runtime_df <- as.data.frame(do.call(rbind, RMSE_sim_runtime))
+
+plot(RMSE_sim_runtime_df$nitr_rmse ~ RMSE_sim_runtime_df$runtime)
+plot(RMSE_sim_runtime_df$nmin_rmse ~ RMSE_sim_runtime_df$runtime)
+
+summary(lm(netAmmugPerGramPerDay ~ ammo, eval))
+
+
+# Visualize results
+
+library(ggpubr)
+a <- ggscatter(eval, x = "nitr", y = "netNitugPerGramPerDay",  
+							 add = "reg.line", conf.int = TRUE, shape = 21, size = 3) +
+	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")),
+					# label.x = -.2, 
+					 size=7) + theme_minimal(base_size=20) + 
+	#geom_jitter(width = .01, height=.01) +
+	geom_abline(intercept = 0, slope = 1, color = "red", linetype=2) +
+	ggtitle("Simulation performance: Nitrification", "Harvard Forest samples") +
+	xlab("Simulated nitrification (ug/g/day)") + 
+	ylab("Observed nitrification (ug/g/day)") #+ xlim(-1.6,-1.2)
+a
+
+b <- ggscatter(eval, x = "nmin", y = "netNminugPerGramPerDay",  
+									add = "reg.line", conf.int = TRUE, shape = 21, size = 3) +
+	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")),
+					 #label.x = 0, 
+					 size=7) + theme_minimal(base_size=20) + 
+	geom_abline(intercept = 0, slope = 1, color = "red", linetype=2) +
+	ggtitle("Simulation performance: N mineralization", "Harvard Forest samples") +
+	xlab("Simulated N mineralization (ug/g/day)") + 
+	ylab("Observed N mineralization (ug/g/day)") #+ 
+	#xlim(-.2,2)
+b
+
+c <- ggscatter(eval, x = "ammo", y = "netAmmugPerGramPerDay",  
+							 add = "reg.line", conf.int = TRUE, shape = 21, size = 3) +
+	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")),
+					 #label.x = 0, 
+					 size=7) + theme_minimal(base_size=20) + 
+	#geom_abline(intercept = 0, slope = 1, color = "red", linetype=2) +
+	ggtitle("Simulation performance: ammonification", "Harvard Forest samples") +
+	xlab("Simulated ammonification (ug/g/day)") + 
+	ylab("Observed ammonification (ug/g/day)") #+ 
+#xlim(-.2,2)
+c
+
+
+summary(lm(netNminugPerGramPerDay ~ nmin, eval))
+ggplot(eval2, aes(y =netNminugPerGramPerDay, x = nmin)) + 
+	geom_jitter(aes(color = as.numeric(soilMoisture), shape = horizon), size = 3, width = .01, height=.01) + 
+	geom_smooth(method="lm")
+
+
+
+summary(lm(nmin ~ initAmmonium, eval))
+
+summary(lm(nitr ~ diffusion, eval))
+plot(nitr ~ diffusion, eval)
+
+summary(lm(nitr ~ moisture, eval))
+plot(nitr ~ moisture, eval)
+
+summary(lm(nitr ~ ammonium, eval))
+plot(nitr ~ ammonium, eval)
+
+summary(lm(nitr ~ nitrate, eval))
+plot(nitr ~ nitrate, eval)
+
+summary(lm(nitr ~ as.numeric(nitrate), sim_out))

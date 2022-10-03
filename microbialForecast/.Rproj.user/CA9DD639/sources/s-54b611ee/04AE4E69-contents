@@ -1,0 +1,392 @@
+# Calculate and visualize scoring metrics for taxonomic forecasts
+p_load(Metrics, forestmangr, scoringRules, ggpubr)
+
+source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+
+hindcast_data <- readRDS(here("data/summary/all_hindcasts.rds"))
+
+hindcast_data_non_tax = hindcast_data %>% filter(fcast_type != "Taxonomic")
+hindcast_data_tax = hindcast_data %>% filter(fcast_type == "Taxonomic")
+
+# generated from script 05
+#truth_plot_long = readRDS(here("data/clean/truth_plot_long_tax.rds"))
+truth_plot_long$pretty_group <- ifelse(grepl("bac", truth_plot_long$rank_name), "Bacteria", "Fungi")
+#truth_plot_select <- truth_plot_long %>% select(plotID, dateID, taxon, species, rank, truth)
+
+other <- truth_plot_long %>%
+	filter(taxon=="other" & !is.na(truth) & date_num == 10)
+
+not_other <- truth_plot_long %>%
+	filter(taxon!="other" & !is.na(truth) & date_num == 10 & taxon %in% hindcast_data$taxon)
+
+# F vs B grid, plot abundances
+ggplot(not_other,
+			 aes(x = rank, y = as.numeric(truth), color=pretty_group)) +
+	geom_boxplot(size = 1, #position = position_jitterdodge(jitter.width = .5),
+							 alpha=.3, height = 0, show.legend = F) +
+	theme_bw(base_size = 18) + xlab(NULL)  +
+	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05)) + scale_y_sqrt() + ylab("plot-level abundances")
+#
+
+#hindcast_data_select <- hindcast_data_tax %>% select(-truth)
+#hindcast_data_newtax = merge(hindcast_data_select, truth_plot_select, all.x = T)
+#
+#not_na <- hindcast_data_newtax %>% filter(!is.na(truth) & dateID > 201701)
+#
+## Subset to hindcast observations
+#hindcast_only <- hindcast_data_merge %>% filter(!is.na(truth) &
+#																						fcast_period=="hindcast"
+#																					#dates > "2016-12-31"
+#) %>%
+#	mutate(truth = as.numeric(truth))
+
+scoring_metrics <- hindcast_only %>% filter(newsite=="Observed site") %>%
+	group_by(pretty_group,model_name,pretty_name, taxon) %>%
+	mutate(crps_point = crps_norm(truth, mean, sd)) %>%
+	summarise(
+		RMSE = rmse(actual = truth, predicted = mean),
+		BIAS = bias(actual = truth, predicted = mean),
+		MAE = mae(actual = truth, predicted = mean),
+		MAPE = mape(actual = truth, predicted = mean),
+		#CRPS = crps_norm(truth, mean, sd))
+		#BIAS = percent_bias(actual = truth, predicted = mean),
+		CRPS = mean(crps_point))
+
+scoring_metrics_site <- hindcast_only %>% #filter(newsite=="Observed site") %>%
+	group_by(newsite,fcast_type, pretty_group,model_name,pretty_name, taxon,siteID) %>%
+	mutate(crps_point = crps_norm(truth, mean, sd)) %>%
+	summarise(
+		RMSE = rmse(actual = truth, predicted = mean),
+		BIAS = bias(actual = truth, predicted = mean),
+		MAE = mae(actual = truth, predicted = mean),
+		CRPS = mean(crps_point))
+
+scoring_metrics_long <- scoring_metrics %>% pivot_longer(cols = c(RMSE, BIAS, MAE, CRPS),
+																												 names_to = "metric")
+scoring_metrics_site_long <- scoring_metrics_site %>% pivot_longer(cols = c(RMSE, BIAS, MAE, CRPS),
+																												 names_to = "metric")
+
+
+# coefficient of variation
+
+calc_cv <- function(x) sd(x, na.rm = T) / mean(x, na.rm = T) * 100
+
+# Wide format taxonomic
+cv_tax_long <- hindcast_data %>%
+	filter(model_name == "all_covariates" & taxon != "other" & !is.na(truth)) %>%
+	mutate(truth = as.numeric(truth))
+
+cv_tax_per_plot <- cv_tax_long %>%
+	group_by(fcast_type, pretty_name, taxon, siteID, plotID) %>%
+	dplyr::summarize(per_plot_cv = calc_cv(truth))
+cv_tax_per_plot_site <- cv_tax_per_plot %>% ungroup %>%
+	group_by(fcast_type, pretty_name, taxon, siteID) %>%
+	dplyr::summarize(mean_per_plot_site_cv = mean(per_plot_cv, na.rm=T))
+
+cv_tax_per_site <- cv_tax_long %>%  group_by(fcast_type, pretty_name, taxon, siteID) %>%
+	summarize(per_site_cv = calc_cv(truth))
+
+cv_tax_per_site_taxon <- cv_tax_per_site %>% ungroup %>%
+	group_by(fcast_type, pretty_name, taxon) %>%
+	summarize(mean_per_site_cv = mean(per_site_cv, na.rm=T))
+
+cv_tax_per_plot_taxon <- cv_tax_long %>%  group_by(fcast_type, pretty_name, taxon, siteID, plotID) %>%
+	summarize(per_plot_cv = calc_cv(truth)) %>%
+	ungroup %>%
+	group_by(fcast_type, pretty_name, taxon) %>%
+	summarize(mean_per_plot_cv = mean(per_plot_cv, na.rm=T))
+
+cv_tax_overall <- cv_tax_long %>%  group_by(fcast_type, pretty_name, taxon) %>%
+	summarize(overall_cv = calc_cv(truth))
+
+cv_tax <- cv_tax_overall %>% merge(cv_tax_per_plot_taxon) %>% merge(cv_tax_per_site_taxon)
+
+scoring_metrics_cv <- merge(scoring_metrics, cv_tax, all=T)
+scoring_metrics_cv_site <- merge(scoring_metrics_site, cv_tax_per_site)
+
+
+
+### Predictability
+scoring_metrics_cv_long <- scoring_metrics_cv %>% pivot_longer(cols = c(RMSE, BIAS, MAE, CRPS),
+																															 names_to = "metric", values_to = "score") %>%
+	pivot_longer(cols = c(overall_cv, mean_per_plot_cv, mean_per_site_cv),
+							 names_to = "cv_type", values_to = "cv")
+
+cv_long <- scoring_metrics_cv %>% pivot_longer(cols = c(overall_cv, mean_per_plot_cv, mean_per_site_cv),
+																							 names_to = "cv_type", values_to = "cv")
+
+
+
+# CV scaled by rank
+cv_metric_scaled <- scoring_metrics_cv_long %>%
+	group_by(pretty_group, pretty_name, cv_type, metric) %>%
+	mutate(CV_scale = scale(cv)[,1],
+				 metric_scale = scale(score)[,1])
+
+
+crps_site_obs <- hindcast_only %>% #filter(newsite=="Observed site") %>%
+	group_by(pretty_group,fcast_type,model_name,pretty_name, taxon,newsite) %>%
+	mutate(crps_point = crps_norm(truth, mean, sd)) %>%
+	summarise(CRPS = mean(crps_point, na.rm=T))
+# Skill score from Scavia 2021
+skill_score_taxon <- crps_site_obs %>%
+	pivot_wider(id_cols = c("fcast_type","pretty_group","model_name","pretty_name","taxon"),
+							values_from = "CRPS", names_from = "newsite") %>%
+	mutate(skill_score = (1 - (`New site`/`Observed site`)))
+skill_score_rank <- skill_score_taxon %>%
+	group_by(pretty_group, pretty_name) %>%
+	summarize(mean_skill_score = mean(skill_score, na.rm=T))
+
+
+to_save <- list(cv_metric_scaled = cv_metric_scaled,
+								cv_tax = cv_tax,
+								cv_tax_long = cv_tax_long,
+								cv_tax_overall = cv_tax_overall,
+								cv_tax_per_plot = cv_tax_per_plot,
+								cv_tax_per_plot_site = cv_tax_per_plot_site,
+								cv_tax_per_plot_taxon = cv_tax_per_plot_taxon,
+								cv_tax_per_site = cv_tax_per_site,
+								cv_tax_per_site_taxon = cv_tax_per_site_taxon,
+								scoring_metrics = scoring_metrics,
+								scoring_metrics_cv = scoring_metrics_cv,
+								scoring_metrics_cv_long = scoring_metrics_cv_long,
+								scoring_metrics_cv_site = scoring_metrics_cv_site,
+								scoring_metrics_long = scoring_metrics_long,
+								scoring_metrics_site = scoring_metrics_site,
+								scoring_metrics_site_lon = scoring_metrics_site_long)
+saveRDS(to_save, "./data/summary/scoring_metrics_cv.rds")
+
+
+
+
+#### Visualizing
+
+
+
+
+
+#### View predictability scores by rank
+ggplot(scoring_metrics_long %>% filter(model_name == "all_covariates" & pretty_name != "Diversity"),
+			 aes(x = pretty_name, y = value,
+			 		color = pretty_name)) +
+	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
+	geom_point(size = 4, position = position_jitterdodge(jitter.width = .5), alpha=.2, show.legend = F) +
+	facet_grid(pretty_group~metric, drop = T, scales="free") +
+	# geom_jitter(aes(x = metric, y = value), width=.1,
+	# 						height = 0, alpha = .8, size=4) +
+	ylab("Metric scores") + xlab(NULL) +
+	theme_bw(base_size=18) +
+	ggtitle("Predictability decreases at broader ranks")  +
+	#scale_color_manual(values = c(1,2))	+
+	theme(text = element_text(size = 22),
+				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
+				axis.title=element_text(size=24), legend.position = c(.9,1.1)) +
+	#guides(color=guide_legend(title=NULL)) +
+	geom_hline(yintercept = 0, linetype=2) +
+	theme(plot.margin = margin(1,2,1,1, "cm"))
+
+
+#### View CV across tax ranks
+ggplot(cv_long %>% filter(model_name == "all_covariates" & pretty_name != "Diversity"),
+			 aes(x = pretty_name, y = cv,
+			 		color = pretty_name), alpha = .5) +
+	geom_point(size = 3, position = position_jitterdodge(#jitter.width = 1
+	), alpha=.5, show.legend = F) +
+	facet_grid(pretty_group~cv_type, scales="free", drop =T) + theme_bw(base_size=18) +
+	ggtitle("Variability decreases with broader taxonomic ranks") +
+	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05)) + xlab(NULL) +
+	theme(plot.margin = margin(1,2,1,1, "cm"))
+
+
+#### View CV across tax ranks, for each plot
+# Just per-plot CV (capturing temporal variability)
+ggplot(cv_long %>% filter(model_name == "all_covariates" & cv_type == "mean_per_plot_cv"),
+			 aes(x = pretty_name, y = cv,
+			 		color = pretty_name), alpha = .5) +
+	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
+	geom_point(size = 4, position = position_jitterdodge(#jitter.width = 1
+	), alpha=.5, show.legend = F) +
+	facet_grid(rows=vars(pretty_group), scales="free", drop =T) + theme_bw(base_size=18) +
+	ggtitle("Variability decreases with broader taxonomic ranks") +
+	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05)) + xlab(NULL)
+
+
+
+# Just RMSE
+ggplot(scoring_metrics_cv %>% filter(model_name == "all_covariates" & pretty_name != "Diversity"),
+			 aes(x = mean_per_plot_cv, y = RMSE,
+			 		color = pretty_name)) +
+	geom_point(size = 4, position = position_jitterdodge(jitter.width = .5), alpha=.2, show.legend = F) +
+	facet_grid(~pretty_group, drop = T, scales="free") + theme_bw()
+
+
+
+
+# All metrics
+ggplot(cv_metric_scaled %>%
+			 	filter(model_name == "all_covariates" & pretty_name != "Diversity" & cv_type == "mean_per_plot_cv"),
+			 aes(x = CV_scale, y = metric_scale,
+			 		shape = pretty_group,
+			 		color = pretty_name)) +
+	geom_point(size = 4, #position = position_jitterdodge(jitter.width = .5),
+						 alpha=.5, show.legend = T) +
+	facet_wrap(~metric,drop = T, scales="free") +
+	theme_bw(base_size = 18) + guides(color=guide_legend(title="Rank"),
+																		shape=guide_legend(title="Domain")) +
+	xlab("Coefficient of variation (scaled by rank)") +
+	ylab("Predictability (scaled by rank)") +
+	ggtitle("Predictability increases with variability, regardless of metric")
+
+# Just CRPS
+ggplot(cv_metric_scaled %>%
+			 	filter(model_name == "all_covariates" & pretty_name != "Diversity" &
+			 				 	cv_type == "mean_per_plot_cv" & metric == "CRPS"),
+			 aes(x = CV_scale, y = metric_scale,
+			 		shape = pretty_group,
+			 		color = pretty_name)) +
+	geom_point(size = 4, #position = position_jitterdodge(jitter.width = .5),
+						 alpha=.5, show.legend = T) +
+	facet_grid(~metric, drop = T, scales="free") +
+	theme_bw(base_size = 18) + guides(color=guide_legend(title="Rank"),
+																		shape=guide_legend(title="Domain")) +
+	#	stat_regline_equation(aes(y = CV_scale, x = metric_scale), inherit.aes = F, label.x = 1, label.y = 2) +
+	stat_smooth(aes(x = CV_scale, y = metric_scale), inherit.aes = F, method = "loess", span = .9)
+
+# F vs B grid, CV types (split by rank)
+ggplot(cv_metric_scaled %>%
+			 	filter(model_name == "all_covariates" & pretty_name != "Diversity" & metric=="CRPS"),
+			 aes(x = pretty_name, y = cv,
+			 		shape = pretty_group,
+			 		color = cv_type)) +
+	geom_point(size = 4, #position = position_jitterdodge(jitter.width = .5),
+						 alpha=.5, show.legend = T) +
+	facet_grid(~pretty_group, drop = T, scales="free") +
+	theme_bw(base_size = 18) + guides(color=guide_legend(title="Coeff. of \nVariation type"),
+																		shape=guide_legend(NULL)) + xlab(NULL)  +
+	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05))
+
+
+
+# View skill scores
+ggplot(skill_score_taxon %>% filter(model_name == "all_covariates"),
+			 aes(x = pretty_name, y = skill_score,
+			 		color = pretty_group)) +
+	#geom_violin(draw_quantiles = c(.5))+
+	geom_point(aes(x = pretty_name, y = skill_score), position = position_jitterdodge(jitter.height = 0, jitter.width = .1), alpha = .5, size=4) +
+	ylab("Skill score (% decrease in CRPS)") + xlab(NULL) +
+	theme_minimal(base_size=18) + ggtitle("Change in predictability at new sites") +
+	theme(text = element_text(size = 20),
+				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
+				axis.title=element_text(size=22))  +
+	guides(color=guide_legend(title="Domain"),
+				 shape=guide_legend(title="Forecast type"))
+
+
+# Predictability within-site
+ggplot(scoring_metrics_site %>%
+			 	filter(model_name == "all_covariates" &
+			 				 	newsite == "Observed site"),
+			 aes(x = pretty_group, y = CRPS,
+			 		color = pretty_name)) +
+	geom_jitter(size = 4, alpha=.5, show.legend = T) +
+	#facet_wrap(~beta, drop = T, scales="free") +
+	theme_bw(base_size = 18) +
+	xlab("Rank") +
+	ylab("CRPS") + ggtitle("Mean predictability at each observed site") +
+	guides(color=guide_legend(title="Rank")) +scale_y_sqrt()
+
+ggplot(scoring_metrics_site %>% filter(model_name == "all_covariates" &
+																			 	newsite == "Observed site" & pretty_name != "Diversity"),
+			 aes(x = pretty_name, y = CRPS,
+			 		color = pretty_group)) +
+	geom_violin(draw_quantiles = c(.5))+
+	geom_point(aes(x = pretty_name, y = CRPS), position=position_jitterdodge(jitter.height = 0),
+						 alpha = .2, size=4) +
+	ylab("Continuous ranked probability score (CRPS)") + xlab(NULL) +
+	theme_minimal(base_size=20) + ggtitle("Mean predictability at each observed site") +
+	theme(text = element_text(size = 20),
+				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
+				axis.title=element_text(size=22))  +
+	guides(color=guide_legend(title="Domain"),
+				 shape=guide_legend(title="Forecast type")) +scale_y_sqrt()
+
+
+# F vs B "other" abundances at each rank
+ggplot(hindcast_data %>%
+			 	filter(model_name == "all_covariates" & pretty_name != "Diversity" & species=="other"),
+			 aes(x = pretty_name, y = truth,
+			 		shape = pretty_group)) +
+	geom_point(size = 4, #position = position_jitterdodge(jitter.width = .5),
+						 alpha=.5, show.legend = T) +
+	facet_grid(~pretty_group, drop = T, scales="free") +
+	theme_bw(base_size = 18) + guides(color=guide_legend(title="Coeff. of \nVariation type"),
+																		shape=guide_legend(NULL)) + xlab(NULL)  +
+	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05))
+
+
+
+
+
+eval_df <- scoring_metrics_site_long %>% filter(model_name == "all_covariates" &
+																					 	pretty_name != "Diversity")
+
+good_fcasts_bias <- eval_df %>% filter(metric == "BIAS" & (value > -.01 | value < .01))
+bad_fcasts_bias <- eval_df %>% filter(metric == "BIAS" & (value < -.015 | value > .015))
+
+input_df <- hindcast_data
+plot_model(hindcast_data, siteID = "DSNY", taxon = "ectomycorrhizal", site_plots = "facet")
+plot_model(hindcast_data, siteID = "OSBS", taxon = "ectomycorrhizal", site_plots = "facet")
+plot_model(hindcast_data, siteID = "GUAN", taxon = "ectomycorrhizal", site_plots = "facet")
+
+
+good_fcasts_RMSE <- eval_df %>% filter(metric == "RMSE" & (value < .01))
+bad_fcasts_RMSE <- eval_df %>% filter(metric == "RMSE" & (value > .05))
+good_fcasts_RMSE[good_fcasts_RMSE$taxon=="lignolytic",]
+plot_model(hindcast_data, siteID = "DSNY", taxon = "lignolytic", site_plots = "facet")
+plot_model(hindcast_data, siteID = "SCBI", taxon = "lignolytic", site_plots = "facet")
+plot_model(hindcast_data, siteID = "UKFS", taxon = "lignolytic", site_plots = "facet")
+
+good_fcasts_CRPS <- eval_df %>% filter(metric == "CRPS" & (value < .02))
+bad_fcasts_CRPS <- eval_df %>% filter(metric == "CRPS" & (value > .03))
+bad_fcasts_CRPS[bad_fcasts_CRPS$taxon=="saprotroph",]
+plot_model(hindcast_data, siteID = "HARV", taxon = "oligotroph", site_plots = "facet")
+
+plot_model(hindcast_data, siteID = "OSBS", taxon = "saprotroph", site_plots = "facet")
+
+good_CRPS_bad_RMSE <- merge(good_fcasts_CRPS, bad_fcasts_RMSE)
+good_RMSE_bad_CRPS <- merge(good_fcasts_RMSE, bad_fcasts_CRPS)
+good_RMSE_bad_bias <- merge(good_fcasts_RMSE, bad_fcasts_bias)
+good_CRPS_bad_bias <- merge(good_fcasts_CRPS, bad_fcasts_bias)
+
+
+plot_model(hindcast_data, siteID = "HARV", taxon = "plant_pathogen", site_plots = "facet")
+
+
+# Get good functional groups
+table(good_fcasts_CRPS[good_fcasts_CRPS$pretty_name == "Functional group",]$taxon) %>% sort()
+table(good_fcasts_RMSE[good_fcasts_RMSE$pretty_name == "Functional group",]$taxon) %>% sort()
+
+
+
+
+
+
+
+
+for_examples <- cv_metric_scaled %>%
+	filter(model_name == "all_covariates" & pretty_name != "Diversity" &
+				 	cv_type == "mean_per_plot_cv" & metric == "CRPS")
+cv_tax_per_site[cv_tax_per_site$taxon=="lignolytic",]
+plot_model(hindcast_data, siteID = "ORNL", taxon = "lignolytic", site_plots = "facet")
+plot_model(hindcast_data, siteID = "UNDE", taxon = "lignolytic", site_plots = "facet")
+
+scoring_metrics_cv_site[scoring_metrics_cv_site$taxon=="lignolytic",] %>% filter(model_name == "all_covariates")
+cv_tax_per_plot_site[cv_tax_per_plot_site$taxon=="lignolytic",]
+
+
+
+
+
+
+
+

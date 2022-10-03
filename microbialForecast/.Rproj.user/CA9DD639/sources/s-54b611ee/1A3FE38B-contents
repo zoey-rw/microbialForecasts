@@ -1,0 +1,643 @@
+library(readr)
+library(stringr)
+library(ggplot2)
+`%!in%` <- Negate(`%in%`)
+
+# Read in GTDB_release207 metadata and JGI input TSV
+arc207 <- read_tsv("/projectnb2/microbiome/dgolden/Struo2/ar53_metadata_r207.tsv")
+bac207 <- read_tsv("/projectnb2/microbiome/dgolden/Struo2/bac120_metadata_r207.tsv")
+JGI_input <- read_tsv("/projectnb2/microbiome/dgolden/Struo2/custom_dbs/JGI_downloads_fixed_underscore_complete.tsv")
+full207 <- rbind(arc207, bac207)
+GTDB_tax <- full207$ncbi_taxonomy
+JGI_tax <- JGI_input$ncbi_taxonomy
+
+
+# Make data frames of domains, phyla, classes, orders, families, and genera found in the original, JGI, and updated DBs
+  ###
+# Build updated_genus_plot_df, JGIinput_genus_plot_df, and original_genus_plot_df
+  # Generate vectors of unique genera in original, JGI, and updated dbs
+GTDB_genera <- str_extract(string = GTDB_tax, pattern = "(?<=g__).*(?=;s)")
+distinct_GTDB_genera <- unique(GTDB_genera)
+JGI_genera <- str_extract(string = JGI_tax, pattern = "(?<=g__).*(?=;s)")
+distinct_JGI_genera <- unique(JGI_genera)
+updated_genera <- append(GTDB_genera, JGI_genera)
+distinct_updated_genera <- unique(updated_genera)
+  # Generate vectors containing counts of how many times each unique genus appears in original and updated dbs
+updated_genus_counts <- c()
+GTDB_genus_counts <- c()
+JGIinput_genus_counts <- c()
+for (i in 1:length(distinct_updated_genera)) {
+  updated_genus_counts <- append(updated_genus_counts, length(updated_genera[updated_genera==distinct_updated_genera[i]]))
+}
+for (i in 1:length(distinct_GTDB_genera)) {
+  GTDB_genus_counts <- append(GTDB_genus_counts, length(GTDB_genera[GTDB_genera==distinct_GTDB_genera[i]]))
+}
+for (i in 1:length(distinct_JGI_genera)) {
+  JGIinput_genus_counts <- append(JGIinput_genus_counts, length(JGI_genera[JGI_genera==distinct_JGI_genera[i]]))
+}
+  # Make plot dfs
+updated_genus_plot_df <- data.frame(distinct_updated_genera, updated_genus_counts)
+updated_genus_plot_df <- dplyr::filter(updated_genus_plot_df, distinct_updated_genera != "", distinct_updated_genera != "NA")
+GTDB_genus_plot_df <- data.frame(distinct_GTDB_genera, GTDB_genus_counts)
+GTDB_genus_plot_df <- dplyr::filter(GTDB_genus_plot_df, distinct_GTDB_genera != "", distinct_GTDB_genera != "NA")
+JGIinput_genus_plot_df <- data.frame(distinct_JGI_genera, JGIinput_genus_counts)
+JGIinput_genus_plot_df <- dplyr::filter(JGIinput_genus_plot_df, distinct_JGI_genera != "", distinct_JGI_genera != "NA")
+
+# Build updated_family_plot_df and original_family_plot_df
+  # Generate vectors of unique families in original, JGI, and updated dbs
+GTDB_families <- str_extract(string = GTDB_tax, pattern = "(?<=f__).*(?=;g)")
+distinct_GTDB_families <- unique(GTDB_families)
+JGI_families <- str_extract(string = JGI_tax, pattern = "(?<=f__).*(?=;g)")
+distinct_JGI_families <- unique(JGI_families)
+updated_families <- append(GTDB_families, JGI_families)
+distinct_updated_families <- unique(updated_families)
+  # Generate vectors containing counts of how many times each unique family appears in original and updated dbs
+updated_family_counts <- c()
+GTDB_family_counts <- c()
+JGIinput_family_counts <- c()
+for (i in 1:length(distinct_updated_families)) {
+  updated_family_counts <- append(updated_family_counts, length(updated_families[updated_families==distinct_updated_families[i]]))
+}
+for (i in 1:length(distinct_GTDB_families)) {
+  GTDB_family_counts <- append(GTDB_family_counts, length(GTDB_families[GTDB_families==distinct_GTDB_families[i]]))
+}
+for (i in 1:length(distinct_JGI_families)) {
+  JGIinput_family_counts <- append(JGIinput_family_counts, length(JGI_families[JGI_families==distinct_JGI_families[i]]))
+}
+  # Make plot dfs
+updated_family_plot_df <- data.frame(distinct_updated_families, updated_family_counts)
+updated_family_plot_df <- dplyr::filter(updated_family_plot_df, distinct_updated_families != "", distinct_updated_families != "NA")
+GTDB_family_plot_df <- data.frame(distinct_GTDB_families, GTDB_family_counts)
+GTDB_family_plot_df <- dplyr::filter(GTDB_family_plot_df, distinct_GTDB_families != "", distinct_GTDB_families != "NA")
+JGIinput_family_plot_df <- data.frame(distinct_JGI_families, JGIinput_family_counts)
+JGIinput_family_plot_df <- dplyr::filter(JGIinput_family_plot_df, distinct_JGI_families != "", distinct_JGI_families != "NA")
+
+# Build updated_order_plot_df and original_order_plot_df
+  # Generate vectors of unique orders in original, JGI, and updated dbs
+GTDB_orders <- str_extract(string = GTDB_tax, pattern = "(?<=o__).*(?=;f)")
+distinct_GTDB_orders <- unique(GTDB_orders)
+JGI_orders <- str_extract(string = JGI_tax, pattern = "(?<=o__).*(?=;f)")
+distinct_JGI_orders <- unique(JGI_orders)
+updated_orders <- append(GTDB_orders, JGI_orders)
+distinct_updated_orders <- unique(updated_orders)
+  # Generate vectors containing counts of how many times each unique order appears in original and updated dbs
+updated_order_counts <- c()
+GTDB_order_counts <- c()
+JGIinput_order_counts <- c()
+for (i in 1:length(distinct_updated_orders)) {
+  updated_order_counts <- append(updated_order_counts, length(updated_orders[updated_orders==distinct_updated_orders[i]]))
+}
+for (i in 1:length(distinct_GTDB_orders)) {
+  GTDB_order_counts <- append(GTDB_order_counts, length(GTDB_orders[GTDB_orders==distinct_GTDB_orders[i]]))
+}
+for (i in 1:length(distinct_JGI_orders)) {
+  JGIinput_order_counts <- append(JGIinput_order_counts, length(JGI_orders[JGI_orders==distinct_JGI_orders[i]]))
+}
+  # Make plot dfs
+updated_order_plot_df <- data.frame(distinct_updated_orders, updated_order_counts)
+updated_order_plot_df <- dplyr::filter(updated_order_plot_df, distinct_updated_orders != "", distinct_updated_orders != "NA")
+GTDB_order_plot_df <- data.frame(distinct_GTDB_orders, GTDB_order_counts)
+GTDB_order_plot_df <- dplyr::filter(GTDB_order_plot_df, distinct_GTDB_orders != "", distinct_GTDB_orders != "NA")
+JGIinput_order_plot_df <- data.frame(distinct_JGI_orders, JGIinput_order_counts)
+JGIinput_order_plot_df <- dplyr::filter(JGIinput_order_plot_df, distinct_JGI_orders != "", distinct_JGI_orders != "NA")
+
+# Build updated_class_plot_df and original_class_plot_df
+  # Generate vectors of unique classes in original, JGI, and updated dbs
+GTDB_classes <- str_extract(string = GTDB_tax, pattern = "(?<=c__).*(?=;o)")
+distinct_GTDB_classes <- unique(GTDB_classes)
+JGI_classes <- str_extract(string = JGI_tax, pattern = "(?<=c__).*(?=;o)")
+distinct_JGI_classes <- unique(JGI_classes)
+updated_classes <- append(GTDB_classes, JGI_classes)
+distinct_updated_classes <- unique(updated_classes)
+  # Generate vectors containing counts of how many times each unique class appears in original and updated dbs
+updated_class_counts <- c()
+GTDB_class_counts <- c()
+JGIinput_class_counts <- c()
+for (i in 1:length(distinct_updated_classes)) {
+  updated_class_counts <- append(updated_class_counts, length(updated_classes[updated_classes==distinct_updated_classes[i]]))
+}
+for (i in 1:length(distinct_GTDB_classes)) {
+  GTDB_class_counts <- append(GTDB_class_counts, length(GTDB_classes[GTDB_classes==distinct_GTDB_classes[i]]))
+}
+for (i in 1:length(distinct_JGI_classes)) {
+  JGIinput_class_counts <- append(JGIinput_class_counts, length(JGI_classes[JGI_classes==distinct_JGI_classes[i]]))
+}
+  # Make plot dfs
+updated_class_plot_df <- data.frame(distinct_updated_classes, updated_class_counts)
+updated_class_plot_df <- dplyr::filter(updated_class_plot_df, distinct_updated_classes != "", distinct_updated_classes != "NA")
+GTDB_class_plot_df <- data.frame(distinct_GTDB_classes, GTDB_class_counts)
+GTDB_class_plot_df <- dplyr::filter(GTDB_class_plot_df, distinct_GTDB_classes != "", distinct_GTDB_classes != "NA")
+JGIinput_class_plot_df <- data.frame(distinct_JGI_classes, JGIinput_class_counts)
+JGIinput_class_plot_df <- dplyr::filter(JGIinput_class_plot_df, distinct_JGI_classes != "", distinct_JGI_classes != "NA")
+
+# Build updated_phylum_plot_df and original_phylum_plot_df
+  # Generate vectors of unique phyla in original, JGI, and updated dbs
+GTDB_phyla <- str_extract(string = GTDB_tax, pattern = "(?<=p__).*(?=;c)")
+distinct_GTDB_phyla <- unique(GTDB_phyla)
+JGI_phyla <- str_extract(string = JGI_tax, pattern = "(?<=p__).*(?=;c)")
+distinct_JGI_phyla <- unique(JGI_phyla)
+updated_phyla <- append(GTDB_phyla, JGI_phyla)
+distinct_updated_phyla <- unique(updated_phyla)
+  # Generate vectors containing counts of how many times each unique phylum appears in original and updated dbs
+updated_phylum_counts <- c()
+GTDB_phylum_counts <- c()
+JGIinput_phylum_counts <- c()
+for (i in 1:length(distinct_updated_phyla)) {
+  updated_phylum_counts <- append(updated_phylum_counts, length(updated_phyla[updated_phyla==distinct_updated_phyla[i]]))
+}
+for (i in 1:length(distinct_GTDB_phyla)) {
+  GTDB_phylum_counts <- append(GTDB_phylum_counts, length(GTDB_phyla[GTDB_phyla==distinct_GTDB_phyla[i]]))
+}
+for (i in 1:length(distinct_JGI_phyla)) {
+  JGIinput_phylum_counts <- append(JGIinput_phylum_counts, length(JGI_phyla[JGI_phyla==distinct_JGI_phyla[i]]))
+}
+  # Make plot dfs
+updated_phylum_plot_df <- data.frame(distinct_updated_phyla, updated_phylum_counts)
+updated_phylum_plot_df <- dplyr::filter(updated_phylum_plot_df, distinct_updated_phyla != "", distinct_updated_phyla != "NA")
+GTDB_phylum_plot_df <- data.frame(distinct_GTDB_phyla, GTDB_phylum_counts)
+GTDB_phylum_plot_df <- dplyr::filter(GTDB_phylum_plot_df, distinct_GTDB_phyla != "", distinct_GTDB_phyla != "NA")
+JGIinput_phylum_plot_df <- data.frame(distinct_JGI_phyla, JGIinput_phylum_counts)
+JGIinput_phylum_plot_df <- dplyr::filter(JGIinput_phylum_plot_df, distinct_JGI_phyla != "", distinct_JGI_phyla != "NA")
+
+# Build updated_domain_plot_df and original_domain_plot_df
+  # Generate vectors of unique domains in original, JGI, and updated dbs
+GTDB_domains <- str_extract(string = GTDB_tax, pattern = "(?<=d__).*(?=;p)")
+distinct_GTDB_domains <- unique(GTDB_domains)
+JGI_domains <- str_extract(string = JGI_tax, pattern = "(?<=d__).*(?=;p)")
+distinct_JGI_domains <- unique(JGI_domains)
+updated_domains <- append(GTDB_domains, JGI_domains)
+distinct_updated_domains <- unique(updated_domains)
+  # Generate vectors containing counts of how many times each unique domain appears in original and updated dbs
+updated_domain_counts <- c()
+GTDB_domain_counts <- c()
+JGIinput_domain_counts <- c()
+for (i in 1:length(distinct_updated_domains)) {
+  updated_domain_counts <- append(updated_domain_counts, length(updated_domains[updated_domains==distinct_updated_domains[i]]))
+}
+for (i in 1:length(distinct_GTDB_domains)) {
+  GTDB_domain_counts <- append(GTDB_domain_counts, length(GTDB_domains[GTDB_domains==distinct_GTDB_domains[i]]))
+}
+for (i in 1:length(distinct_JGI_domains)) {
+  JGIinput_domain_counts <- append(JGIinput_domain_counts, length(JGI_domains[JGI_domains==distinct_JGI_domains[i]]))
+}
+  # Make plot dfs
+updated_domain_plot_df <- data.frame(distinct_updated_domains, updated_domain_counts)
+updated_domain_plot_df <- dplyr::filter(updated_domain_plot_df, distinct_updated_domains != "", distinct_updated_domains != "NA")
+GTDB_domain_plot_df <- data.frame(distinct_GTDB_domains, GTDB_domain_counts)
+GTDB_domain_plot_df <- dplyr::filter(GTDB_domain_plot_df, distinct_GTDB_domains != "", distinct_GTDB_domains != "NA")
+JGIinput_domain_plot_df <- data.frame(distinct_JGI_domains, JGIinput_domain_counts)
+JGIinput_domain_plot_df <- dplyr::filter(JGIinput_domain_plot_df, distinct_JGI_domains != "", distinct_JGI_domains != "NA")
+
+updated_domain_plot_df <- dplyr::arrange(updated_domain_plot_df, updated_domain_counts)
+updated_phylum_plot_df <- dplyr::arrange(updated_phylum_plot_df, updated_phylum_counts)
+updated_class_plot_df <- dplyr::arrange(updated_class_plot_df, updated_class_counts)
+updated_order_plot_df <- dplyr::arrange(updated_order_plot_df, updated_order_counts)
+updated_family_plot_df <- dplyr::arrange(updated_family_plot_df, updated_family_counts)
+updated_genus_plot_df <- dplyr::arrange(updated_genus_plot_df, updated_genus_counts)
+
+GTDB_domain_plot_df <- dplyr::arrange(GTDB_domain_plot_df, GTDB_domain_counts)
+GTDB_phylum_plot_df <- dplyr::arrange(GTDB_phylum_plot_df, GTDB_phylum_counts)
+GTDB_class_plot_df <- dplyr::arrange(GTDB_class_plot_df, GTDB_class_counts)
+GTDB_order_plot_df <- dplyr::arrange(GTDB_order_plot_df, GTDB_order_counts)
+GTDB_family_plot_df <- dplyr::arrange(GTDB_family_plot_df, GTDB_family_counts)
+GTDB_genus_plot_df <- dplyr::arrange(GTDB_genus_plot_df, GTDB_genus_counts)
+
+JGIinput_domain_plot_df <- dplyr::arrange(JGIinput_domain_plot_df, JGIinput_domain_counts)
+JGIinput_phylum_plot_df <- dplyr::arrange(JGIinput_phylum_plot_df, JGIinput_phylum_counts)
+JGIinput_class_plot_df <- dplyr::arrange(JGIinput_class_plot_df, JGIinput_class_counts)
+JGIinput_order_plot_df <- dplyr::arrange(JGIinput_order_plot_df, JGIinput_order_counts)
+JGIinput_family_plot_df <- dplyr::arrange(JGIinput_family_plot_df, JGIinput_family_counts)
+JGIinput_genus_plot_df <- dplyr::arrange(JGIinput_genus_plot_df, JGIinput_genus_counts)
+
+# Implement the "other" category. Don't need to bother for domains, obviously
+
+updated_phylum_colsum <- sum(updated_phylum_plot_df$updated_phylum_counts)
+updated_phylum_plot_df_select <- dplyr::filter(updated_phylum_plot_df, updated_phylum_plot_df$updated_phylum_counts >= (0.005*updated_phylum_colsum))
+updated_phylum_plot_df_other <- dplyr::filter(updated_phylum_plot_df, updated_phylum_plot_df$updated_phylum_counts < (0.005*updated_phylum_colsum))
+updated_phylum_plot_df_select <- rbind(updated_phylum_plot_df_select, data.frame("distinct_updated_phyla"="Other",
+                                                                                 "updated_phylum_counts"=sum(updated_phylum_plot_df_other$updated_phylum_counts)))
+updated_class_colsum <- sum(updated_class_plot_df$updated_class_counts)
+updated_class_plot_df_select <- dplyr::filter(updated_class_plot_df, updated_class_plot_df$updated_class_counts >= (0.005*updated_class_colsum))
+updated_class_plot_df_other <- dplyr::filter(updated_class_plot_df, updated_class_plot_df$updated_class_counts < (0.005*updated_class_colsum))
+updated_class_plot_df_select <- rbind(updated_class_plot_df_select, data.frame("distinct_updated_classes"="Other",
+                                                                               "updated_class_counts"=sum(updated_class_plot_df_other$updated_class_counts)))
+updated_order_colsum <- sum(updated_order_plot_df$updated_order_counts)
+updated_order_plot_df_select <- dplyr::filter(updated_order_plot_df, updated_order_plot_df$updated_order_counts >= (0.005*updated_order_colsum))
+updated_order_plot_df_other <- dplyr::filter(updated_order_plot_df, updated_order_plot_df$updated_order_counts < (0.005*updated_order_colsum))
+updated_order_plot_df_select <- rbind(updated_order_plot_df_select, data.frame("distinct_updated_orders"="Other",
+                                                                               "updated_order_counts"=sum(updated_order_plot_df_other$updated_order_counts)))
+updated_family_colsum <- sum(updated_family_plot_df$updated_family_counts)
+updated_family_plot_df_select <- dplyr::filter(updated_family_plot_df, updated_family_plot_df$updated_family_counts >= (0.005*updated_family_colsum))
+updated_family_plot_df_other <- dplyr::filter(updated_family_plot_df, updated_family_plot_df$updated_family_counts < (0.005*updated_family_colsum))
+updated_family_plot_df_select <- rbind(updated_family_plot_df_select, data.frame("distinct_updated_families"="Other",
+                                                                                 "updated_family_counts"=sum(updated_family_plot_df_other$updated_family_counts)))
+updated_genus_colsum <- sum(updated_genus_plot_df$updated_genus_counts)
+updated_genus_plot_df_select <- dplyr::filter(updated_genus_plot_df, updated_genus_plot_df$updated_genus_counts >= (0.005*updated_genus_colsum))
+updated_genus_plot_df_other <- dplyr::filter(updated_genus_plot_df, updated_genus_plot_df$updated_genus_counts < (0.005*updated_genus_colsum))
+updated_genus_plot_df_select <- rbind(updated_genus_plot_df_select, data.frame("distinct_updated_genera"="Other",
+                                                                               "updated_genus_counts"=sum(updated_genus_plot_df_other$updated_genus_counts)))
+
+GTDB_phylum_colsum <- sum(GTDB_phylum_plot_df$GTDB_phylum_counts)
+GTDB_phylum_plot_df_select <- dplyr::filter(GTDB_phylum_plot_df, GTDB_phylum_plot_df$GTDB_phylum_counts >= (0.005*GTDB_phylum_colsum))
+GTDB_phylum_plot_df_other <- dplyr::filter(GTDB_phylum_plot_df, GTDB_phylum_plot_df$GTDB_phylum_counts < (0.005*GTDB_phylum_colsum))
+GTDB_phylum_plot_df_select <- rbind(GTDB_phylum_plot_df_select, data.frame("distinct_GTDB_phyla"="Other",
+                                                                           "GTDB_phylum_counts"=sum(GTDB_phylum_plot_df_other$GTDB_phylum_counts)))
+GTDB_class_colsum <- sum(GTDB_class_plot_df$GTDB_class_counts)
+GTDB_class_plot_df_select <- dplyr::filter(GTDB_class_plot_df, GTDB_class_plot_df$GTDB_class_counts >= (0.005*GTDB_class_colsum))
+GTDB_class_plot_df_other <- dplyr::filter(GTDB_class_plot_df, GTDB_class_plot_df$GTDB_class_counts < (0.005*GTDB_class_colsum))
+GTDB_class_plot_df_select <- rbind(GTDB_class_plot_df_select, data.frame("distinct_GTDB_classes"="Other",
+                                                                         "GTDB_class_counts"=sum(GTDB_class_plot_df_other$GTDB_class_counts)))
+GTDB_order_colsum <- sum(GTDB_order_plot_df$GTDB_order_counts)
+GTDB_order_plot_df_select <- dplyr::filter(GTDB_order_plot_df, GTDB_order_plot_df$GTDB_order_counts >= (0.005*GTDB_order_colsum))
+GTDB_order_plot_df_other <- dplyr::filter(GTDB_order_plot_df, GTDB_order_plot_df$GTDB_order_counts < (0.005*GTDB_order_colsum))
+GTDB_order_plot_df_select <- rbind(GTDB_order_plot_df_select, data.frame("distinct_GTDB_orders"="Other",
+                                                                         "GTDB_order_counts"=sum(GTDB_order_plot_df_other$GTDB_order_counts)))
+GTDB_family_colsum <- sum(GTDB_family_plot_df$GTDB_family_counts)
+GTDB_family_plot_df_select <- dplyr::filter(GTDB_family_plot_df, GTDB_family_plot_df$GTDB_family_counts >= (0.005*GTDB_family_colsum))
+GTDB_family_plot_df_other <- dplyr::filter(GTDB_family_plot_df, GTDB_family_plot_df$GTDB_family_counts < (0.005*GTDB_family_colsum))
+GTDB_family_plot_df_select <- rbind(GTDB_family_plot_df_select, data.frame("distinct_GTDB_families"="Other",
+                                                                           "GTDB_family_counts"=sum(GTDB_family_plot_df_other$GTDB_family_counts)))
+GTDB_genus_colsum <- sum(GTDB_genus_plot_df$GTDB_genus_counts)
+GTDB_genus_plot_df_select <- dplyr::filter(GTDB_genus_plot_df, GTDB_genus_plot_df$GTDB_genus_counts >= (0.005*GTDB_genus_colsum))
+GTDB_genus_plot_df_other <- dplyr::filter(GTDB_genus_plot_df, GTDB_genus_plot_df$GTDB_genus_counts < (0.005*GTDB_genus_colsum))
+GTDB_genus_plot_df_select <- rbind(GTDB_genus_plot_df_select, data.frame("distinct_GTDB_genera"="Other",
+                                                                         "GTDB_genus_counts"=sum(GTDB_genus_plot_df_other$GTDB_genus_counts)))
+
+JGIinput_phylum_colsum <- sum(JGIinput_phylum_plot_df$JGIinput_phylum_counts)
+JGIinput_phylum_plot_df_select <- dplyr::filter(JGIinput_phylum_plot_df, JGIinput_phylum_plot_df$JGIinput_phylum_counts >= (0.005*JGIinput_phylum_colsum))
+JGIinput_phylum_plot_df_other <- dplyr::filter(JGIinput_phylum_plot_df, JGIinput_phylum_plot_df$JGIinput_phylum_counts < (0.005*JGIinput_phylum_colsum))
+JGIinput_phylum_plot_df_select <- rbind(JGIinput_phylum_plot_df_select, data.frame("distinct_JGI_phyla"="Other",
+                                                                                   "JGIinput_phylum_counts"=sum(JGIinput_phylum_plot_df_other$JGIinput_phylum_counts)))
+JGIinput_class_colsum <- sum(JGIinput_class_plot_df$JGIinput_class_counts)
+JGIinput_class_plot_df_select <- dplyr::filter(JGIinput_class_plot_df, JGIinput_class_plot_df$JGIinput_class_counts >= (0.005*JGIinput_class_colsum))
+JGIinput_class_plot_df_other <- dplyr::filter(JGIinput_class_plot_df, JGIinput_class_plot_df$JGIinput_class_counts < (0.005*JGIinput_class_colsum))
+JGIinput_class_plot_df_select <- rbind(JGIinput_class_plot_df_select, data.frame("distinct_JGI_classes"="Other",
+                                                                                 "JGIinput_class_counts"=sum(JGIinput_class_plot_df_other$JGIinput_class_counts)))
+JGIinput_order_colsum <- sum(JGIinput_order_plot_df$JGIinput_order_counts)
+JGIinput_order_plot_df_select <- dplyr::filter(JGIinput_order_plot_df, JGIinput_order_plot_df$JGIinput_order_counts >= (0.005*JGIinput_order_colsum))
+JGIinput_order_plot_df_other <- dplyr::filter(JGIinput_order_plot_df, JGIinput_order_plot_df$JGIinput_order_counts < (0.005*JGIinput_order_colsum))
+JGIinput_order_plot_df_select <- rbind(JGIinput_order_plot_df_select, data.frame("distinct_JGI_orders"="Other",
+                                                                                 "JGIinput_order_counts"=sum(JGIinput_order_plot_df_other$JGIinput_order_counts)))
+JGIinput_family_colsum <- sum(JGIinput_family_plot_df$JGIinput_family_counts)
+JGIinput_family_plot_df_select <- dplyr::filter(JGIinput_family_plot_df, JGIinput_family_plot_df$JGIinput_family_counts >= (0.005*JGIinput_family_colsum))
+JGIinput_family_plot_df_other <- dplyr::filter(JGIinput_family_plot_df, JGIinput_family_plot_df$JGIinput_family_counts < (0.005*JGIinput_family_colsum))
+JGIinput_family_plot_df_select <- rbind(JGIinput_family_plot_df_select, data.frame("distinct_JGI_families"="Other",
+                                                                                   "JGIinput_family_counts"=sum(JGIinput_family_plot_df_other$JGIinput_family_counts)))
+JGIinput_genus_colsum <- sum(JGIinput_genus_plot_df$JGIinput_genus_counts)
+JGIinput_genus_plot_df_select <- dplyr::filter(JGIinput_genus_plot_df, JGIinput_genus_plot_df$JGIinput_genus_counts >= (0.005*JGIinput_genus_colsum))
+JGIinput_genus_plot_df_other <- dplyr::filter(JGIinput_genus_plot_df, JGIinput_genus_plot_df$JGIinput_genus_counts < (0.005*JGIinput_genus_colsum))
+JGIinput_genus_plot_df_select <- rbind(JGIinput_genus_plot_df_select, data.frame("distinct_JGI_genera"="Other",
+                                                                                 "JGIinput_genus_counts"=sum(JGIinput_genus_plot_df_other$JGIinput_genus_counts)))
+
+taxa <- c("domain", "phylum", "class", "order", "family", "genus")
+
+# Generate plots of GTDB_release207 taxa, JGI_input taxa, and updated DB taxa
+###
+GTDB_genus_plot <- ggplot(GTDB_genus_plot_df_select, aes(x="", y=GTDB_genus_counts, fill=distinct_GTDB_genera)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = GTDB_genus_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+GTDB_family_plot <- ggplot(GTDB_family_plot_df_select, aes(x="", y=GTDB_family_counts, fill=distinct_GTDB_families)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = GTDB_family_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+GTDB_order_plot <- ggplot(GTDB_order_plot_df_select, aes(x="", y=GTDB_order_counts, fill=distinct_GTDB_orders)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = GTDB_order_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+GTDB_class_plot <- ggplot(GTDB_class_plot_df_select, aes(x="", y=GTDB_class_counts, fill=distinct_GTDB_classes)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = GTDB_class_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+GTDB_phylum_plot <- ggplot(GTDB_phylum_plot_df_select, aes(x="", y=GTDB_phylum_counts, fill=distinct_GTDB_phyla)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = GTDB_phylum_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+GTDB_domain_plot <- ggplot(GTDB_domain_plot_df, aes(x="", y=GTDB_domain_counts, fill=distinct_GTDB_domains)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = GTDB_domain_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+input_JGI_genus_plot <- ggplot(JGIinput_genus_plot_df_select, aes(x="", y=JGIinput_genus_counts, fill=distinct_JGI_genera)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = JGIinput_genus_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+input_JGI_family_plot <- ggplot(JGIinput_family_plot_df_select, aes(x="", y=JGIinput_family_counts, fill=distinct_JGI_families)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = JGIinput_family_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+input_JGI_order_plot <- ggplot(JGIinput_order_plot_df_select, aes(x="", y=JGIinput_order_counts, fill=distinct_JGI_orders)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = JGIinput_order_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+input_JGI_class_plot <- ggplot(JGIinput_class_plot_df_select, aes(x="", y=JGIinput_class_counts, fill=distinct_JGI_classes)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = JGIinput_class_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+input_JGI_phylum_plot <- ggplot(JGIinput_phylum_plot_df_select, aes(x="", y=JGIinput_phylum_counts, fill=distinct_JGI_phyla)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = JGIinput_phylum_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+input_JGI_domain_plot <- ggplot(JGIinput_domain_plot_df, aes(x="", y=JGIinput_domain_counts, fill=distinct_JGI_domains)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = JGIinput_domain_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+updated_genus_plot <- ggplot(updated_genus_plot_df_select, aes(x="", y=updated_genus_counts, fill=distinct_updated_genera)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = updated_genus_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+updated_family_plot <- ggplot(updated_family_plot_df_select, aes(x="", y=updated_family_counts, fill=distinct_updated_families)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = updated_family_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+updated_order_plot <- ggplot(updated_order_plot_df_select, aes(x="", y=updated_order_counts, fill=distinct_updated_orders)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = updated_order_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+updated_class_plot <- ggplot(updated_class_plot_df_select, aes(x="", y=updated_class_counts, fill=distinct_updated_classes)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = updated_class_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+updated_phylum_plot <- ggplot(updated_phylum_plot_df_select, aes(x="", y=updated_phylum_counts, fill=distinct_updated_phyla)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = updated_phylum_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+updated_domain_plot <- ggplot(updated_domain_plot_df, aes(x="", y=updated_domain_counts, fill=distinct_updated_domains)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = updated_domain_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+
+GTDB_domain_barplot <- ggplot(GTDB_domain_plot_df, aes(x=distinct_GTDB_domains, y=GTDB_domain_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+GTDB_phylum_barplot <- ggplot(GTDB_phylum_plot_df_select, aes(x=distinct_GTDB_phyla, y=GTDB_phylum_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+GTDB_class_barplot <- ggplot(GTDB_class_plot_df_select, aes(x=distinct_GTDB_classes, y=GTDB_class_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+GTDB_order_barplot <- ggplot(GTDB_order_plot_df_select, aes(x=distinct_GTDB_orders, y=GTDB_order_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+GTDB_family_barplot <- ggplot(GTDB_family_plot_df_select, aes(x=distinct_GTDB_families, y=GTDB_family_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+GTDB_genus_barplot <- ggplot(GTDB_genus_plot_df_select, aes(x=distinct_GTDB_genera, y=GTDB_genus_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+
+input_JGI_domain_barplot <- ggplot(JGIinput_domain_plot_df, aes(x=distinct_JGI_domains, y=JGIinput_domain_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+input_JGI_phylum_barplot <- ggplot(JGIinput_phylum_plot_df_select, aes(x=distinct_JGI_phyla, y=JGIinput_phylum_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+input_JGI_class_barplot <- ggplot(JGIinput_class_plot_df_select, aes(x=distinct_JGI_classes, y=JGIinput_class_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+input_JGI_order_barplot <- ggplot(JGIinput_order_plot_df_select, aes(x=distinct_JGI_orders, y=JGIinput_order_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+input_JGI_family_barplot <- ggplot(JGIinput_family_plot_df_select, aes(x=distinct_JGI_families, y=JGIinput_family_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+input_JGI_genus_barplot <- ggplot(JGIinput_genus_plot_df_select, aes(x=distinct_JGI_genera, y=JGIinput_genus_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+
+updated_domain_barplot <- ggplot(updated_domain_plot_df, aes(x=distinct_updated_domains, y=updated_domain_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+updated_phylum_barplot <- ggplot(updated_phylum_plot_df_select, aes(x=distinct_updated_phyla, y=updated_phylum_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+updated_class_barplot <- ggplot(updated_class_plot_df_select, aes(x=distinct_updated_classes, y=updated_class_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+updated_order_barplot <- ggplot(updated_order_plot_df_select, aes(x=distinct_updated_orders, y=updated_order_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+updated_family_barplot <- ggplot(updated_family_plot_df_select, aes(x=distinct_updated_families, y=updated_family_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+updated_genus_barplot <- ggplot(updated_genus_plot_df_select, aes(x=distinct_updated_genera, y=updated_genus_counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(size = 8, angle = 45))
+
+colnames(updated_phylum_plot_df_select) <- c("phylum", "update_count")
+colnames(JGIinput_phylum_plot_df_select) <- c("phylum", "JGI_count")
+colnames(GTDB_phylum_plot_df_select) <- c("phylum", "GTDB_count")
+master_df <- merge(merge(updated_phylum_plot_df_select, JGIinput_phylum_plot_df_select),GTDB_phylum_plot_df_select)
+master_df_long <- master_df %>% pivot_longer(cols = 2:4)
+ggplot(master_df_long, aes(x=phylum, y=value, fill=name)) +
+	geom_bar(stat="identity", position="dodge") +
+	theme(axis.text.x = element_text(size = 8, angle = 45))
+
+
+
+# Identify taxa added in JGI input that were not already present in GTDB
+new_JGI_domains <- JGI_domains[JGI_domains %!in% GTDB_domains]
+new_JGI_domains <- new_JGI_domains[new_JGI_domains != "NA"]
+new_JGI_phyla <- JGI_phyla[JGI_phyla %!in% GTDB_phyla]
+new_JGI_phyla <- new_JGI_phyla[new_JGI_phyla != "NA"]
+new_JGI_classes <- JGI_classes[JGI_classes %!in% GTDB_classes]
+new_JGI_classes <- new_JGI_classes[new_JGI_classes != "NA"]
+new_JGI_orders <- JGI_orders[JGI_orders %!in% GTDB_orders]
+new_JGI_orders <- new_JGI_orders[new_JGI_orders != "NA"]
+new_JGI_families <- JGI_families[JGI_families %!in% GTDB_families]
+new_JGI_families <- new_JGI_families[new_JGI_families != "NA"]
+new_JGI_genera <- JGI_genera[JGI_genera %!in% GTDB_genera]
+new_JGI_genera <- new_JGI_genera[new_JGI_genera != "NA"]
+new_distinct_JGI_domains <- unique(new_JGI_domains)
+new_distinct_JGI_phyla <- unique(new_JGI_phyla)
+new_distinct_JGI_classes <- unique(new_JGI_classes)
+new_distinct_JGI_orders <- unique(new_JGI_orders)
+new_distinct_JGI_families <- unique(new_JGI_families)
+new_distinct_JGI_genera <- unique(new_JGI_genera)
+
+new_taxa_counts <- c(length(new_distinct_JGI_domains), length(new_distinct_JGI_phyla), length(new_distinct_JGI_classes),
+                     length(new_distinct_JGI_orders), length(new_distinct_JGI_families), length(new_distinct_JGI_genera))
+new_JGI_taxa <- data.frame(taxa, new_taxa_counts)
+
+# Plot numbers of each new, non-GTDB taxon in the JGI input TSV for each taxonomic level
+new_JGI_domain_counts <- c()
+new_JGI_phylum_counts <- c()
+new_JGI_class_counts <- c()
+new_JGI_order_counts <- c()
+new_JGI_family_counts <- c()
+new_JGI_genus_counts <- c()
+for (i in 1:length(new_distinct_JGI_domains)) {
+  new_JGI_domain_counts <- append(new_JGI_domain_counts, length(new_JGI_domains[new_JGI_domains==new_distinct_JGI_domains[i]]))
+}
+for (i in 1:length(new_distinct_JGI_phyla)) {
+  new_JGI_phylum_counts <- append(new_JGI_phylum_counts, length(new_JGI_phyla[new_JGI_phyla==new_distinct_JGI_phyla[i]]))
+}
+for (i in 1:length(new_distinct_JGI_classes)) {
+  new_JGI_class_counts <- append(new_JGI_class_counts, length(new_JGI_classes[new_JGI_classes==new_distinct_JGI_classes[i]]))
+}
+for (i in 1:length(new_distinct_JGI_orders)) {
+  new_JGI_order_counts <- append(new_JGI_order_counts, length(new_JGI_orders[new_JGI_orders==new_distinct_JGI_orders[i]]))
+}
+for (i in 1:length(new_distinct_JGI_families)) {
+  new_JGI_family_counts <- append(new_JGI_family_counts, length(new_JGI_families[new_JGI_families==new_distinct_JGI_families[i]]))
+}
+for (i in 1:length(new_distinct_JGI_genera)) {
+  new_JGI_genus_counts <- append(new_JGI_genus_counts, length(new_JGI_genera[new_JGI_genera==new_distinct_JGI_genera[i]]))
+}
+new_JGI_domain_plot_df <- data.frame(new_distinct_JGI_domains, new_JGI_domain_counts)
+new_JGI_phylum_plot_df <- data.frame(new_distinct_JGI_phyla, new_JGI_phylum_counts)
+new_JGI_class_plot_df <- data.frame(new_distinct_JGI_classes, new_JGI_class_counts)
+new_JGI_order_plot_df <- data.frame(new_distinct_JGI_orders, new_JGI_order_counts)
+new_JGI_family_plot_df <- data.frame(new_distinct_JGI_families, new_JGI_family_counts)
+new_JGI_genus_plot_df <- data.frame(new_distinct_JGI_genera, new_JGI_genus_counts)
+
+# Generate plots of different domains, phyla, classes, orders, families, and genera that were new in input TSV and not found in GTDB
+new_JGI_domain_plot <- ggplot(new_JGI_domain_plot_df, aes(x="", y=new_JGI_domain_counts, fill=new_distinct_JGI_domains)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = new_JGI_domain_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()) +
+  labs(title="Breakdown of Domains Found in JGI Input but not in GTDB")
+new_JGI_phylum_plot <- ggplot(new_JGI_phylum_plot_df, aes(x="", y=new_JGI_phylum_counts, fill=new_distinct_JGI_phyla)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = new_JGI_phylum_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()) +
+  labs(title="Breakdown of Phyla Found in JGI Input but not in GTDB")
+new_JGI_class_plot <- ggplot(new_JGI_class_plot_df, aes(x="", y=new_JGI_class_counts, fill=new_distinct_JGI_classes)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = new_JGI_class_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()) +
+  labs(title="Breakdown of Classes Found in JGI Input but not in GTDB")
+new_JGI_order_plot <- ggplot(new_JGI_order_plot_df, aes(x="", y=new_JGI_order_counts, fill=new_distinct_JGI_orders)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = new_JGI_order_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()) +
+  labs(title="Breakdown of Orders Found in JGI Input but not in GTDB")
+new_JGI_family_plot <- ggplot(new_JGI_family_plot_df, aes(x="", y=new_JGI_family_counts, fill=new_distinct_JGI_families)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = new_JGI_family_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()) +
+  labs(title="Breakdown of Families Found in JGI Input but not in GTDB")
+new_JGI_genus_plot <- ggplot(new_JGI_genus_plot_df, aes(x="", y=new_JGI_genus_counts, fill=new_distinct_JGI_genera)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = new_JGI_genus_counts), position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()) +
+  labs(title="Breakdown of Genera Found in JGI Input but not in GTDB")

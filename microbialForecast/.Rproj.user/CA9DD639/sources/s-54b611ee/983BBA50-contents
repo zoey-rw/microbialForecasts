@@ -1,0 +1,8 @@
+library(readr)
+
+TSV <- read_tsv("/projectnb2/microbiome/dgolden/Struo2/custom_dbs/GTDB_release207/taxonomy/prelim_map.txt", col_names = FALSE)
+TSV <- dplyr::select(TSV, X2, X3)
+write.table(TSV, file="/projectnb2/microbiome/dgolden/Struo2/custom_dbs/GTDB_release207/taxonomy/seqid2taxid_original.map")
+
+seqid_original <- read_tsv("/projectnb2/microbiome/dgolden/Struo2/custom_dbs/GTDB_release207/kraken2/seqid2taxid.map")
+seqid_updated <- read_tsv("/projectnb2/microbiome/dgolden/Struo2/custom_dbs/GTDB_release207_updated_fulltax/kraken2/seqid2taxid.map")
