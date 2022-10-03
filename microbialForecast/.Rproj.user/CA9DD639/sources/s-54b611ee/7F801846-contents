@@ -1,0 +1,170 @@
+library(tidyverse)
+
+# Read in covariate data
+master_df <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/interactions/data/NEON_soilCovariates_allsites.rds")
+
+# Read in abundances from pathway presence ("functional groups")
+cal <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_16S_2021.rds")
+val <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_16S_2021.rds")
+
+nitr_abun <- rbind(cal$nitrification, val$nitrification)
+nitr_abun$geneticSampleID <- gsub("-DNA[123]","",nitr_abun$sampleID)
+nitr_abun <- nitr_abun %>% rename(nitrifier_abundance = nitrification) 
+nitr_abun$sampleID <- NULL
+
+# Read in abundances from nitrifier genera
+nitr_abun2 <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/interactions/data/nitrifiers_genus_16S.rds")
+nitr_abun2 <- nitr_abun2 %>% mutate(nitrifier_genera = candidatus.nitrosotalea + candidatus.nitrotoga + nitrolancea +
+																									nitrosomonadaceae_genus + nitrosospira + nitrospira) #%>% select(nitrifier_genera)
+nitr_abun2$geneticSampleID <- rownames(nitr_abun2)
+nitr_abun2$geneticSampleID <- gsub("-DNA[123]","",nitr_abun2$geneticSampleID)
+
+new_master_df <- merge(master_df, nitr_abun, all.x=T)
+new_master_df <- merge(new_master_df, nitr_abun2, all.x=T, by = "geneticSampleID")
+
+new_master_df$horizon_name = ifelse(new_master_df$horizon=="O","Organic","Mineral")
+
+# Mean-scale abundances
+new_master_df$nitrifier_abun_scaled <- scale(new_master_df$nitrifier_abundance)
+new_master_df$nitrifier_scaled <- scale(new_master_df$nitrifier_genera)
+new_master_df$nitrospira_scaled <- scale(new_master_df$nitrospira)
+#new_master_df$nitrifier_genera_scaled <- scale(new_master_df$nitrifier_genera)
+to_model <- new_master_df %>% filter(!is.na(nitrifier_scaled)) 
+harv <- to_model[to_model$siteID=="HARV",]
+
+forests <- to_model %>% filter(siteID %in% c("BART","BLAN","BONA","CLBJ","GRSM","HARV","JERC",
+																									"KONZ","LENO","MLBS","ORNL","SCBI","SERC","STEI",
+																									"TALL","TREE","UKFS","UNDE"))
+
+
+##"Are nitrifier abundances stratified by depth?
+ggplot(forests, aes(y = nitrifier_scaled, x = horizon)) + geom_jitter() + geom_boxplot() + scale_y_sqrt()
+
+ 
+library(ggridges)
+ridgeplot <- ggplot(forests) + 
+	geom_density_ridges_gradient(aes(y = as.factor(horizon), 
+																	 x = nitrospira_scaled, fill = stat(y)), 
+															 scale = 5,
+															 rel_min_height = .01, quantile_lines = TRUE, quantiles = 2
+	) + #coord_flip() +
+	#facet_grid(~name, scales="free") + 
+	scale_fill_gradient(low = "seashell2", high = "sienna3") +  
+	theme_ridges(font_size = 23, grid = TRUE) + xlim(c(-2.5,5)) + ylab("Horizon") + xlab("Abundance (scaled)") 
+ridgeplot
+
+boxplot <- ggplot(forests, aes(x = horizon_name, 
+															 y = nitrospira_scaled, fill = horizon)) + 
+	geom_boxplot(show.legend = F) +
+	scale_fill_manual(values = c("seashell2","sienna4")) +
+	geom_jitter(alpha=.1, width=.1, show.legend = F)+  
+	theme_minimal(base_size = 20) + #xlim(c(-2.5,5)) + 
+	xlab("Horizon") + 
+	ylab("Abundance (scaled)")  + ylim(c(-1,6)) +
+	ggtitle("Observed Nitrospira bacterial abundances", "in NEON deciduous forest sites")
+boxplot + coord_flip() 
+
+
+library(ggpubr)
+library(rstatix)
+stat.test <- forests %>%
+	t_test(nitrifier_scaled ~ horizon) %>%
+	add_significance()
+stat.test <- stat.test %>% add_xy_position(x = "horizon")
+ggboxplot(forests, x = "horizon",	y = "nitrospira_scaled", fill = "horizon") +  
+	scale_fill_manual(values = c("seashell2","sienna4")) +
+	geom_jitter(alpha=.1, width=.1, show.legend = F)+  
+	theme_minimal(base_size = 20) + #xlim(c(-2.5,5)) + 
+	xlab("Horizon") + 
+	ylab("Abundance (scaled)")  + #ylim(c(-2,8)) + 
+	stat_pvalue_manual(stat.test, label = "p.signif", y.position = 5) + 
+	ggtitle("Nitrospira bacterial abundances", "in NEON deciduous forest sites")
+
+
+
+summary(lm(nitrospira_scaled ~ soilMoisture + soilInCaClpH + CNratio + nitrogenPercent + soilTemp + organicCPercent, forests))
+
+
+library(jtools)
+full_fit <- lm(nitrospira_scaled ~  CNratio + soilInCaClpH + soilMoisture + d15N, forests)
+summary(full_fit)
+summary(lm(nitrospira_scaled ~  CNratio + soilInCaClpH + soilMoisture + d15N, forests))
+summary(lm(nitrospira_scaled ~  d15N, forests))
+mois_fit <- lm(nitrospira_scaled ~  soilMoisture, forests)
+
+plot_summs(mois_fit, full_fit, scale = TRUE, robust=T,
+					 model.names = c("Moisture only","Moisture, nutrients and chemistry"))
+
+library(lme4)
+fm1 <- lmer(nitrospira_scaled ~ soilMoisture + (1 | siteID), forests)
+fm2 <- lmer(nitrospira_scaled ~ CNratio + soilInCaClpH + soilMoisture + d15N + (1 | siteID), forests)
+
+plot_summs(fm1)
+plot_summs(fm1, fm2, scale = TRUE, robust=T, model.names = c("Moisture & site effects only",
+																														 "Moisture, chemistry, & site effects"))
+effect_plot(fm2, pred = soilMoisture, interval = TRUE, plot.points = TRUE)
+effect_plot(mois_fit, pred = soilMoisture, interval = TRUE, plot.points = TRUE)
+
+effect_plot(fm2, pred = soilInCaClpH, interval = TRUE, plot.points = TRUE, x.label = "Nitrifier abundance (scaled)", y.label = "soil pH", partial.residuals = T, main.title = "Relationship between pH and nitrifier abundances (partial residuals)")
+
+effect_plot(fm1, pred = soilMoisture, interval = TRUE, plot.points = TRUE, x.label = "Nitrifier abundance (scaled)", y.label = "soil moisture", partial.residuals = T)
+
+summ(full_fit, vifs = TRUE)
+
+
+
+
+
+
+
+plot(nitrospira_scaled ~  d15N, forests)
+plot(y = forests$soilInCaClpH, x = as.factor(forests$horizon), forests)
+ggplot(forests, aes(x = horizon, 
+										y = soilInCaClpH, fill = horizon)) + 
+	geom_boxplot(show.legend = F) +
+	scale_fill_manual(values = c("seashell2","sienna4")) +
+	geom_jitter(alpha=.1, width=.1, show.legend = F)+  
+	theme_minimal(base_size = 20) + #xlim(c(-2.5,5)) + 
+	xlab("Horizon") + 
+	ylab("pH")  + ylim(c(-1,6)) +
+	ggtitle("pH by soil horizon", "in NEON deciduous forest sites")
+
+summary(lm(nitrifier_abundance ~ netNitugPerGramPerDay, new_master_df))
+plot(nitrifier_abundance ~ netNitugPerGramPerDay, new_master_df)
+
+summary(lm(nitrifier_abundance ~ soilMoisture * soilInCaClpH + litterDepth, new_master_df))
+
+
+
+
+summary(lm(nitrifier_scaled ~ soilMoisture * soilInCaClpH, to_model))
+summary(lm(nitrifier_scaled ~ soilMoisture * soilInCaClpH * horizon, harv))
+
+summary(lm(netNitugPerGramPerDay ~ soilMoisture * soilInCaClpH * horizon * soilInorganicNugPerGram * soilAmmoniumNugPerGram * freshMass, new_master_df))
+summary(lm(nitrifier_scaled ~ soilMoisture * soilInCaClpH * horizon * soilInorganicNugPerGram * soilAmmoniumNugPerGram * freshMass, new_master_df))
+
+
+summary(lm(netNminugPerGramPerDay ~ soilMoisture * soilInCaClpH * horizon * soilInorganicNugPerGram * soilAmmoniumNugPerGram * freshMass, new_master_df))
+
+
+summary(lm(nitrifier_scaled ~ soilMoisture * soilInCaClpH + soilInorganicNugPerGram, to_model))
+summary(lm(netNitugPerGramPerDay ~ soilMoisture * soilInCaClpH + soilInorganicNugPerGram, new_master_df))
+summary(lm(netNitugPerGramPerDay ~ soilMoisture * soilInCaClpH + soilInorganicNugPerGram + totalLipidConcentration, new_master_df))
+summary(lm(netNminugPerGramPerDay ~ soilMoisture * soilInCaClpH * nitrogenPercent, new_master_df))
+summary(lm(netNitugPerGramPerDay ~ soilMoisture * soilInCaClpH * nitrogenPercent, new_master_df))
+summary(lm(nitrifier_scaled ~ soilMoisture * soilInCaClpH * nitrogenPercent, new_master_df))
+
+
+
+summary(lm(nitrifier_scaled ~ soilMoisture * soilInCaClpH * horizon, to_model))
+summary(lm(nitrifier_scaled ~ netNitugPerGramPerDay, to_model))
+summary(lm(netNitugPerGramPerDay ~ soilMoisture * soilInCaClpH * horizon * totalLipidConcentration, to_model))
+
+
+summary(lm(nitrifier_scaled ~ horizon, to_model))
+summary(lm(nitrifier_scaled ~ sampleBottomDepth, to_model))
+summary(lm(netNitugPerGramPerDay ~ sampleBottomDepth, to_model))
+summary(lm(netNitugPerGramPerDay ~ horizon, to_model))
+plot(nitrifier_scaled ~ horizon, to_model)
+ggplot(to_model, aes(y = nitrifier_scaled, x = horizon)) + geom_jitter() + geom_boxplot() + scale_y_sqrt()
+ggplot(to_model, aes(y = netNitugPerGramPerDay, x = horizon)) + geom_jitter() + geom_boxplot() + scale_y_sqrt()

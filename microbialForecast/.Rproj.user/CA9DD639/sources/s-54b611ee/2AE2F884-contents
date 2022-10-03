@@ -1,0 +1,36 @@
+# Create COMETS input parameters from observed soil samples
+library(tidyverse)
+
+soilData <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/interactions/data/NEON_soilCovariates_allsites.rds")
+
+soilData_harv <- soilData %>% filter(siteID=="HARV" & !is.na(netNitugPerGramPerDay) & !is.na(soilMoisture))
+
+simple_df <- soilData_harv %>% select(sampleID, netNminugPerGramPerDay, netNitugPerGramPerDay, soilInorganicNugPerGram, soilAmmoniumNugPerGram, soilNitrateNitriteNugPerGram,nitrogenPercent,d15N,organicd13C, nitrogenPercent, organicCPercent, CNratio, dryMassFraction, sampleTiming, standingWaterDepth,
+																	sampleBottomDepth, litterDepth,
+																	soilMoisture, soilInCaClpH, soilTemp, plotID, initMoisture, initNitrateNitrite, initAmmonium)
+
+simple_info <- parseNEONsampleIDs(simple_df$sampleID) %>% select(siteID, asDate, dateID, horizon, plot_date)
+simple_df_info <- cbind(simple_df, simple_info)
+
+
+
+
+obs <- simple_df_info %>% mutate(moisture = cut(initMoisture, breaks = c(0,.5,1,2,3,4,5,6),
+																								labels = c(.5,1,2,3,4,5,6),	include.lowest = TRUE),
+																 diffusion = cut(initMoisture, breaks = c(0,.5,1,2,3,4,5,6),
+																 								labels = c(5e-6,1e-6,2e-6,3e-6,4e-6,5e-6,6e-6),	include.lowest = TRUE),
+																 ammonium = cut(initAmmonium, breaks = c(0,.1,.2,.3,.4,.5,.6,.7,.8,.9,1,1.5,3),
+																 							 labels = c(.1,.2,.3,.4,.5,.6,.7,.8,.9,1,1.5,3),	include.lowest = TRUE),
+																 nitrate = cut(initNitrateNitrite, breaks = c(0,.1,.2,.3,.4,.5,.6),
+																 							labels = c(.1,.2,.3,.4,.5,.6),	include.lowest = TRUE),
+																 #diffusion = ifelse(horizon=="O",1e-6, 10e-6),
+																 id = paste0('sim_diff_', diffusion, '_nh4_',
+																 						ammonium,'_no3_', nitrate,'_mois_',moisture))
+
+sim_categories <- obs %>%
+	distinct(id, .keep_all=T)
+rownames(sim_categories) <- NULL
+sim_categories$rownames <- 1:nrow(sim_categories)
+
+write.csv(obs, "/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim//data/obs_params.csv")
+write.csv(sim_categories, "/projectnb2/talbot-lab-data/zrwerbin/interactions/data/input_params.csv")

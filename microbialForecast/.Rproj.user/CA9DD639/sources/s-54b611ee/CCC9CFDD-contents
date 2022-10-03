@@ -1,0 +1,275 @@
+library(sp) 
+library(ggridges)
+
+s <- "nitro"
+sim_directory <- "/projectnb2/talbot-lab-data/zrwerbin/interactions/data/simulation_output"
+dir_to_search <- file.path(sim_directory, s)
+files <- file.info(list.files(dir_to_search, pattern = "^biomass", full.names = T))
+if (nrow(files)==0) next()
+newest_biom_path <- rownames(files)[which.max(files$mtime)]
+newest_biom_path <- "/projectnb2/talbot-lab-data/zrwerbin/interactions/data/simulation_output/nitro/biomass_0x2b64f38c95e0"
+
+newest_biom_path <- "/projectnb2/talbot-lab-data/zrwerbin/interactions/data/simulation_output/nitro/biomass_0x2b64f484e5e0"
+biomass_orig <- data.table::fread(newest_biom_path, data.table = F, col.names = c("timepoint","x","y","modelID","abundance"))
+
+
+ total_files <- file.info(list.files(dir_to_search, pattern = "^total_biomass", full.names = T))
+ newest_tot_biom_path <- rownames(total_files)[which.max(total_files$mtime)]
+ tot_biomass_orig <- data.table::fread(newest_tot_biom_path, data.table = F)
+ colnames(tot_biomass_orig) <- c("cycle","Nitrospira")
+ tot_biom_long <- tot_biomass_orig %>% pivot_longer(cols = 2:ncol(tot_biomass_orig))
+ggplot(tot_biom_long) + geom_line(aes(x = cycle, y = value, color = as.factor(name)), size = 2) + theme_light() 
+
+rock_locs <- vector("list", length = 19)
+for (x in 1:19){
+	for (y in 1:99) {
+		loc <- biomass_orig %>% filter(x == !!x & y == !!y)
+		if (nrow(loc) == 0){
+			rock_locs[[x]][[y]] <- cbind(0, x, y, "Nitrospira.cmd", 0)
+		}
+	}
+	rock_locs[[x]] <- do.call(rbind, rock_locs[[x]])	
+}
+rock_locs_all <- as.data.frame(do.call(rbind, rock_locs))
+colnames(rock_locs_all) <- c("timepoint", "x", "y", "modelID", "abundance")
+
+nitrospira <- biomass_orig %>% filter(modelID == "Nitrospira.cmd")
+nitrospira <- rbind(nitrospira, rock_locs_all)
+
+#final_cycle <- nitrospira %>% filter(timepoint == max(timepoint))
+final_cycle <- nitrospira %>% filter(timepoint == 600)
+final_cycle <- nitrospira %>% filter(timepoint == 550)
+final_cycle <- nitrospira %>% filter(timepoint == 500)
+final_cycle <- nitrospira %>% filter(timepoint == 100)
+
+
+nitrospira_final_cycle <- nitrospira %>% filter(timepoint == 450)
+ggplot(nitrospira_final_cycle) +
+	geom_point(aes(x=x,y=y, 
+								  size = abundance, 
+								 fill = abundance, 
+								 color = abundance), 
+						 shape = 22) +
+	geom_point(data = rock_locs_all, 
+						 aes(x=as.numeric(x),y=as.numeric(y)), 
+						 fill = "grey", 
+						 color = "grey", 
+						 shape = 22) +
+	scale_y_reverse(limits = c(100, 0)) +
+	#, position = position_jitter(width=.0001)) + 
+	#theme_dark() + 
+	xlab("") + ylab("Soil depth (.1 cm)") + 
+	scale_fill_gradient(low = "black", high = "red") +
+	scale_color_gradient(low = "black", high = "red") + 
+	guides(size=FALSE) +
+	theme(panel.background = element_rect(fill = "black", colour = "black"),
+				panel.grid.major = element_line(colour = "black"), 
+				panel.grid.minor = element_line(colour = "black"))
+
+
+nitrospira_init  <- nitrospira %>% filter(timepoint == 0)
+ggplot(nitrospira_init) +
+	geom_point(aes(x=as.numeric(x),y=as.numeric(y)), 
+								 # size = abundance, 
+								 fill = "red", 
+								 color = "red", 
+						 shape = 22) +
+	geom_point(data = rock_locs_all, 
+						 aes(x=as.numeric(x),y=as.numeric(y)), 
+								 fill = "grey", 
+								 color = "grey", 
+						 shape = 22) +
+	scale_y_reverse(limits = c(100, 0)) +
+	#, position = position_jitter(width=.0001)) + 
+	#theme_dark() + 
+	xlab("") + ylab("Soil depth (.1 cm)") + 
+	scale_fill_gradient(low = "black", high = "red") +
+	scale_color_gradient(low = "black", high = "red") + 
+	theme(panel.background = element_rect(fill = "black", colour = "black"),
+				panel.grid.major = element_line(colour = "black"), 
+				panel.grid.minor = element_line(colour = "black"))
+
+
+
+
+#final_cycle$size = ifelse(final_cycle$abundance
+p <- nitrospira %>% filter(timepoint > 300 & timepoint < 550) %>% 
+	ggplot() +
+	geom_point(aes(x=x,y=-y, 
+								# size = abundance, 
+								 fill = abundance, 
+								 color = abundance), 
+						 shape = 22) +
+	#, position = position_jitter(width=.0001)) + 
+	 #theme_dark() + 
+	xlab("") + ylab("Soil depth (.1 cm)") + 
+	scale_fill_gradient(low = "black", high = "red") +
+	scale_color_gradient(low = "black", high = "red") + 
+	theme(panel.background = element_rect(fill = "black", colour = "black"),
+		panel.grid.major = element_line(colour = "black"), 
+		panel.grid.minor = element_line(colour = "black"))
+
+library(gganimate)
+p1 <- p + transition_time(timepoint) +
+	labs(title = "Timepoint: {frame_time}")
+	
+
+
+
+
+
+
+s <- "nde"
+sim_directory <- "/projectnb2/talbot-lab-data/zrwerbin/interactions/data/simulation_output"
+dir_to_search <- file.path(sim_directory, s)
+files <- file.info(list.files(dir_to_search, pattern = "^biomass", full.names = T))
+newest_biom_path <- rownames(files)[which.max(files$mtime)]
+biomass_orig <- data.table::fread(newest_biom_path, data.table = F, col.names = c("timepoint","x","y","modelID","abundance"))
+total_files <- file.info(list.files(dir_to_search, pattern = "^total_biomass", full.names = T))
+newest_tot_biom_path <- rownames(total_files)[which.max(total_files$mtime)]
+tot_biomass_orig <- data.table::fread(newest_tot_biom_path, data.table = F)
+colnames(tot_biomass_orig) <- c("cycle","Nitrospira_defluvii")
+tot_biom_long <- tot_biomass_orig %>% pivot_longer(cols = 2:ncol(tot_biomass_orig))
+ggplot(tot_biom_long) + geom_line(aes(x = cycle, y = value, color = as.factor(name)), size = 2) + theme_light() 
+NDE <- biomass_orig 
+#final_cycle <- nitrospira %>% filter(timepoint == max(timepoint))
+nde_final_cycle <- NDE %>% filter(timepoint == 600)
+
+nitrospira_final_cycle
+
+nitrospira_final_cycle$scaled_abun <- scale(nitrospira_final_cycle$abundance)
+nitrospira_final_cycle$name <- "N. moscoviensis"
+
+nde_final_cycle$scaled_abun <- scale(nde_final_cycle$abundance)
+nde_final_cycle$name <- "N. defluvii"
+final_abun <- rbind(nitrospira_final_cycle, nde_final_cycle)
+
+final_abun$horizon <- ifelse(final_abun$y < 50, "O", "M")
+
+final_abun$siteID <- "Simulation"
+
+library(ggridges)
+final_abun$horizon_name = ifelse(final_abun$horizon=="O","Organic","Mineral")
+
+
+#### Boxplot for AGU talk
+ggplot(final_abun, aes(x = as.factor(horizon_name), 
+											 y = scaled_abun, fill = horizon_name)) + 
+	geom_boxplot(show.legend = F) + 
+	#facet_grid(~name, scales="free") + 
+	scale_fill_manual(values = c("seashell2","sienna4")) +
+	scale_shape_manual(values = c(1, 4)) +
+	# geom_jitter(aes(shape = name), size=3,
+	# 						alpha=.4, width=.1#, show.legend = F
+	# 						)+  
+	geom_point(aes(shape = name), size=2,position=position_jitterdodge(), height=.1,
+							alpha=.4#, show.legend = F
+	)+  
+	theme_minimal(base_size = 20) + #xlim(c(-2.5,5)) + 
+	xlab("Horizon") + 
+	guides(fill = "none", shape=guide_legend(title="Species")) +
+	ylab("Abundance (scaled)")  + ylim(c(-1,6)) +
+	ggtitle("Simulated Nitrospira bacterial abundances"#, "N. defluvii & N. moscoviensis"
+					) + coord_flip()
+
+
+
+
+
+
+
+
+
+
+
+
+##### other attempts at depth plot #####
+
+by_depth <- final_cycle %>%  group_by(modelID, y) %>% summarize(tot = sum(abundance))
+ggplot(by_depth) + geom_point(aes(x = -y, y = tot)) + facet_grid(~modelID) + coord_flip()
+
+#ggplot(by_depth) + geom_bar(aes(x =tot)) + facet_grid(~modelID) + coord_flip()
+by_depth$depth <- cut(x=by_depth$y, breaks=seq(from=0, to=100, by = 50),
+											labels = c("O","M"), 
+											include.lowest = T)
+
+by_depth_sum <- by_depth %>% group_by(depth) %>% summarize(total = sum(tot))
+ggplot(by_depth_sum, 
+			 aes(x = as.factor(depth), y = total)) + 
+	#ylab("depth") +
+	geom_boxplot(stat = "identity") 
+
+ggplot(by_depth_sum, aes(x = depth, y = total)) + 
+	#ylab("depth") +
+	geom_bar(stat = "identity") + 
+	coord_flip()
+# Faccio il plot dei bin
+barplot(height = Bydepth, xlab = "depth", ylab = "occurence")
+
+ggplot(by_depth, aes(y = tot,x = -y)) + ylab("depth") +
+	geom_bar(stat = "identity") + coord_flip() +
+	facet_wrap(~modelID, drop=T#, scales="free"
+						 ) #+ scale_fill_gradient(low = "blue", high = "red") +  theme_ridges(font_size = 13, grid = TRUE) 
+#####
+
+
+
+#### Misc flux data stuff ####
+
+
+flux_fp <- "/projectnb2/talbot-lab-data/zrwerbin/interactions/data/simulation_output/nitro/flux_out_0x2ad10ad04af0"
+flux_orig <- data.table::fread("/projectnb2/talbot-lab-data/zrwerbin/interactions/flux_out_0x2b14e5097550_0x2b14e5097af0",sep="\s", fill = T)
+
+ggplot(fluxes_long) + 
+	geom_point(aes(x = cycle, y = value, color = value)) + 
+	geom_hline(yintercept=0) +
+	facet_wrap(~name, scales="free") #+ coord_flip()
+
+
+
+unique(fluxes_long$name)
+
+fluxes <- read.csv("/projectnb2/talbot-lab-data/zrwerbin/interactions/fluxes.csv")
+fluxes_long <-  fluxes[which(colSums(fluxes) != 0),] %>% pivot_longer(cols = 3:ncol(fluxes)) %>% 
+	filter(value != 0)
+fluxes_long <- fluxes_long %>% mutate(name = recode(name,
+																										EX_cpd11574_e0 = "EX_Molybdate_e0",
+																										EX_cpd15378_e0 = "EX_4hba_e0",
+																										EX_cpd00229_e0 = "EX_Glycolaldehyde_e0",
+																										EX_cpd00036_e0 = "EX_Succinate_e0",
+																										EX_cpd00106_e0 = "EX_Fumarate_e0",
+																										EX_cpd00130_e0 = "EX_L-Malate_e0",
+																										EX_cpd11640_e0 = "EX_H2_e",
+																										EX_cpd00239_e0 = "EX_H2S_e",
+																										Ex_cpd11416_e0 = "Ex_Biomass_e",
+																										EX_cpd00067_c0 = "EX_H+_c",
+																										EX_cpd00001_e0="EX_H2O_e0",
+																										EX_cpd00007_e0="EX_O2_e0",
+																										EX_cpd00009_e0="EX_Phosphate_e0",
+																										EX_cpd00011_e0="EX_CO2_e0",
+																										EX_cpd00013_e0="EX_NH3_e0",
+																										EX_cpd00030_e0="EX_Mn2_e0",
+																										EX_cpd00034_e0="EX_Zn2_e0",
+																										EX_cpd00047_e0="EX_Formate_e0",
+																										EX_cpd00048_e0="EX_Sulfate_e0",
+																										EX_cpd00058_e0="EX_Cu2_e0",
+																										EX_cpd00063_e0="EX_Ca2_e0",
+																										EX_cpd00073_e0="EX_Urea_e0",
+																										EX_cpd00075_e0="EX_Nitrite_e0",
+																										EX_cpd00099_e0="EX_Cl__e0",
+																										EX_cpd00100_e0="EX_Glycerol_e0",
+																										EX_cpd00131_e0="EX_Molybdenum_e0",
+																										EX_cpd00149_e0="EX_Co2_e0",
+																										EX_cpd00205_e0="EX_K_e0",
+																										EX_cpd00209_e0="EX_Nitrate_e0",
+																										EX_cpd00254_e0="EX_Mg_e0",
+																										EX_cpd00531_e0="EX_Hg2_e0",
+																										EX_cpd00635_e0="EX_Cbl_e0",
+																										EX_cpd00971_e0="EX_Na_e0",
+																										EX_cpd01012_e0="EX_Cd2_e0",
+																										EX_cpd04097_e0="EX_Pb_e0",
+																										EX_cpd05097_e0="EX_Calcium_carbonate_e0",
+																										EX_cpd09225_e0="EX_Boric_acid_e0",
+																										EX_cpd10409_e0="EX_Nickel_chloride_e0",
+																										EX_cpd10515_e0="EX_Fe2_e0",
+																										EX_cpd10516_e0="EX_fe3_e0"))

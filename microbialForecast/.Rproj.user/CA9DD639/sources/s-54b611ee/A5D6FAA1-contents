@@ -1,0 +1,208 @@
+library(tidyverse)
+library(lubridate)
+
+#timestep <- 1 #timestep in hours
+timestep <- 2 #timestep in hours
+
+sim_directory <- "/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_output"
+sim_directory <- "/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_output/no_static/"
+sim_directory <- "/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_output/static_o2_sensormois/"
+
+sim_directory <- "/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_output/spatial_o2/"
+
+
+sim_directory <- "/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_output/static_o2/"
+
+sim_directory <- "/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_output/extramods/"
+scenarios <- list.files(sim_directory, pattern = "^sim_")
+
+out <- list()
+out2 <- list()
+met_out1 <- list()
+met_out2 <- list()
+met_long_out <- list()
+met_by_timepoint_list = list()
+for (s in scenarios){
+	#for (s in scenarios[1:17]){
+	print(s)
+	# Get newest simulation media file
+	dir_to_search <- file.path(sim_directory, s)
+	files <- file.info(list.files(dir_to_search, pattern = "media", full.names = T))
+	if (nrow(files)==0) next()
+	newest_media_path <- rownames(files)[which.max(files$mtime)]
+	media_orig <- data.table::fread(newest_media_path,  data.table = F) %>% select(-V1) %>% mutate(id = !!s)
+	met_wide = media_orig
+	print(head(met_wide, 2))
+	# Get simulation area to convert rates to micrograms per gram
+	height <- 40
+	width <- 10
+	area <- height * width
+	max_cycles <- max(media_orig$cycle)
+	#if (max_cycles < 400) { print("few cycles"); next() }
+	#max_cycles <- 300
+	# Convert cycles to days (to get daily rate)
+	#total_hrs <- timestep*(max_cycles - start_time)
+	#total_hrs2 <- timestep*max_cycles
+	#total_duration <- lubridate::dhours(total_hrs) %>% time_length(unit="days")
+	# Subset to relevant metabolites
+	mets_keep =  c("nh4_e","no2_e", "no3_e","n2o_e","no_e","h2o_e","h_e","h_c","co2_e", "nh3_e","biomass_e","o2_e")
+	select_mets <- media_orig[media_orig$met %in% mets_keep,]
+	met_by_timepoint <- select_mets %>% group_by(metabolite, cycle) %>%
+		summarize(total = sum(conc_mmol)) %>% mutate(
+			id = s)
+	#ggplot(met_by_timepoint) + geom_line(aes(x = cycle, y = total)) + facet_wrap(~met, scales="free")
+	met_by_timepoint_list[[s]] = met_by_timepoint
+	# Get initial and final values for flux calculations
+	met_names = colnames(media_orig)[!colnames(media_orig) %in% c("V1", "cycle","id")]
+	#met_long <- media_orig %>% pivot_longer(cols = met_names, names_to = "met")
+	met_wide <- met_by_timepoint %>% pivot_wider(names_from = metabolite, values_from = total)
+	met_wide <- met_wide %>% mutate(ph = -log10(h_e/area))
+	met_out1[[s]] <- met_wide
+	if(is.na(met_wide$no2_e[1])) met_wide$no2_e[1] <- 0
+	if(is.na(met_wide$nh4_e[1])) met_wide$nh4_e[1] <- 0
+	if(is.na(met_wide$no3_e[1])) met_wide$no3_e[1] <- 0
+	met_wider <- met_wide %>%
+		mutate(inorganic = nh4_e+no2_e+no3_e,
+					 nitrateNitrite = no2_e+no3_e) %>% pivot_wider(id_cols = "id", names_from = "cycle",
+					 																							values_from = c(inorganic, nitrateNitrite))
+	met_out2[[s]] <- met_wider
+}
+# Combine and clean up output from loop
+met_out_df <- data.table::rbindlist(met_out1, fill = T) # all metabolites
+# Select metabolites by timepoint
+met_long_df <- data.table::rbindlist(met_by_timepoint_list) # all cycles, for more calculation types
+met_long_df <- met_long_df %>%
+	separate(col = "id", sep = "_n|_m", into = c("diffusion","ammonium",'nitrate',"mois"), remove=F)
+met_long_df$diffusion <- as.numeric(gsub("sim_diff_", "", met_long_df$diff, fixed=T))
+met_long_df$ammonium <- gsub("h4_", "", met_long_df$ammonium, fixed=T)
+met_long_df$nitrate <- gsub("o3_", "", met_long_df$nitrate, fixed=T)
+met_long_df$mois <- gsub("ois_", "", met_long_df$mois, fixed=T)
+met_out_df2 <- data.table::rbindlist(met_out2) # relevant metabolites
+#colnames(out_df) <- c("id","nmin","nitr","ammo")
+met_out_df2 <- met_out_df2 %>%
+	separate(col = "id", sep = "_n|_m", into = c("diffusion","ammonium",'nitrate',"mois"), remove=F)
+met_out_df2$diffusion <- as.numeric(gsub("sim_diff_", "", met_out_df2$diff, fixed=T))
+met_out_df2$ammonium <- gsub("h4_", "", met_out_df2$ammonium, fixed=T)
+met_out_df2$nitrate <- gsub("o3_", "", met_out_df2$nitrate, fixed=T)
+met_out_df2$mois <- gsub("ois_", "", met_out_df2$mois, fixed=T)
+#met_out_df2$id <- gsub("exp_","",met_out_df2$id)
+# ggplot(nh4_met, aes(y =total, x = cycle)) +
+# 	geom_point(size = 3) + facet_wrap(~ammonium)
+#
+# ggplot(mois_met, aes(y =total, x = cycle)) +
+# 	geom_point(size = 3) + facet_wrap(~mois)
+out_rates2 <- met_out_df2 %>%
+	mutate(
+		netInorganicNugPerGram = inorganic_50 - inorganic_10,
+		netNitrateNitriteNugPerGram =  nitrateNitrite_50 - nitrateNitrite_10,
+		nmin = netInorganicNugPerGram / total_duration / area,
+		nitr = netNitrateNitriteNugPerGram / total_duration / area,
+		ammo = nmin-nitr
+	) %>% select(id, nmin, nitr, ammo)
+out_rates2
+# Read in observational data
+eval_df <- read.csv("/projectnb/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/true_rates_df.csv")
+eval_df <- eval_df %>% filter(nmin_obs < 4)
+eval_df %>% select(nitr_obs, nmin_obs, id)
+time_set = list(c("initial" = 0, "final" = 10),
+								c("initial" = 0, "final" = 20),
+								c("initial" = 0, "final" = 30),
+								c("initial" = 0, "final" = 40),
+								c("initial" = 0, "final" = 50),
+								c("initial" = 0, "final" = 60),
+								c("initial" = 0, "final" = 70),
+								c("initial" = 0, "final" = 80),
+								c("initial" = 0, "final" = 90),
+								c("initial" = 0, "final" = 100),
+								c("initial" = 10, "final" = 20),
+								c("initial" = 10, "final" = 30),
+								c("initial" = 10, "final" = 40),
+								c("initial" = 10, "final" = 50),
+								c("initial" = 10, "final" = 60),
+								c("initial" = 10, "final" = 70),
+								c("initial" = 10, "final" = 80),
+								c("initial" = 10, "final" = 90),
+								c("initial" = 10, "final" = 100),
+								c("initial" = 50, "final" = 60),
+								c("initial" = 50, "final" = 70),
+								c("initial" = 50, "final" = 80),
+								c("initial" = 50, "final" = 90),
+								c("initial" = 50, "final" = 100))#,
+								#c("initial" = 5, "final" = 10),
+								#c("initial" = 5, "final" = 15),
+								#c("initial" = 5, "final" = 20),
+								#c("initial" = 5, "final" = 25),
+								#c("initial" = 5, "final" = 30),
+								#c("initial" = 5, "final" = 35),
+								#c("initial" = 5, "final" = 40))
+#i = c("initial" = 0, "final" = 10)
+df_calc <- met_out_df2
+nitr_lm_out = list()
+nmin_lm_out = list()
+for (j in 1:length(time_set)){
+	i = time_set[[j]]
+	duration = i[[2]] - i[[1]]
+	init_nitrate_col = paste0("nitrateNitrite_",i[[1]])
+	final_nitrate_col = paste0("nitrateNitrite_",i[[2]])
+	init_ammon_col = paste0("inorganic_",i[[1]])
+	final_ammon_col = paste0("inorganic_",i[[2]])
+	df_calc$nmin = (df_calc[,..final_ammon_col] - df_calc[,..init_ammon_col]) / duration
+	df_calc$nitr = (df_calc[,..final_nitrate_col] - df_calc[,..init_nitrate_col]) / duration
+	eval <- merge(df_calc, eval_df, by="id")
+	nitr_lm_out[[j]] = summary(lm(nitr_obs ~ nitr, eval))
+	nmin_lm_out[[j]] = summary(lm(nmin_obs ~ nmin, eval))
+}
+init_time = lapply(time_set, '[[', 1) %>% unlist()
+final_time = lapply(time_set, '[[', 2) %>% unlist()
+nmin_lm_summary = lapply(nmin_lm_out, function(x) print(x$r.squared)) %>% unlist() %>% cbind(r.squared = ., init_time = init_time, final_time = final_time)
+nitr_lm_summary = lapply(nitr_lm_out, function(x) print(x$r.squared)) %>% unlist() %>% cbind.data.frame(r.squared = ., init_time = init_time, final_time = final_time)
+nitr_lm_summary[which.max(nitr_lm_summary[,"r.squared"]),]
+nmin_lm_summary[which.max(nmin_lm_summary[,"r.squared"]),]
+# Get pred~obs plot for best row
+best_init = nmin_lm_summary[which.max(nmin_lm_summary[,"r.squared"]),]["init_time"]
+best_final = nmin_lm_summary[which.max(nmin_lm_summary[,"r.squared"]),]["final_time"]
+print(best_init)
+print(best_final)
+best_init = 0
+final_time = 10
+total_duration = best_final - best_init
+init_nitrate_col = paste0("nitrateNitrite_",best_init)
+final_nitrate_col = paste0("nitrateNitrite_",best_final)
+init_ammon_col = paste0("inorganic_",best_init)
+final_ammon_col = paste0("inorganic_",best_final)
+met_out_df2$nmin = (met_out_df2[,..final_ammon_col] - met_out_df2[,..init_ammon_col]) / total_duration
+met_out_df2$nitr = (met_out_df2[,..final_nitrate_col] - met_out_df2[,..init_nitrate_col]) / total_duration
+eval <- merge(met_out_df2, eval_df, by="id")
+summary(lm(nitr_obs ~ nitr, eval))
+plot(nitr_obs ~ nitr, eval)
+summary(lm(nmin_obs ~ nmin, eval))
+plot(nmin_obs ~ nmin, eval)
+
+
+
+ggplot(eval, aes(y =nmin_obs, x = nmin, color = horizon)) +
+	geom_point(size = 3, alpha=.5) + theme_bw(base_size = 18)
+
+
+plot(nmin_obs ~ moisture, eval)
+plot(nmin_obs ~ avail_ammonium, eval)
+
+for_eval = list(eval,nitr_lm_summary,nmin_lm_summary,met_long_df)
+
+saveRDS(for_eval, "/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_summary/static_o2.rds")
+
+saveRDS(for_eval, "/projectnb2/talbot-lab-data/metabolic_models/scripts/N_cycle_sim/data/simulation_summary/extramods_static_o2.rds")
+
+
+
+
+
+ggplot(met_long_df %>% filter(!metabolite %in% c(#"o2_e",
+																								 "h2o_e")), aes(y =total, x = cycle, color = diffusion, group=id)) +
+	geom_line(size = 1, alpha=.3) +
+	facet_grid(rows=vars(metabolite), scales="free") +
+	xlim(c(0,125)) + theme_bw(base_size = 18)
+
+
+#ggplot(met_long_df, aes(y =value, x = cycle, color = as.numeric(ammonium), group=id)) +
+#	geom_line(size = 1, alpha=.5) + facet_wrap(~met, scales="free")

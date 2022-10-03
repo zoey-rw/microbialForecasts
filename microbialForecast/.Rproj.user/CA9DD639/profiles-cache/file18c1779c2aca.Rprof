@@ -1,0 +1,13 @@
+memory profiling: GC profiling: line profiling: sample.interval=10000
+:4939251:480083181:297618104:3148:"enexpr" "inject" "%<~%" "env_get" "$.r6lite" "method" "lines$push_sticky" "binary_op_deparse" "deparser" "op_deparse" "deparser" "sexp_deparse" "quo_deparse" "expr_deparse" "nchar_infix" "as_label_infix" "FUN" "vapply" ".rlang_purrr_map_mold" "map_chr" "exprs_auto_name" "rlang:::quos_auto_name" "profvis" 
+:4949709:480083674:303725520:3719:"environment" "fn_env" "expr_interp" "$.r6lite" "operand_deparse" "binary_op_deparse" "deparser" "op_deparse" "deparser" "sexp_deparse" "deparser" "method" "lines$deparse" "operand_deparse" "binary_op_deparse" "deparser" "op_deparse" "deparser" "sexp_deparse" "quo_deparse" "expr_deparse" "as_label_infix" "FUN" "vapply" ".rlang_purrr_map_mold" "map_chr" "exprs_auto_name" "rlang:::quos_auto_name" "profvis" 
+:4951015:487513582:304584112:541:"==" "profvis" 
+:4951015:487513582:304584112:0:"==" "profvis" 
+:4951016:489990103:304584728:0:"==" "profvis" 
+:4951016:492466624:304584840:0:"&" "profvis" 
+:4951017:494943145:304585456:0:"==" "profvis" 
+:4951017:497419666:304585568:0:"&" "profvis" 
+:4951017:497419666:304585568:0:".Call" "profvis" 
+:4951316:500115847:304752560:92:"vec_slice" "dplyr_row_slice.data.frame" "filter.data.frame" "profvis" 
+:4951324:502749992:304753512:0:"vec_slice" "dplyr_row_slice.data.frame" "filter.data.frame" "profvis" 
+:4951334:506920682:304757768:0:"vec_slice" "dplyr_row_slice.data.frame" "filter.data.frame" "profvis" 

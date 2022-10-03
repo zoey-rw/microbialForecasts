@@ -1,0 +1,13 @@
+memory profiling: GC profiling: line profiling: sample.interval=10000
+:4878427:480021852:294959504:3531:"vec_cast" "vec_assign" "pkg_version_info" "is_installed" "has_crayon" "new_quo_deparser" "expr_deparse" "as_label_infix" "FUN" "vapply" ".rlang_purrr_map_mold" "map_chr" "exprs_auto_name" "rlang:::quos_auto_name" "profvis" 
+:4888323:480022245:300729184:3518:"as_string" "$.r6lite" "method" "lines$get_lines" "op_deparse" "deparser" "sexp_deparse" "deparser" "method" "lines$deparse" "operand_deparse" "binary_op_deparse" "deparser" "op_deparse" "deparser" "sexp_deparse" "quo_deparse" "expr_deparse" "as_label_infix" "FUN" "vapply" ".rlang_purrr_map_mold" "map_chr" "exprs_auto_name" "rlang:::quos_auto_name" "profvis" 
+:4889157:487452153:301257712:338:"==" "profvis" 
+:4889158:489928674:301258328:0:"==" "profvis" 
+:4889158:489928674:301258328:0:"==" "profvis" 
+:4889158:492405195:301258440:0:"&" "profvis" 
+:4889159:494881716:301259056:0:"==" "profvis" 
+:4889159:497358237:301259168:0:"&" "profvis" 
+:4889159:499834758:301259224:0:".Call" "profvis" 
+:4889462:500932483:301426664:92:"vec_slice" "dplyr_row_slice.data.frame" "filter.data.frame" "profvis" 
+:4889473:505542193:301427896:0:"vec_slice" "dplyr_row_slice.data.frame" "filter.data.frame" "profvis" 
+:4889600:510371508:301453488:13:".makeMessage" "message" "value[[3]]" "tryCatchOne" "tryCatchList" "tryCatchList" "tryCatch" "profvis" 
