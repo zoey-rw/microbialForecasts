@@ -40,8 +40,7 @@ fcast_ranks = microbialForecast:::keep_fg_names
 if (testing) fcast_ranks = fcast_ranks[7:8]
 
 output.list = foreach(i=1:length(fcast_ranks),
-											.errorhandling = 'pass',
-											.verbose = T) %dopar% {
+											.errorhandling = 'pass') %dopar% {
 
 												pacman::p_load(microbialForecast)
 
@@ -98,7 +97,8 @@ output.list = foreach(i=1:length(fcast_ranks),
 		full_site_list <- c(site_list, new_site_list)
 		site_output_list <- list()
 
-		if (testing) full_site_list = full_site_list[1:2]
+		#if (testing) full_site_list = full_site_list[1:2]
+
 		for (siteID in full_site_list){
 			message("SiteID: ", siteID)
 			newsite <- siteID %in% new_plot_site_key$siteID
@@ -108,7 +108,7 @@ output.list = foreach(i=1:length(fcast_ranks),
 
 			plot_output_list <- list()
 
-			if (testing) plot_list = plot_list[1:2]
+			#if (testing) plot_list = plot_list[1:2]
 
 			for (plotID in plot_list){
 				message("PlotID: ", plotID)
@@ -140,9 +140,9 @@ out <- rbindlist(output.list)	%>%
 	mutate(fcast_period = ifelse(dates < "2018-01-01", "calibration", "hindcast"),
 	category = assign_fg_categories(taxon),
 	group = assign_fg_kingdoms(category))
-saveRDS(out, paste0("./data/summary/hindcast_fg_", time_period, ".rds"))
+saveRDS(out, paste0("./data/summary/beta_hindcast_fg_", time_period, ".rds"))
 
-out <- readRDS("./data/summary/hindcast_fg.rds")
+out <- readRDS("./data/summary/beta_hindcast_fg.rds")
 
 # View example output
 ggplot(out %>% filter(plotID=="BART_002" & taxon == "oligotroph")) +
