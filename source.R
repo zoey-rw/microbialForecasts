@@ -2,528 +2,130 @@
 setwd("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/")
 here::i_am("source.R")
 
-# Contains miscellaneous functions and objects to make model scripts clearer.
-message("Loading source.R, with Nimble model objects")
-
 # Pacman package loader is used throughout scripts
-if (!require("pacman")) install.packages("pacman") 
-pacman::p_load(nimble, coda, lubridate, tidyverse, here) 
+# if (!require("pacman")) install.packages("pacman")
+# if (!require("microbialForecast"))
 
-# Load all helper functions and variables
-source(here("functions", "helperFunctions.r"))
-source(here("functions", "globalVariables.r"))
+#install.packages("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/microbialForecast_0.1.0.tar.gz", repos = NULL, type="source")
 
-#####
-
-nimbleMod_shannon <- nimbleCode({ 
-	
-	# Observation model (cores ~ plot means)
-	for(i in 1:N.core){
-		y[i,1] ~ dnorm(plot_mu[plot_num[i],timepoint[i]],  core_sd)
-	}
-	
-	# Process model
-	for(p in 1:N.plot){
-		for (t in plot_start[p]) {
-			plot_mu[p,t] ~ dgamma(2, 1) # Plot means for first date
-		}
-		
-		for (t in plot_index[p]:N.date) { # Starts from second date
-			# Previous value * rho + covariates
-			Ex[p,t] <- rho * plot_mu[p,t-1] + 
-				beta[1]*temp_est[plot_site_num[p],t] + 
-				beta[2]*mois_est[plot_site_num[p],t] + 
-				beta[3]*pH_est[p,plot_start[p]] + 
-				beta[4]*pC_est[p,plot_start[p]] +
-				beta[5]*relEM[p,t] +
-				beta[6]*LAI[plot_site_num[p],t] +
-				beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
-				site_effect[plot_site_num[p]] +
-				intercept
-			# Add process error, sigma
-			plot_mu[p,t] ~ dnorm(Ex[p,t], sigma)
-		}
-	}
-	
-	# Add driver uncertainty if desired ----
-	if(temporalDriverUncertainty) {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
-				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
-			}
-		}
-	} else {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] <- mois[k,t]
-				temp_est[k,t] <- temp[k,t]
-			}
-		} 
-	}
-	
-	# Add spatial uncertainty (values are constant over time)
-	if(spatialDriverUncertainty) {
-		for(p in 1:N.plot){
-			pH_est[p,plot_start[p]] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
-			pC_est[p,plot_start[p]] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
-		}
-	} else {
-		for(p in 1:N.plot){
-			pH_est[p,plot_start[p]] <- pH[p,plot_start[p]]
-			pC_est[p,plot_start[p]] <- pC[p,plot_start[p]]
-		}
-	}
-	
-	rho ~ dnorm(0, sd = 1)
-	#core_sd ~ dinvgamma(3, .5)
-	core_sd ~ dgamma(.1, 1)
-	sigma ~ dgamma(.5, .1)
-	#	intercept ~ dgamma(.1, .1)
- intercept ~ dnorm(0, sd = 1)
-	
-	# Priors for covariates:
-	for (n in 1:N.beta){
-		beta[n] ~ dnorm(0, sd = 1)
-	}
-	# Priors for site effects----
-	for(k in 1:N.site){
-		site_effect[k] ~ dnorm(0,  sig)
-	}
-	# Priors for site effect variance ----
-	sig ~ dgamma(.5,1)
-	
-}) #end NIMBLE model.
+	suppressPackageStartupMessages(library(tidyverse, warn.conflicts = F))
+	pacman::p_load(pacman, microbialForecast,
+							 nimble, coda, lubridate, here,
+							 doParallel, data.table)
 
 
+	# Convert sin and cos effect sizes to a seasonal amplitude parameter
+	sin_cos_to_seasonality <- function(sin, cos){
+		min_max <- getMaxMin(sin, cos, max_only = F)
+		amplitude <- sqrt(sin^2 + cos^2)
 
-
-nimbleModTaxa <- nimbleCode({ 
-	
-	# Loop through core observations ----
-	for(i in 1:N.core){
-		y[i,1:N.spp] ~ ddirch(plot_mu[plot_num[i], 1:N.spp, timepoint[i]])
-	}
-	
-	# Plot-level process model ----
-	for(s in 1:N.spp){
-		for(p in 1:N.plot){
-			for (t in plot_start[p]) {
-				plot_mu[p,s,t] ~ dgamma(0.5, 1) # Plot means for first date
-				# Convert back to relative abundance
-				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
-			}
-			
-			for (t in plot_index[p]:N.date) {
-				# Previous value * rho
-				log(Ex[p,s,t]) <- rho[s] * log(plot_mu[p,s,t-1]) + 
-					beta[s,1]*temp_est[plot_site_num[p],t] +
-					beta[s,2]*mois_est[plot_site_num[p],t] +
-					beta[s,3]*pH_est[p,plot_start[p]] +
-					beta[s,4]*pC_est[p,plot_start[p]] +
-					beta[s,5]*relEM[p,t] +
-					beta[s,6]*LAI[plot_site_num[p],t] +
-					beta[s,7]*sin_mo[t] + beta[s,8]*cos_mo[t] +
-					site_effect[plot_site_num[p],s] +
-					intercept[s]
-				# Add process error (sigma)
-				plot_mu[p,s,t] ~ dnorm(Ex[p,s,t], sigma[s])
-				# Convert back to relative abundance
-				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
-			}
-		}
-	}
-	
-	# Add driver uncertainty if desired ----
-	if(temporalDriverUncertainty) {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
-				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
-			}
-		}
-	} else {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] <- mois[k,t]
-				temp_est[k,t] <- temp[k,t]
-			}
-		} 
-	}
-	
-	# Using 40th time point (values are constant over time)
-	if(spatialDriverUncertainty) {
-		for(p in 1:N.plot){
-				pH_est[p,plot_start[p]] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
-				pC_est[p,plot_start[p]] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
-		}
-	} else {
-		for(p in 1:N.plot){
-				pH_est[p,plot_start[p]] <- pH[p,plot_start[p]]
-				pC_est[p,plot_start[p]] <- pC[p,plot_start[p]]
-		} 
-	}
-	
-	# Priors for site effect covariance matrix ----
-	sig ~ dgamma(3,1)
-	# SIGMA[1:N.spp,1:N.spp] <- diag(rep(sig^2, N.spp))		
-	# 
-	# # Priors for site random effects:
-	# for(k in 1:N.site){
-	# 	site_effect[k,1:N.spp] ~ dmnorm(alpha0[1:N.spp], # vector of zeros
-	# 																	cov = SIGMA[1:N.spp,1:N.spp])
-	# }
-	
-	# Priors for site random effects:
-	for(s in 1:N.spp){
-		for(k in 1:N.site){
-			site_effect[k,s] ~ dnorm(0, sig)
-		}
-	}
-	
-
-	
-	# Priors for everything else ----
-	for (s in 1:N.spp){
-		sigma[s] ~ dgamma(.1, .1)
-		beta[s,1:N.beta] ~ dmnorm(zeros[1:N.beta], omega[1:N.beta, 1:N.beta])
-	}
-	rho[1:N.spp] ~ dmnorm(zeros[1:N.spp], omega[1:N.spp, 1:N.spp])
-	intercept[1:N.spp] ~ dmnorm(zeros[1:N.spp], omega[1:N.spp, 1:N.spp])
-	
-	
-}) #end NIMBLE model.
-
-
-
-
-
-nimbleModFunctional <- nimbleCode({ 
-	
-	# Loop through core observations ----
-	for(i in 1:N.core){
-		y[i,1] ~ dbeta(mean = plot_mu[plot_num[i],timepoint[i]], 
-									 sd = core_sd)
-	}
-	
-	# Plot-level process model ----
-	for(p in 1:N.plot){
-		for (t in plot_start[p]) {
-			plot_mu[p,t] ~ dbeta(mean=.3, sd=.3) # Plot means for first date
-		}
-		
-		for (t in plot_index[p]:N.date) {
-			# Previous value * rho
-			logit(Ex[p,t]) <- rho * logit(plot_mu[p,t-1]) + 
-				beta[1]*temp_est[plot_site_num[p],t] +
-				beta[2]*mois_est[plot_site_num[p],t] +
-				beta[3]*pH_est[p,plot_start[p]] +
-				beta[4]*pC_est[p,plot_start[p]] +
-				#beta[5]*nspp[p,t] +
-				beta[5]*relEM[p,t] +
-				beta[6]*LAI[plot_site_num[p],t] +
-				beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
-				site_effect[plot_site_num[p]] +
-			intercept
-			# Add process error (sigma)
-			#	plot_mu[p,t] ~ dnorm(Ex[p,t], sigma)
-			plot_mu[p,t] ~ dnorm(mean = Ex[p,t], sigma)
-			#plot_mu[p,t] <- Ex[p,t]
-		}
-	}
-	
-
-	# Add driver uncertainty if desired ----
-	if(temporalDriverUncertainty) {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
-				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
-			}
-		}
-	} else {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] <- mois[k,t]
-				temp_est[k,t] <- temp[k,t]
-			}
-		} 
-	}
-	
-	# Using 40th time point (values are constant over time)
-	if(spatialDriverUncertainty) {
-		for(p in 1:N.plot){
-			pH_est[p,plot_start[p]] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
-			pC_est[p,plot_start[p]] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
-		}
-	} else {
-		for(p in 1:N.plot){
-			pH_est[p,plot_start[p]] <- pH[p,plot_start[p]]
-			pC_est[p,plot_start[p]] <- pC[p,plot_start[p]]
-		} 
-	}
-	
-	
-	# Priors for site effect covariance matrix ----
-	sig ~ dgamma(.5,1)
-	# Priors for site effects----
-	for(k in 1:N.site){
-		site_effect[k] ~ dnorm(0,  sig)
-	}
-	
-	# Priors for everything else ----
-	core_sd ~ dgamma(.5,1)
-	rho ~ dnorm(0, sd = 1)
-	sigma ~ dgamma(.5, .1)
-	#intercept ~ dgamma(.1, .1)
-	intercept ~ dnorm(0, sd = 1)
-	
-	for (n in 1:N.beta){
-		beta[n] ~ dnorm(0, sd = 1)
-	}
-}) #end NIMBLE model.
-
-
-
-# Model version with truncated Normal distribution to prevent negative values
-nimbleModFunctional_trunc <- nimbleCode({ 
-	
-	# Loop through core observations ----
-	for(i in 1:N.core){
-		y[i,1] ~ dbeta(mean = plot_mu[plot_num[i],timepoint[i]], 
-									 sd = core_sd)
-	}
-	
-	# Plot-level process model ----
-	for(p in 1:N.plot){
-		for (t in plot_start[p]) {
-			plot_mu[p,t] ~ dbeta(mean=.3, sd=.3) # Plot means for first date
-		}
-		
-		for (t in plot_index[p]:N.date) {
-			# Previous value * rho
-			logit(Ex[p,t]) <- rho * logit(plot_mu[p,t-1]) + 
-				beta[1]*temp_est[plot_site_num[p],t] +
-				beta[2]*mois_est[plot_site_num[p],t] +
-				beta[3]*pH_est[p,plot_start[p]] +
-				beta[4]*pC_est[p,plot_start[p]] +
-				beta[5]*relEM[p,t] +
-				beta[6]*LAI[plot_site_num[p],t] +
-				beta[7]*sin_mo[t] + beta[8]*cos_mo[t] +
-				site_effect[plot_site_num[p]] +
-				intercept
-			# Add process error (sigma)
-			#	plot_mu[p,t] ~ dnorm(Ex[p,t], sigma)
-			plot_mu[p,t] ~ T(dnorm(mean = Ex[p,t], sigma), 0, Inf)
-			#plot_mu[p,t] <- Ex[p,t]
-		}
-	}
-	
-	
-	# Add driver uncertainty if desired ----
-	if(temporalDriverUncertainty) {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] ~ dnorm(mois[k,t], sd = mois_sd[k,t])
-				temp_est[k,t] ~ dnorm(temp[k,t], sd = temp_sd[k,t])
-			}
-		}
-	} else {
-		for(k in 1:N.site){
-			for (t in site_start[k]:N.date) {
-				mois_est[k,t] <- mois[k,t]
-				temp_est[k,t] <- temp[k,t]
-			}
-		} 
-	}
-	
-	# Using 40th time point (values are constant over time)
-	if(spatialDriverUncertainty) {
-		for(p in 1:N.plot){
-			pH_est[p,plot_start[p]] ~ dnorm(pH[p,plot_start[p]], sd = pH_sd[p,plot_start[p]])
-			pC_est[p,plot_start[p]] ~ dnorm(pC[p,plot_start[p]], sd = pC_sd[p,plot_start[p]])
-		}
-	} else {
-		for(p in 1:N.plot){
-			pH_est[p,plot_start[p]] <- pH[p,plot_start[p]]
-			pC_est[p,plot_start[p]] <- pC[p,plot_start[p]]
-		} 
-	}
-	
-	
-	# Priors for site effect covariance matrix ----
-	sig ~ dgamma(.5,1)
-	# Priors for site effects----
-	for(k in 1:N.site){
-		site_effect[k] ~ dnorm(0,  sig)
-	}
-	
-	# Priors for everything else ----
-	core_sd ~ dgamma(.5,1)
-	rho ~ dnorm(0, sd = 1)
-	sigma ~ dgamma(.5, .1)
-	intercept ~ dnorm(0, sd = 1)
-	
-	for (n in 1:N.beta){
-		beta[n] ~ dnorm(0, sd = 1)
-	}
-}) #end NIMBLE model.
-
-
-
-
-
-
-nimbleModFunctional_cycl_only <- nimbleCode({ 
-	
-	# Loop through core observations ----
-	for(i in 1:N.core){
-		y[i,1] ~ dbeta(mean = plot_mu[plot_num[i],timepoint[i]], 
-									 sd = core_sd)
-	}
-	
-	# Plot-level process model ----
-	for(p in 1:N.plot){
-		for (t in plot_start[p]) {
-			plot_mu[p,t] ~ dbeta(mean=.3, sd=.3) # Plot means for first date
-		}
-		
-		for (t in plot_index[p]:N.date) {
-			# Previous value * rho
-			logit(Ex[p,t]) <- rho * logit(plot_mu[p,t-1]) + 
-				beta[1]*sin_mo[t] + beta[2]*cos_mo[t] +
-				site_effect[plot_site_num[p]] +
-				intercept
-			
-			# Add process error (sigma)
-			#	plot_mu[p,t] ~ dnorm(Ex[p,t], sigma)
-			plot_mu[p,t] ~ T(dnorm(mean = Ex[p,t], sigma), 0, Inf)
-			#plot_mu[p,t] <- Ex[p,t]
-		}
-	}
-	
-	# Priors for site effect covariance matrix ----
-	sig ~ dgamma(.5,1)
-	# Priors for site effects----
-	for(k in 1:N.site){
-		site_effect[k] ~ dnorm(0,  sig)
-	}
-	
-	# Priors for everything else ----
-	core_sd ~ dgamma(.5,1)
-	rho ~ dnorm(0, sd = 1)
-	sigma ~ dgamma(.5, .1)
-	intercept ~ dnorm(0, sd = 1)
-	
-	for (n in 1:2){
-	beta[n] ~ dnorm(0, sd = 1)
-	}
-}) #end NIMBLE model.
-
-
-
-
-
-nimbleMod_shannon_cycl_only <- nimbleCode({ 
-	
-	# Observation model (cores ~ plot means)
-	for(i in 1:N.core){
-		y[i,1] ~ dnorm(plot_mu[plot_num[i],timepoint[i]],  core_sd)
-	}
-	
-	# Process model
-	for(p in 1:N.plot){
-		for (t in plot_start[p]) {
-			plot_mu[p,t] ~ dgamma(2, 1) # Plot means for first date
-		}
-		
-		for (t in plot_index[p]:N.date) { # Starts from second date
-			# Previous value * rho + covariates
-			Ex[p,t] <- rho * plot_mu[p,t-1] + 
-				beta[1]*sin_mo[t] + beta[2]*cos_mo[t] +
-				site_effect[plot_site_num[p]] +
-				intercept
-			# Add process error, sigma
-			plot_mu[p,t] ~ dnorm(Ex[p,t], sigma)
-		}
+		t=seq(0,12,0.1)
+		monthly_vals = sin*sin(2*pi*t/12)+cos*cos(2*pi*t/12)
+		max_val = max(monthly_vals)
+		# Average of minimum and maximum wave values
+		avg_val <- mean(min_max[[1]], min_max[[2]])
+		out <- cbind.data.frame(max=min_max[[1]],
+														amplitude_orig=amplitude,
+														amplitude = max_val)
+		return(out)
 	}
 
-	rho ~ dnorm(0, sd = 1)
-	#core_sd ~ dinvgamma(3, .5)
-	core_sd ~ dgamma(.1, 1)
-	sigma ~ dgamma(.5, .1)
-	#	intercept ~ dgamma(.1, .1)
-	intercept ~ dnorm(0, sd = 1)
-	
-	# Priors for covariates:
-	for (n in 1:2){
-		beta[n] ~ dnorm(0, sd = 1)
+	source("https://raw.githubusercontent.com/colinaverill/NEFI_microbe/master/NEFI_functions/rsq_1.1.r")
+
+
+	predictive_loss = function(observed, predicted, predicted_sd){
+		npred = length(predicted)
+		predictive_variance = predicted_sd^2
+		residual_variance = (predicted - observed)^2
+		P = sum(predictive_variance, na.rm=T)/npred
+		G = sum(residual_variance, na.rm=T)/npred
+		total_PL = P+G
+		data.frame(total_PL = total_PL, predictive_variance=P, residual_variance=G)
+
 	}
-	# Priors for site effects----
-	for(k in 1:N.site){
-		site_effect[k] ~ dnorm(0,  sig)
+
+	# observed = cal_test$truth
+	# mean_predicted = cal_test$Mean
+	# sd_predicted = cal_test$SD
+	# type=c("RMSE","BIAS","MAE",
+	# 			 "CRPS", "RSQ", "RSQ.1",
+	# 			 "RMSE.norm",  "residual_variance", "predictive_variance", "total_PL")
+	#
+	# add_scoring_metrics(observed = cal_test$truth,
+	# 										mean_predicted = cal_test$Mean,
+	# 										sd_predicted = cal_test$SD)
+
+	add_scoring_metrics = function(observed, mean_predicted, sd_predicted,
+																 type=c("RMSE","BIAS","MAE",
+																 			 "CRPS", "RSQ", "RSQ.1",
+																 			 "RMSE.norm",  "residual_variance", "predictive_variance", "total_PL", "CRPS_truncated")){
+
+		require(Metrics, scoringRules)
+
+		if(sum(is.na(observed )) > 0){stop('Error: NAs in observed vector.' )}
+		if(sum(is.na(mean_predicted)) > 0){stop('Error: NAs in predicted vector.')}
+
+		out_df <- cbind.data.frame(observed,mean_predicted,sd_predicted) %>%
+			summarise(CRPS = mean(
+				crps_norm(observed, mean_predicted, sd_predicted)),
+				CRPS_truncated = mean(
+					crps(observed,
+							 family = "tnorm",
+							 location = mean_predicted,
+							 scale = sd_predicted, lower = 0, upper = Inf)),
+				RMSE = rmse(actual = observed, predicted = mean_predicted),
+				RSQ.1 = 1 - (RMSE^2)/var(observed),
+				RSQ.1.colin = rsq_1.1(observed, mean_predicted),
+				predictive_loss(observed, mean_predicted, sd_predicted),
+				RMSE = rmse(actual = observed, predicted = mean_predicted),
+				BIAS = bias(actual = observed, predicted = mean_predicted),
+				MAE = mae(actual = observed, predicted = mean_predicted),
+				MAPE = mape(actual = observed, predicted = mean_predicted),
+				RSQ = summary(lm(observed ~ mean_predicted))$r.squared,
+				abundance = mean(observed, na.rm=T),
+				RMSE.norm = RMSE / abundance) %>% select(!!type)
+
+		return(out_df)
 	}
-	# Priors for site effect variance ----
-	sig ~ dgamma(.5,1)
-	
-}) #end NIMBLE model.
+
+
+	first = function(x) x %>% nest %>% ungroup %>% slice(1) %>% unnest(data)
 
 
 
+	quick_get_rank_df = function(k = 1,
+															 min.date = "20151101",
+															 max.date = "20200101"){
 
+		pacman::p_load(reshape2, parallel, nimble, coda, tidyverse)
 
-nimbleModTaxa_cycl_only <- nimbleCode({ 
-	
-	# Loop through core observations ----
-	for(i in 1:N.core){
-		y[i,1:N.spp] ~ ddirch(plot_mu[plot_num[i], 1:N.spp, timepoint[i]])
+		# Subset to one rank.
+		rank.name <- microbialForecast:::tax_names[k]
+	# Read in microbial abundances
+	cal <- c(readRDS(here("data", "clean/cal_groupAbundances_16S_2021.rds")),
+					 readRDS(here("data", "clean/cal_groupAbundances_ITS_2021.rds")))
+	val <- c(readRDS(here("data", "clean/val_groupAbundances_16S_2021.rds")),
+					 readRDS(here("data", "clean/val_groupAbundances_ITS_2021.rds")))
+
+	cal.rank.df <- cal[[rank.name]]
+	val.rank.df <- val[[rank.name]]
+	rank.df <- rbind(cal.rank.df, val.rank.df)
+
+	# Prep model inputs/outputs.
+	print(paste0("Preparing model data for ", rank.name))
+
+	# spec_names <- colnames(rank.df)[!colnames(rank.df) %in% c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date","other")]
+	# rank.df_spec <- rank.df %>%
+	# 	select("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date", !!spec_names)
+	# rank.df_spec$other <- 1-rank.df_spec[[s]]
+
+	model.dat <- prepTaxonomicData(rank.df = rank.df,
+																 min.prev = 3,
+																 min.date = min.date,
+																 max.date = max.date)
+	return(model.dat)
 	}
-	
-	# Plot-level process model ----
-	for(s in 1:N.spp){
-		for(p in 1:N.plot){
-			for (t in plot_start[p]) {
-				plot_mu[p,s,t] ~ dgamma(0.5, 1) # Plot means for first date
-				# Convert back to relative abundance
-				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
-			}
-			
-			for (t in plot_index[p]:N.date) {
-				# Previous value * rho
-				log(Ex[p,s,t]) <- rho[s] * log(plot_mu[p,s,t-1]) + 
-					beta[s,1]*sin_mo[t] + beta[s,2]*cos_mo[t] +
-					site_effect[plot_site_num[p],s] +
-					intercept[s]
-				# Add process error (sigma)
-				plot_mu[p,s,t] ~ T(dnorm(mean = Ex[p,s,t], sigma[s]), 0, Inf)
-				#plot_mu[p,s,t] ~ dnorm(Ex[p,s,t], sigma[s])
-				# Convert back to relative abundance
-				plot_rel[p,s,t] <- plot_mu[p,s,t] / sum(plot_mu[p,1:N.spp,t])
-			}
-		}
-	}
-	
-	# Priors for site effect covariance matrix ----
-	sig ~ dgamma(3,1)
-	
-	# Priors for site random effects:
-	for(s in 1:N.spp){
-		for(k in 1:N.site){
-			site_effect[k,s] ~ dnorm(0, sig)
-		}
-	}
-	
-	
-	# Priors for everything else ----
-	for (s in 1:N.spp){
-		sigma[s] ~ dgamma(.1, .1)
-		beta[s,1:2] ~ dmnorm(zeros[1:2], omega[1:2, 1:2])
-	}
-	rho[1:N.spp] ~ dmnorm(zeros[1:N.spp], omega[1:N.spp, 1:N.spp])
-	intercept[1:N.spp] ~ dmnorm(zeros[1:N.spp], omega[1:N.spp, 1:N.spp])
-	
-}) #end NIMBLE model.
 
 
-
+	calc_cv <- function(x) sd(x, na.rm = T) / mean(x, na.rm = T) * 100
 

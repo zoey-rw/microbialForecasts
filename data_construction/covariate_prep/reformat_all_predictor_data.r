@@ -24,7 +24,7 @@ mois_site <- moisture %>% dplyr::select(siteID, month, moisture) %>%
 							values_fill = NA) %>% 
 	arrange(siteID) %>% 
 	 column_to_rownames(var = "siteID")
-# mois_site <- mois_site %>% data.matrix() 
+mois_site <- mois_site %>% data.matrix()
 
 # reformat moisture uncertainty to be site x date
 mois_site_sd <- moisture %>% dplyr::select(siteID, month, moisture_sd) %>% 
@@ -34,7 +34,7 @@ mois_site_sd <- moisture %>% dplyr::select(siteID, month, moisture_sd) %>%
 							values_fill = NA) %>% 
 	arrange(siteID) %>% 
 	column_to_rownames(var = "siteID")
-#mois_site_sd <- mois_site_sd %>% data.matrix() 
+mois_site_sd <- mois_site_sd %>% data.matrix()
 
 # reformat temperature to be site x date
 temp_site <- temp %>% dplyr::select(siteID, month, temperature) %>% 
@@ -44,7 +44,7 @@ temp_site <- temp %>% dplyr::select(siteID, month, temperature) %>%
 							values_fill = NA) %>% 
 	arrange(siteID) %>% 
 	column_to_rownames(var = "siteID")
-# temp_site <- temp_site %>% data.matrix() 
+temp_site <- temp_site %>% data.matrix()
 
 # reformat temperature uncertainty to be site x date
 temp_site_sd <- temp %>% dplyr::select(siteID, month, temperature_sd) %>% 
@@ -54,7 +54,7 @@ temp_site_sd <- temp %>% dplyr::select(siteID, month, temperature_sd) %>%
 							values_fill = NA) %>% 
 	arrange(siteID) %>% 
 	column_to_rownames(var = "siteID")
-# temp_site_sd <- temp_site_sd %>% data.matrix() 
+temp_site_sd <- temp_site_sd %>% data.matrix()
 
 
 
@@ -74,7 +74,7 @@ LAI_site <- LAI %>% dplyr::select(siteID, dateID, LAI) %>%
 	arrange(siteID) %>% 
 	
 	column_to_rownames(var = "siteID")
-# temp_site <- temp_site %>% data.matrix() 
+temp_site <- temp_site %>% data.matrix()
 
 # reformat pH to be plot x date (even though dates aren't real) - use dates from temperature
 pH_plot <- chem  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>% #filter(plotID %in% dat$plotID) %>% 
@@ -86,7 +86,7 @@ pH_plot <- chem  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>% #f
 	arrange(plotID)  %>% 
 	column_to_rownames(var = "plotID") 
 pH_plot[pH_plot=="NULL"] <- NA
-# pH_plot <- pH_plot %>% data.matrix() 
+pH_plot <- pH_plot %>% data.matrix()
 
 # reformat pH uncertainty to be plot x date (even though dates aren't real) - use dates from temperature
 pH_plot_sd <- chem  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>% #filter(plotID %in% dat$plotID) %>% 
@@ -99,7 +99,7 @@ pH_plot_sd <- chem  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>%
 	arrange(plotID)  %>% 
 	column_to_rownames(var = "plotID") 
 pH_plot_sd[pH_plot_sd=="NULL"] <- NA
-# pH_plot_sd <- pH_plot_sd %>% data.matrix() 
+pH_plot_sd <- pH_plot_sd %>% data.matrix()
 
 
 # reformat pC to be plot x date (even though dates aren't real) - use dates from temperature
@@ -112,7 +112,7 @@ pC_plot <- chem  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>% #f
 	arrange(plotID)  %>% 
 	column_to_rownames(var = "plotID") 
 pC_plot[pC_plot=="NULL"] <- NA
-# pC_plot <- pC_plot %>% data.matrix() 
+pC_plot <- pC_plot %>% data.matrix()
 
 # reformat pC uncertainty to be plot x date (even though dates aren't real) - use dates from temperature
 pC_plot_sd <- chem  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>% #filter(plotID %in% dat$plotID) %>% 
@@ -125,7 +125,7 @@ pC_plot_sd <- chem  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>%
 	arrange(plotID)  %>% 
 	column_to_rownames(var = "plotID") 
 pC_plot_sd[pC_plot_sd=="NULL"] <- NA
-# pC_plot_sd <- pC_plot_sd %>% data.matrix() 
+pC_plot_sd <- pC_plot_sd %>% data.matrix()
 
 # reformat plant data to be plot x date (even though dates are only years)
 nspp_plot <- plant %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>% 
@@ -139,7 +139,7 @@ nspp_plot <- plant %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>%
 	pivot_wider(names_from = dateID, values_from = nspp_total, values_fn = mean) %>% arrange(plotID)  %>% 
 	column_to_rownames(var = "plotID") 
 nspp_plot[nspp_plot=="NULL"] <- NA
-# nspp_plot <- nspp_plot %>% data.matrix()
+nspp_plot <- nspp_plot %>% data.matrix()
 
 rc_grass_plot <- plant %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>% 
 	mutate(rc_Poaceae = scale(rc_Poaceae, scale=T)) %>% 
@@ -151,7 +151,7 @@ rc_grass_plot <- plant %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) 
 	pivot_wider(names_from = dateID, values_from = rc_Poaceae, values_fn = mean) %>% arrange(plotID)  %>% 
 	column_to_rownames(var = "plotID") 
 rc_grass_plot[rc_grass_plot=="NULL"] <- NA
-# rc_grass_plot <- rc_grass_plot  %>% data.matrix() 
+rc_grass_plot <- rc_grass_plot  %>% data.matrix()
 
 
 rc_exotic_plot <- plant %>%# merge(unique(chem_in[,c("siteID", "plotID")]), all.y=T) %>% 
@@ -164,7 +164,7 @@ rc_exotic_plot <- plant %>%# merge(unique(chem_in[,c("siteID", "plotID")]), all.
 	pivot_wider(names_from = dateID, values_from = rel_cover_exotic, values_fn = mean) %>% arrange(plotID)  %>% 
 	column_to_rownames(var = "plotID") 
 rc_exotic_plot[rc_exotic_plot=="NULL"] <- NA
-# rc_exotic_plot <- rc_exotic_plot  %>% data.matrix() 
+rc_exotic_plot <- rc_exotic_plot  %>% data.matrix()
 
 # reformat relEM to be plot x date (even though dates aren't real) - use dates from temperature
 relEM_plot <- relEM  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>% #filter(plotID %in% dat$plotID) %>% 
@@ -177,6 +177,8 @@ relEM_plot <- relEM  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>
 	arrange(plotID)  %>% 
 	column_to_rownames(var = "plotID") 
 relEM_plot[relEM_plot=="NULL"] <- NA
+relEM_plot <- relEM_plot  %>% data.matrix() 
+
 
 
 all_predictors <- list("mois" = mois_site,
