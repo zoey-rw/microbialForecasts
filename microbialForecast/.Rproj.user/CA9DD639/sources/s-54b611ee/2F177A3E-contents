@@ -1,0 +1,101 @@
+pacman::p_load(tidyverse, minval, sybil)
+library(stringr)
+source("/projectnb2/talbot-lab-data/zrwerbin/interactions/source.R")
+
+all_models_orig <- read.csv("/projectnb2/talbot-lab-data/zrwerbin/interactions/models/n_cycle_models.csv")
+
+all_models <- all_models_orig %>% filter(!grepl("ENV.", Reaction.description))
+
+repaired_models <- all_models %>% mutate(Equation = gsub("<==>", "<=>", Equation),
+																				 Equation = gsub("-->", "=>", Equation),
+																				 Equation = gsub("<--", "<=", Equation)
+)
+
+repaired_models <- repaired_models %>% 
+	separate(Reaction.description, into = c("Organism","Description"), sep="\\. ") %>% 
+	filter(!is.na(Description)) %>% filter(Equation != "") 
+repaired_models$Equation <- str_replace_all(repaired_models$Equation, "\\[[abcdifgh]\\]", "\\[e\\]")
+repaired_models$Equation <- str_replace_all(repaired_models$Equation, "\\[[jklmnopq]\\]", "\\[p\\]")
+repaired_models$Equation <- str_replace_all(repaired_models$Equation, "\\[[rstuvwxy]\\]", "\\[c\\]")
+repaired_models$Equation <- str_replace_all(repaired_models$Equation, "[[:space:]]\\.5|^\\.5", "0\\.5")
+
+model_list <- repaired_models %>% group_by(Organism) %>% group_split()
+names(model_list) <- c("EX","NDE","NET","NEU","NHA","NMU","NOC","NSP","NWI")
+
+#idk why rep wasn't working here
+model_list$EX <- as.data.frame(model_list$EX)
+env_list <- list(model_list$EX, model_list$EX, model_list$EX, model_list$EX, 
+							model_list$EX, model_list$EX, model_list$EX, model_list$EX)
+names(env_list) <- c("NDE","NET","NEU","NHA","NMU","NOC","NSP","NWI")
+# env_list$NDE <- env_list$NDE %>% filter(!Description %in% c("N2","NH2OH"))
+# env_list$NET <- env_list$NET %>% filter(!Description %in% c("N2"))
+# env_list$NHA <- env_list$NHA %>% filter(!Description %in% c("N2","NH2OH"))
+# env_list$NOC <- env_list$NOC %>% filter(!Description %in% c("N2"))
+# env_list$NSP <- env_list$NSP %>% filter(!Description %in% c("N2","NH2OH"))
+# env_list$NWI <- env_list$NWI %>% filter(!Description %in% c("N2","NH2OH"))
+# #env_list$NEU <- env_list$NEU %>% filter(!Description %in% c())
+# #env_list$NMU <- env_list$NMU %>% filter(!Description %in% c())
+# 
+# model_list$NDE <- rbind(env_list$NDE, model_list$NDE)
+# model_list$NET <- rbind(env_list$NET, model_list$NET)
+# model_list$NHA <- rbind(env_list$NHA, model_list$NHA)
+# model_list$NOC <- rbind(env_list$NOC, model_list$NOC)
+# model_list$NSP <- rbind(env_list$NSP, model_list$NSP)
+# model_list$NWI <- rbind(env_list$NWI, model_list$NWI)
+# model_list$NEU <- rbind(env_list$NEU, model_list$NEU)
+# model_list$NMU <- rbind(env_list$NMU, model_list$NMU)
+
+
+
+for (i in 2:9){
+	to_write <- model_list[[i]]
+	colnames(to_write) <- c("ID","SPECIES","DESCR","REACTION","GPR","REF")
+	spec <- unique(to_write$SPECIES)[[1]]
+	print(spec)
+	to_write <- to_write %>% mutate(LOWER.BOUND = NA,
+																	UPPER.BOUND = 1000,
+																	OBJECTIVE = NA) %>% as.data.frame()
+	to_write$GPR <- gsub("α|ε", "", to_write$GPR)
+	to_write$GPR <- gsub(",[[:blank:]][[:alnum:]]"," or ",to_write$GPR)
+	to_write$GPR <- gsub(",[[:blank:]]$","",to_write$GPR)
+	
+	to_write$GPR <- sapply(to_write$GPR, janitor::make_clean_names, use_make_names = F, case= "none")
+	to_write$GPR <- gsub("or", "", to_write$GPR)
+	to_write$GPR <- gsub("[[:blank:]][[:blank:]]", " ", to_write$GPR)
+	to_write$GPR <- gsub("[[:blank:]][[:alnum:]]*", "", to_write$GPR)
+	#	to_write$GPR <- ifelse(grepl("or", to_write$GPR), paste0("(", to_write$GPR, ")"), to_write$GPR)
+	#	orphan_list <- orphanMetabolites(reactionList = to_write$REACTION)
+	#print(orphan_list)
+	# compartments <- unlist(minval:::reactants(to_write$REACTION)) 
+	# k <- str_extract_all(compartments, "\\[[^()]+\\]")
+	# # Remove parenthesis
+	# k <- substring(k, 2, nchar(k)-1)
+	# print(spec)
+	# print(table(k))
+	
+	out_fp = paste0("/projectnb2/talbot-lab-data/zrwerbin/interactions/models/sbml/",spec,".xml")
+	
+	fixed <- repair_SBML_model(modelData = to_write,
+														 modelID = spec,
+														 boundary = "e")
+	writeLines(text = fixed, con = out_fp, sep = "\n")
+}
+
+
+library("BiGGR")
+
+fp <- paste0("/projectnb2/talbot-lab-data/zrwerbin/interactions/models/sbml/NET_v3.xml")
+fp <- paste0("/projectnb2/talbot-lab-data/zrwerbin/interactions/models/sbml/NET.xml")
+doc <- rsbml_read(fp)
+sbml.model <- doc@model
+
+limfile.path = tempfile()
+externals <- c("M_h2o_e", "M_co2_e", "M_o2_e", "M_h_e", "M_nh4_e","M_no2_e", 
+							 "M_no3_e", "M_n2o_e", "M_no_e", #"M_n2_e", 
+							 "M_nh2oh_e", "M_biomass_e", "M_pi_e")
+createLIMFromSBML(sbml.model, maximize = "R_Rx185", externals = externals, file.name=limfile.path)
+rates <- getRates(limfile.path)
+
+library(LIM)
+Read(limfile.path, verbose = TRUE)
+Setup(limfile.path, verbose = TRUE)

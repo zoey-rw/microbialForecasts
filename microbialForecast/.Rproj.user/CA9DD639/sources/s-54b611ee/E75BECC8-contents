@@ -1,0 +1,86 @@
+# Calculate and visualize scoring metrics for taxonomic forecasts
+p_load(Metrics, forestmangr, scoringRules, ggpubr)
+
+source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+
+refit_summaries <- readRDS(here("data/summary/fg_summaries_20151101_20200101.rds"))
+
+hindcast_data_non_tax = hindcast_data %>% filter(fcast_type != "Taxonomic")
+hindcast_data_tax = hindcast_data %>% filter(fcast_type == "Taxonomic")
+
+
+
+fungi_refit_allcov <- refit_summaries$plot_est  %>%
+	filter(taxon %in% c("animal_pathogen", "ectomycorrhizal", "endophyte", "lichenized",
+												"plant_pathogen", "saprotroph"),
+				 model_name == "all_covariates")
+
+fungi_refit_cycl <- refit_summaries$plot_est  %>%
+	filter(taxon %in% c("animal_pathogen", "ectomycorrhizal", "endophyte", "lichenized",
+											"plant_pathogen", "saprotroph"),
+				 model_name == "cycl_only")
+
+
+
+fungi_all_timeperiods = rbindlist(list(fungi_refit, fungi_allcov), fill=T)
+fungi_all_models = rbindlist(list(fungi_refit_allcov, fungi_refit_cycl), fill=T)
+
+
+ggplot(fungi_all_models %>% filter(siteID=="HARV"), aes(group=plotID)) +
+	facet_grid(rows=vars(species), cols=vars(model_name), drop=T, scales="free") +
+	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
+	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`, fill=plotID), alpha=0.2) +
+	theme_bw()+
+	scale_fill_brewer(palette = "Paired") +
+	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
+				legend.position = "bottom",legend.title = element_text(NULL),
+				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
+	geom_point(aes(x = dates, y = as.numeric(truth), fill=plotID)) + xlab(NULL) + labs(fill='')
+
+
+ggplot(fungi_all_timeperiods %>% filter(plotID=="HARV_013")) +
+	facet_grid(rows=vars(species),
+						 cols = vars(time_period), drop=T, scales="free") +
+	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
+	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`),fill="red", alpha=0.6) +
+	theme_bw()+
+	scale_fill_brewer(palette = "Paired") +
+	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
+				legend.position = "bottom",legend.title = element_text(NULL),
+				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
+	geom_point(aes(x = dates, y = as.numeric(truth))) + xlab(NULL) + labs(fill='')
+
+
+
+
+fungi_refit_cycl <- refit_summaries$plot_est  %>%
+	filter(taxon %in% c("animal_pathogen", "ectomycorrhizal", "endophyte", "lichenized",
+											"plant_pathogen", "saprotroph"),
+				 model_name == "cycl_only")
+
+fungi_all_timeperiods_cycl = rbindlist(list(fungi_refit_cycl, fungi_cycl), fill=T)
+
+ggplot(fungi_all_timeperiods_cycl %>% filter(plotID=="HARV_001"), aes(group=time_period)) +
+	facet_grid(rows=vars(species), drop=T, scales="free") +
+	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
+	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`, fill=time_period), alpha=0.6) +
+	theme_bw()+
+	scale_fill_brewer(palette = "Paired") +
+	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
+				legend.position = "bottom",legend.title = element_text(NULL),
+				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
+	geom_point(aes(x = dates, y = as.numeric(truth))) + xlab(NULL) + labs(fill='')
+
+
+
+
+ggplot(fungi_refit %>% filter(siteID=="HARV"), aes(group=plotID)) +
+	facet_grid(rows=vars(species), drop=T, scales="free") +
+	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
+	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`, fill=plotID), alpha=0.2) +
+	theme_bw()+
+	scale_fill_brewer(palette = "Paired") +
+	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
+				legend.position = "bottom",legend.title = element_text(NULL),
+				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
+	geom_jitter(aes(x = dates, y = as.numeric(truth))) + xlab(NULL) + labs(fill='')

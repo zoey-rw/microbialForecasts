@@ -1,0 +1,165 @@
+# devtools::install_github("NEONScience/NEON-Nitrogen-Transformations/neonNTrans", dependencies=TRUE) 
+library(neonUtilities)  
+library(neonNTrans) 
+library(ggplot2) 
+soilData <- loadByProduct(site = c("HARV"), dpID = "DP1.10086.001", package = "basic", check.size = F)
+out <- def.calc.ntrans(kclInt = soilData$ntr_internalLab, 
+											 kclIntBlank = soilData$ntr_internalLabBlanks, 
+											 kclExt = soilData$ntr_externalLab, 
+											 soilMoist = soilData$sls_soilMoisture, 
+											 dropAmmoniumFlags = "blanks exceed sample value", 
+											 dropNitrateFlags = "blanks exceed sample value" )
+saveRDS(out, "/projectnb2/talbot-lab-data/zrwerbin/interactions/data/N_flux_measurements.rds")
+saveRDS(soilData, "/projectnb2/talbot-lab-data/zrwerbin/interactions/data/NEON_soilData.rds")
+
+soilData <- loadByProduct(site = "all", dpID = "DP1.10086.001", package = "basic", check.size = F, token="eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJodHRwczovL2RhdGEubmVvbnNjaWVuY2Uub3JnL2FwaS92MC8iLCJzdWIiOiJ6cndlcmJpbkBidS5lZHUiLCJzY29wZSI6InJhdGU6cHVibGljIiwiaXNzIjoiaHR0cHM6Ly9kYXRhLm5lb25zY2llbmNlLm9yZy8iLCJleHAiOjE3NTc4ODg2NzAsImlhdCI6MTYwMDIwODY3MCwiZW1haWwiOiJ6cndlcmJpbkBidS5lZHUifQ.8eW8vxUOiton-kQ_Xyvva0QSHD_BDd2E5IGeNKW3WHib-m7UpTnEhGFAUlAHGdsUyz-dKE1jMOAGS5A_NRYXGg")
+summary <- out$data_summary
+summary$plotID <- substr(summary$sampleID, 1, 8)
+summary$horizon <- substr(summary$sampleID, 10, 10)
+
+
+initial <- out$all_data %>% filter(nTransBoutType == "tInitial")
+final <- out$all_data %>% filter(nTransBoutType == "tFinal") %>% select()
+
+
+
+# Visualize each of the 5 output variables
+ggplot(summary) + geom_point(aes(x = collectDate, y = soilAmmoniumNugPerGram, color = horizon)) + facet_wrap(~plotID)
+ggplot(summary) + geom_point(aes(x = collectDate, y = soilNitrateNitriteNugPerGram, color = horizon)) + facet_wrap(~plotID)
+
+ggplot(summary) + geom_point(aes(x = collectDate, y = soilInorganicNugPerGram, color = horizon)) + facet_wrap(~plotID)
+
+ggplot(summary) + geom_point(aes(x = collectDate, y = netNminugPerGramPerDay, color = horizon)) + facet_wrap(~plotID)
+ggplot(summary) + geom_point(aes(x = collectDate, y = netNitugPerGramPerDay, color = horizon)) + facet_wrap(~plotID)
+
+
+library(ggalluvial)
+library(tidyverse)
+# Visualize as pools and fluxes per site
+summary$flux <- ifelse(summary$)
+summary + facet_grid(plotID) +
+	geom_point()
+
+plot1 <- summary[summary$plotID=="HARV_001",]
+plot1 <- plot1 %>% select(plotID, incubationPairID, NH4 = soilAmmoniumNugPerGram, 
+													NO2 = soilNitrateNitriteNugPerGram, 
+													inorganicN = soilInorganicNugPerGram, 
+													mineralization = netNminugPerGramPerDay, 
+													nitrification = netNitugPerGramPerDay)
+plot1[,3:7] <- plot1[,3:7]*1000 
+# plot1_long <- plot1 %>% pivot_longer(cols = c(soilAmmoniumNugPerGram, soilNitrateNitriteNugPerGram, soilInorganicNugPerGram, ))
+
+
+# plot1_pos_min <- plot1[plot1$mineralization > 0,]
+
+# Simplify and add dummy values for now
+# plot1_pos_min <- plot1 %>% dplyr::filter(mineralization > 0) %>% 
+# 	mutate(organicN =   10,
+# 				 input = inorganicN + organicN)
+
+plot1_pos_nit <- plot1 %>% dplyr::filter(nitrification > 0) %>% 
+	mutate(not_NO2 = NH4 - NO2) %>% 
+	select(incubationPairID, NH4, NO2, nitrification)
+
+
+
+all_plots <- summary %>% select(plotID, incubationPairID, NH4 = soilAmmoniumNugPerGram, 
+													NO2 = soilNitrateNitriteNugPerGram, 
+													inorganicN = soilInorganicNugPerGram, 
+													mineralization = netNminugPerGramPerDay, 
+													nitrification = netNitugPerGramPerDay)
+all_plots_pos_nit <- all_plots %>% #dplyr::filter(nitrification > 0) %>% 
+	mutate(not_NO2 = NH4 - NO2) %>% select(plotID, incubationPairID, NH4, NO2, nitrification)
+all_plots_long <- all_plots_pos_nit %>%  pivot_longer(cols = c(NH4, NO2))
+plot1_again$value <- plot1_again$value * 1000
+
+
+ggplot(all_plots_long) + facet_wrap(#rows = vars(plotID), 
+																		#cols = vars(incubationPairID), 
+		~incubationPairID,
+																		drop=T, scales = "free") + 
+	geom_point(aes(x = name, y = value, color = nitrification), size=3) 
+
+ggplot(all_plots_long[all_plots_long$plotID=="HARV_001" & !is.na(all_plots_long$nitrification) ,]) + facet_wrap(#rows = vars(plotID), 
+	#cols = vars(incubationPairID), 
+	~incubationPairID,
+	drop=T, scales = "free") + 
+	geom_point(aes(x = name, y = value, color = nitrification), size=5)  +	
+	theme_minimal() +
+	scale_color_viridis(na.value = "grey") + #scale_y_log10() + 
+	ylim(c(0,10))
+
+
+library(viridis)
+ggplot(all_plots_long[all_plots_long$plotID=="HARV_001" & !is.na(all_plots_long$nitrification),]) + facet_grid(rows = vars(incubationPairID), 
+	cols = vars(name), 
+	drop=T, scales = "free"#, space = "free"
+	) + 
+	geom_point(aes(x = name, y = value, color = nitrification), size=3) + 
+	theme_minimal() +
+	scale_color_viridis(na.value = "grey")
+
+ggplot(all_plots_long) + geom_point(aes(x = value, y = nitrification)) + facet_wrap(~name, scales="free")
+
+
+
+N_type = colnames(plot1_pos_nit)[2:4]
+plot1_pos_nit[N_type] = plot1_pos_nit[N_type] == 1
+t(head(plot1_pos_nit[N_type], 3))
+
+
+is_alluvia_form
+
+plot1_pos_nit$nitrification <- NULL
+
+
+# N_type = colnames(all_plots_pos_nit)[3:5]
+# all_plots_pos_nit[N_type] = all_plots_pos_nit[N_type] == 1
+plot1_again <- all_plots_pos_nit[all_plots_pos_nit$plotID=="HARV_001",]
+plot1_again <- plot1_again %>% uncount(value)
+plot1_alluvial <- to_alluvia_form(plot1_again,
+															key = "incubationPairID",
+															value = c("NH4", "NO2"))
+
+
+plot1_alluvial <- to_alluvia_form(plot1_again,
+																	key = "incubationPairID",
+																	value = c("NH4", "NO2"))
+is_lodes_form(plot1_again,
+              key = name, value = value, id = incubationPairID,
+              weight = Freq)
+
+ggplot(data = plot1_alluvial,
+			 aes(x = name, stratum = incubationPairID, alluvium = incubationPairID,
+			 	#	y = Freq, 
+			 		label = incubationPairID)) +
+	geom_alluvium(aes(fill = incubationPairID)) +
+	geom_stratum() + geom_text(stat = "stratum") +
+	theme_minimal() 
+
+ggplot(plot1_pos_nit) + geom_bar(aes(y = NH4)) + geom_bar(aes(y = NO2)) 
+
+## Check if each subset mentions each symptom or not
+symptom_mat <- map_dfc(subsets, str_detect, symptoms) %>%
+	data.frame() %>%
+	t() %>% # transpose the result, ugh
+	as_tibble()
+
+
+to_alluvia_form()
+
+is_alluvia_form(plot1,
+								weight = "Freq")
+head(as.data.frame(UCBAdmissions), n = 12)
+
+ggplot(plot1,
+			 aes(axis1 = NH4,
+			 		axis2 = NO2)) +
+	geom_alluvium(aes(fill = NO2)) +
+	geom_stratum() +
+	scale_fill_viridis_d() +
+	labs(title = "Titanic data",
+			 subtitle = "stratified by class, sex, and survival",
+			 y = "Frequency") +
+	theme_minimal() +
+	theme(legend.position = "none") 
