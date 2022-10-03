@@ -2,154 +2,151 @@
 # Create forecasts for functional groups, using structure from SOBOL code
 #source("./source.R")
 source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
-source("./functions/prepFunctionalData.r")
-source("./functions/forecastFunctional.r")
 
 pacman::p_load(readxl, rjags, Rfast, moments, scales, data.table, doParallel)
 
 # Set some global parameters
-Nmc_AB <- 5000 # Number of samples for subset
-Nmc <- 5000 
-N.beta = 8 
-k = 10
-
-k = 1
+# Nmc_AB <- 5000 # Number of samples for subset
+# Nmc <- 5000
+# N.beta = 8
+# k = 1
 
 # Read in microbial abundances
-cal <- c(readRDS("./data/clean/cal_groupAbundances_16S_2021.rds"), 
+cal <- c(readRDS("./data/clean/cal_groupAbundances_16S_2021.rds"),
 				 readRDS("./data/clean/cal_groupAbundances_ITS_2021.rds"))
-val <- c(readRDS("./data/clean/val_groupAbundances_16S_2021.rds"), 
+val <- c(readRDS("./data/clean/val_groupAbundances_16S_2021.rds"),
 				 readRDS("./data/clean/val_groupAbundances_ITS_2021.rds"))
 
-summaries <- readRDS("./data/summary/fg_summaries.rds")
+#summaries <- readRDS("./data/summary/fg_summaries.rds")
+summaries <- readRDS(here("data", paste0("summary/beta_fg_summaries_20151101_20180101.rds")))
 
-# for testing
-model_name = "cycl_only"
-#model_name = "all_covariates"
-scenario = "full_uncertainty"
+
+# # for testing
+# model_name = "cycl_only"
+# model_name = "all_covariates"
+# scenario = "full_uncertainty"
+# rank.name = microbialForecast:::keep_fg_names[37]
+# rank.name = microbialForecast:::keep_fg_names[12]
 
 #Run for multiple groups at once, in parallel (via PSOCK)
 cl <- makeCluster(28, type="FORK", outfile="")
 registerDoParallel(cl)
 
+
+testing = F
 # Loop through each group
-rank_output_list <- list()
-output.list = foreach(k=1:length(keep_fg_names), .errorhandling = 'pass') %dopar% {
-	rank.name <- keep_fg_names[k]
+fcast_ranks = microbialForecast:::keep_fg_names
+
+if (testing) fcast_ranks = fcast_ranks[7:8]
+
+output.list = foreach(i=1:length(fcast_ranks),
+											.errorhandling = 'pass',
+											.verbose = T) %dopar% {
+
+												pacman::p_load(microbialForecast)
+
+
+	testing = T
+	time_period = "2015-11_2018-01"
+	min.date = "20151101"
+	max.date = "20180101"
+	rank.name = fcast_ranks[[i]]
+
 	message("Beginning forecast loop for: ", rank.name)
-	
-	cal.rank.df <- cal[[rank.name]] 
-	val.rank.df <- val[[rank.name]] 
-	rank.df <- rbind(cal.rank.df, val.rank.df)	
-	rank.df <- rank.df[!rank.df$siteID %in% c("ABBY","LAJA"),]
-	
+	cal.rank.df <- cal[[rank.name]]
+	val.rank.df <- val[[rank.name]]
+	rank.df <- rbind(cal.rank.df, val.rank.df)
+
 	# Prep validation data
-	model.inputs <- prepFunctionalData(rank.df = rank.df, min.prev = 3, max.date = "20200101",	full_timeseries = T)
-	
+	model.inputs <- prepFunctionalData(rank.df = rank.df, min.prev = 3,
+																		 min.date = "20151101", max.date = "20200101",
+																		 full_timeseries = T)
+
 	model_output_list <- list()
-	for (model_name in c("all_covariates", "cycl_only")){
-		message("Forecasting with model: ", model_name)
-		
+	#for (model_name in c("all_covariates", "cycl_only")){
+		for (model_name in c("all_covariates")){
+			message("Forecasting with model: ", model_name)
+
 		# Filter model estimates for each plot abundance
-		plot_summary <- summaries$full_uncertainty$plot_est %>% filter(taxon == rank.name &
-																																	 	model_name == !!model_name &
-																																	 	scenario == !!scenario & 
-																																	 	time_period == "calibration")
-		
+		plot_summary <- summaries$plot_est %>%
+			filter(time_period == !!time_period &
+						 	model_name == !!model_name &
+						 	species == !!rank.name)
+
+
 		# Get model outputs
-		f <- file.path("./data/model_outputs/functional_groups/", model_name,  paste0("/calibration_samples_", rank.name, "_full_uncertainty.rds"))
+		f <- paste0("./data/model_outputs/functional_groups/", model_name, "/beta_samples_", rank.name,"_", min.date, "_", max.date, ".rds")
+
+		if (!file.exists(f)) next
+
 		read_in <- readRDS(f)
-		param_samples_orig <- read_in$samples
-		model.dat <- read_in$metadata$model_data
-		truth.plot.long <- model.dat
-		plot_site_key <- model.dat %>% select(siteID, plotID, dateID, date_num, plot_num, site_num) %>% distinct()
+		param_samples <- as.data.frame(as.matrix(read_in$samples))
+		truth.plot.long <- model.dat <- read_in$metadata$model_data
+		plot_site_key <- model.dat %>%
+			select(siteID, plotID, dateID, date_num, plot_num, site_num) %>%
+			distinct()
 		site_list <- unique(plot_site_key$siteID)
-		
+
 		# Use new model inputs for full date, site, and plot keys
-		date_key <- model.inputs$truth.plot.long %>% select(dateID, date_num) %>% distinct()
-		new_plot_site_key <- model.inputs$truth.plot.long %>% select(siteID, plotID, dateID, date_num, plot_num, site_num) %>% 
-			distinct() %>% filter(!siteID %in% plot_site_key$siteID)
+		new_plot_site_key <- model.inputs$truth.plot.long %>%
+			select(siteID, plotID, dateID, date_num, plot_num, site_num) %>%
+			distinct() %>%
+			filter(!siteID %in% plot_site_key$siteID)
 		new_site_list <- unique(new_plot_site_key$siteID)
-		
-		# Prep MCMC sampling IDs
-		param_samples <- as.data.frame(as.matrix(param_samples_orig))
-		Nmc_large <- max(nrow(param_samples)) #20000 # Larger sample number for covariate/IC set of values
-		row_samples <- sample.int(max(nrow(param_samples)),Nmc_AB)
-		ic = Rfast::Rnorm(Nmc_AB,0,1) # Initial condition uncertainty
-		
+
+		# Forecast at both observed and unobserved sites
 		full_site_list <- c(site_list, new_site_list)
 		site_output_list <- list()
-		
-		siteID <- site_list[[1]] #testing
-		siteID <- new_site_list[[1]] #testing
+
+		if (testing) full_site_list = full_site_list[1:2]
 		for (siteID in full_site_list){
 			message("SiteID: ", siteID)
-			
-			# Change based on each site
-			start_date <- model.inputs$site_start[siteID]
-			NT = model.inputs$N.date
-			
-			if (siteID %in% new_plot_site_key$siteID) {
-				plot_key <- new_plot_site_key %>% filter(siteID == !!siteID)
-				plot_list <- unique(plot_key$plotID)
-			} else {
-				plot_key <- plot_site_key %>% filter(siteID == !!siteID)
-				plot_list <- unique(plot_key$plotID)
-			}
+			newsite <- siteID %in% new_plot_site_key$siteID
+			plot_key <- if (newsite) new_plot_site_key else plot_site_key
+			plot_key <- plot_key %>% filter(siteID == !!siteID)
+			plot_list <- unique(plot_key$plotID)
+
 			plot_output_list <- list()
-			plotID <- plot_list[[1]] #testing
+
+			if (testing) plot_list = plot_list[1:2]
+
 			for (plotID in plot_list){
 				message("PlotID: ", plotID)
-				#Sample covariate data
-				covar_full <- array(NA, dim = c(Nmc_large, N.beta, NT))
-				set.seed(1)
-				for (time in start_date:NT) {
-					covar_full[,,time] <- c(Rfast::Rnorm(Nmc_large, model.inputs$temp[siteID, time],
-																							 model.inputs$temp_sd[siteID, time]),
-																	Rfast::Rnorm(Nmc_large, model.inputs$mois[siteID, time],
-																							 model.inputs$mois_sd[siteID, time]),
-																	Rfast::Rnorm(Nmc_large, model.inputs$pH[plotID,],
-																							 model.inputs$pH_sd[plotID,]),
-																	Rfast::Rnorm(Nmc_large, model.inputs$pC[plotID,],
-																							 model.inputs$pC_sd[plotID,]),
-																	rep(model.inputs$relEM[plotID, time], Nmc_large),
-																	rep(model.inputs$LAI[siteID, time], Nmc_large),
-																	rep(model.inputs$y_sin[time], Nmc_large),
-																	rep(model.inputs$y_cos[time], Nmc_large))
-				}
-				
-				covar <- covar_full[row_samples,,]
 				#go for it!!!
-				hindcast.plot <- fg_fcast(plotID, covar, param_samples,model.inputs,
-																	ic, truth.plot.long, Nmc = 5000,  
-																	plot_summary, plot_start_date, date_key)
-				
-				hindcast.plot$dateID <- date_key[match(hindcast.plot$date_num, date_key$date_num),]$dateID
-				hindcast.plot <- hindcast.plot %>% mutate(dates = fixDate(dateID),
-																									model_name = !!model_name,
-																									time_period = "calibration")
+				hindcast.plot <- microbialForecast::fg_fcast_beta(plotID,
+				model.inputs,
+				param_samples,
+				truth.plot.long,
+				plot_summary,
+				Nmc = 1000)  %>% mutate(model_name = !!model_name,
+																time_period = !!time_period,
+																# species = !!rank.name,
+																# taxon = !!rank.name,
+																fcast_type = "Functional group")
+
 				plot_output_list[[plotID]] <- hindcast.plot
 			}
-			site_output_list[[siteID]] <- rbindlist(plot_output_list)	
+			site_output_list[[siteID]] <- rbindlist(plot_output_list)
 		}
-		model_output_list[[model_name]] <- rbindlist(site_output_list, fill = T)	
+		model_output_list[[model_name]] <- rbindlist(site_output_list, fill = T)
 	}
-	rank_output <- rbindlist(model_output_list)	
+	rank_output <- rbindlist(model_output_list)
 	#rank_output_list[[rank.name]] = rank_output
 	return(rank_output)
-}				
+											}
+output.list
 
-out <- rbindlist(output.list)	
-out$fcast_period <- ifelse(out$dates < "2017-01-01", "calibration", "hindcast")
-out$category <- assign_fg_categories(out$taxon)
-out$group <- assign_fg_kingdoms(out$category)
-saveRDS(out, "./data/summary/hindcast_fg.rds")
+out <- rbindlist(output.list)	%>%
+	mutate(fcast_period = ifelse(dates < "2018-01-01", "calibration", "hindcast"),
+	category = assign_fg_categories(taxon),
+	group = assign_fg_kingdoms(category))
+saveRDS(out, paste0("./data/summary/hindcast_fg_", time_period, ".rds"))
 
 out <- readRDS("./data/summary/hindcast_fg.rds")
 
 # View example output
-ggplot(out %>% filter(plotID=="BART_002" & taxon == "oligotroph")) + 
-	facet_grid(#rows=vars(taxon), 
+ggplot(out %>% filter(plotID=="BART_002" & taxon == "oligotroph")) +
+	facet_grid(rows=vars(plotID),
 		cols = vars(model_name), drop=T, scales="free") +
 	geom_line(aes(x = dates, y = med), show.legend = F, linetype=2) +
 	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
