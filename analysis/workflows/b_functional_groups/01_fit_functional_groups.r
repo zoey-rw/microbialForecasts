@@ -35,28 +35,38 @@ params = params %>% filter(
 	# "acidic_stress", "cellulolytic", "chitin_complex", "light_stress",
 	# "lignolytic", "oligotroph", "plant_pathogen", "saprotroph") &
 
-		#scenario == "Full dataset" & model_name == "all_covariates")
-scenario == "2 year current methods" & model_name == "all_covariates")
+		scenario == "Full dataset")
+#scenario == "2 year current methods" & model_name == "all_covariates")
+
+
+nchains = 4
+
+#params <- crossing(params, chain_no = 1:nchains)
 
 # Create function that calls run_MCMC for each uncertainty scenario
-run_scenarios <- function(j) {
+run_scenarios <- function(j, chain_no) {
 	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/MCMC_functional_groups_test.r")
 
 	print(params[j,])
 	#run_MCMC(k = params$group[[j]], iter = 1000, burnin = 500, thin = 1, test = F,
 	#run_MCMC_functional_test(k = params$group[[j]], iter = 250000, burnin = 150000, thin = 3, test = F,
-	run_MCMC_functional_test(k = params$group[[j]], iter = 750000, burnin = 500000, thin = 10, test=F,
+	run_MCMC_functional_test(k = params$group[[j]],
+													 burnin = 75000, thin = 10,
+													 test=F,
+													 iter_per_chunk = 10000,
+													 init_iter = 100000,
 									scenario = params$scenario[[j]],
 					 model_name = params$model_name[[j]],
-					 time_period = params$time_period[[j]],
+					 chain_no=chain_no,
+					 #chain_no=params$chain_no[[j]],
   min.date = params$min.date[[j]],
   max.date = params$max.date[[j]])
 	return()
 }
 
 # Run using command line inputs
-run_scenarios(k)
+#run_scenarios(k)
 
 
 # model_outputs <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/fg_summaries.rds")
@@ -67,15 +77,14 @@ run_scenarios(k)
 
 
 # Run in parallel
-# cl <- makeCluster(8, type="PSOCK", outfile="")
-# registerDoParallel(cl)
-# to_run <- grep("Full", params$scenario)
-# output.list = foreach(j=to_run,
-# 											.errorhandling = 'pass') %dopar% {
-# 												run_scenarios(j)
-# 	return()
-# 											}
-# stopCluster(cl)
+cl <- makeCluster(4, type="PSOCK", outfile="")
+registerDoParallel(cl)
+output.list = foreach(chain_no=1:3,
+											.errorhandling = 'pass') %dopar% {
+												run_scenarios(j = k, chain_no = chain_no)
+	return()
+											}
+stopCluster(cl)
 
 
 

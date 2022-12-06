@@ -5,16 +5,14 @@
 
 
 source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
-pacman::p_load(stringr, forestplot, gridExtra, ggpubr)
 
 
 sum.all <- readRDS(here("data/summary/all_fcast_effects.rds"))
-df_all_cov <- sum.all %>% filter(time_period == "2015-11_2020-01" &
-																 	model_name == "all_covariates")
+df_all_cov <- sum.all %>% filter(time_period == "2015-11_2018-01" &
+																 	model_name == "all_covariates" & !grepl("other", taxon))
 df_all_cov$beta <- order_betas(df_all_cov$beta)
-df_cycl <- sum.all %>% filter(time_period ==  "2015-11_2018-01" & fcast_type == "Taxonomic" |
-																time_period == "2015-11_2020-01") %>%
-	filter(model_name == "cycl_only")
+df_cycl <- sum.all %>% filter(time_period ==  "2015-11_2018-01") %>%
+	filter(model_name == "cycl_only" & !grepl("other", taxon))
 
 # df_refit_fg_tax <- df_refit %>% filter(fcast_type != "Diversity")
 # df_fg <- df_refit %>% filter(fcast_type == "Functional group")
