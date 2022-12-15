@@ -2,7 +2,7 @@
 #' @description run_MCMC_single_taxon_bychain
 #' @export
 #
-# # # For testing
+# # For testing
 # iter <- 500
 # burnin <- 200
 # thin <- 1
@@ -16,6 +16,11 @@
 # chain_no = 1
 # min.date = "20151101"
 # max.date = "20200101"
+# max.date = "20180101"
+# iter_per_chunk = 500
+# init_iter = 1000
+# s = "acidobacteriota"
+# model_name = "cycl_only"
 
 run_MCMC_single_taxon_bychain <- function(k = 1,
 																					iter = 1000,  burnin = 500, thin = 1,
@@ -144,15 +149,30 @@ run_MCMC_single_taxon_bychain <- function(k = 1,
   saveRDS(list(samples = out.run, samples2 = out.run2, metadata = metadata),
           out.path2)
 
-  continue <- check_continue(out.run, min_eff_size = 10)
+  continue <- check_continue(out.run, min_eff_size = 5)
+  loop_counter = 0
   while (continue){
-    cat(paste0("\nEffective sample size too low; running for another ", iter_per_chunk, " iterations\n"))
+    message("\nEffective sample size too low; running for another ", iter_per_chunk, " iterations\n")
+  	if (loop_counter < 100) {
+
     compiled$run(niter=iter_per_chunk, thin=thin, reset=F)
-    out.run<-as.mcmc(as.matrix(compiled$mvSamples))
-    out.run2<-as.mcmc(as.matrix(compiled$mvSamples2))
+
+    # Shorten if more than 10k samples have accumulated
+    out.run = window_chain(compiled$mvSamples, max_size = 20000)
+    out.run2 <- window_chain(compiled$mvSamples2, max_size = 20000)
+    out.run2 <- na.omit(out.run2)
+
+    # Remove timepoints that had no sampling at all (only zeros)
+    out.run2 <- mcmc(out.run2[, which(colSums(out.run2) != 0)])
+
     saveRDS(list(samples = out.run, samples2 = out.run2, metadata = metadata),
             out.path2)
-    continue <- check_continue(out.run, min_eff_size = 10)
+    continue <- check_continue(out.run, min_eff_size = 5)
+    loop_counter = loop_counter + 1
+  	} else {
+  		message("Exceeded 100 loops. No more sampling!")
+  		continue <- FALSE
+  	}
   }
 
   return("ok")

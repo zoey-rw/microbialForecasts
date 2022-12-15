@@ -1,5 +1,14 @@
 # Global variables to make plotting easier
 message("Loading global variables")
+#' @importFrom nimble nimbleCode
+#' @importFrom grDevices axisTicks
+#' @importFrom graphics par
+#' @importFrom utils head tail
+#' @import coda
+#' @import dplyr
+#' @import tidyverse
+
+utils::globalVariables(c("keep_fg_names", "tax_names", "all_covariates_key","rank_spec_names","date_recode"))
 
 
 #### global variables ####

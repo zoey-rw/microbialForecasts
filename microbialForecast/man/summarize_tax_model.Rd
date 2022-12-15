@@ -4,7 +4,12 @@
 \alias{summarize_tax_model}
 \title{summarize_tax_model}
 \usage{
-summarize_tax_model(file_path, save_summary = NULL, drop_other = TRUE)
+summarize_tax_model(
+  file_path,
+  save_summary = NULL,
+  drop_other = TRUE,
+  overwrite = NULL
+)
 }
 \arguments{
 \item{x}{PARAM_DESCRIPTION}
