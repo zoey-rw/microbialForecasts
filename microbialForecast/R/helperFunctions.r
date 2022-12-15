@@ -8,10 +8,21 @@ combine_chains <- function(chain_paths,
 													 save = FALSE,
 													 cut_size1 = NULL,
 													 cut_size2 = NULL){
-	pacman::p_load(coda, tidyverse)
+	require(coda)
+	require(tidyverse)
+
 
 	if (is.null(cut_size1)) cut_size1 <- 19999
 	if (is.null(cut_size2)) cut_size2 <- 9999
+
+	readInputRdsFile = function(input_rds){
+		input = tryCatch(readRDS(input_rds),
+										 error = function(c) {
+										 	message("The input *rds is invalid")
+										 	return(NA)
+										 }
+		)
+	}
 
 
 	# initialize
@@ -20,7 +31,8 @@ combine_chains <- function(chain_paths,
 
 		print(i)
 		# paste model file path to chain number
-		chain <- readRDS(chain_paths[[i]])
+		chain <- readInputRdsFile(chain_paths[[i]])
+		if (is.na(chain)) next()
 		nrow_samples <- nrow(chain[[1]])
 		nrow_samples2 <- nrow(chain[[2]])
 
@@ -39,10 +51,14 @@ combine_chains <- function(chain_paths,
 		metadata[[i]] <- chain[[3]]
 	}
 
+	samples<-samples[!sapply(samples,is.null)]
+	samples2<-samples2[!sapply(samples2,is.null)]
+	metadata<-metadata[!sapply(metadata,is.null)]
+
 
 	nrows <- lapply(samples, nrow) %>% unlist()
 	min_nrow <- min(nrows)
-	for(i in 1:length(chain_paths)){
+	for(i in 1:length(samples)){
 		current_nrow <- nrow(samples[[i]])
 		if (min_nrow < current_nrow){
 			print(i)
@@ -53,7 +69,7 @@ combine_chains <- function(chain_paths,
 
 	nrows <- lapply(samples2, nrow) %>% unlist()
 	min_nrow <- min(nrows)
-	for(i in 1:length(chain_paths)){
+	for(i in 1:length(samples)){
 		current_nrow <- nrow(samples2[[i]])
 		if (min_nrow < current_nrow){
 			print(i)
@@ -72,6 +88,93 @@ combine_chains <- function(chain_paths,
 	return(out)
 }
 
+
+
+#' @title 			combine_chains_simple
+#' @description Combine MCMC chains using paths, shortening each chain due to RAM constraints
+#' @export
+combine_chains_simple <- function(chain_paths,
+																	save = FALSE,
+																	cut_size1 = NULL,
+																	cut_size2 = NULL){
+	require(coda)
+	require(tidyverse)
+
+	if (is.null(cut_size1)) cut_size1 <- 19999
+	if (is.null(cut_size2)) cut_size2 <- 9999
+
+	readInputRdsFile = function(input_rds){
+		input = tryCatch(readRDS(input_rds),
+										 error = function(c) {
+										 	message("The input *rds is invalid")
+										 	return(NA)
+										 }
+		)
+	}
+
+
+	# initialize
+	samples <- samples2 <- metadata <- list()
+	first_iter <- last_iter <- list()
+	for(i in 1:length(chain_paths)){
+
+
+		print(i)
+		# paste model file path to chain number
+		chain <- readInputRdsFile(chain_paths[[i]])
+		if (any(is.na(chain))) next()
+		nrow_samples <- nrow(chain[[1]])
+		nrow_samples2 <- nrow(chain[[2]])
+
+		samples[[i]] <- window_chain(chain[[1]])
+		samples2[[i]] <- window_chain(chain[[2]])
+		metadata[[i]] <- chain[[3]]
+	}
+
+	samples<-samples[!sapply(samples,is.null)]
+	samples2<-samples2[!sapply(samples2,is.null)]
+	metadata<-metadata[!sapply(metadata,is.null)]
+
+	# Now make them all the same size
+	nrows <- lapply(samples, nrow) %>% unlist()
+	min_nrow <- min(nrows)
+	for(i in 1:length(samples)){
+		current_nrow <- nrow(samples[[i]])
+		if (min_nrow < current_nrow){
+			print(i)
+			samples[[i]] <- window_chain(samples[[i]], max_size = (min_nrow-1))
+
+		}
+	}
+
+	# Now make them all the same size, chain 2
+	nrows <- lapply(samples2, nrow) %>% unlist()
+	min_nrow <- min(nrows)
+	for(i in 1:length(samples2)){
+		current_nrow <- nrow(samples2[[i]])
+		if (min_nrow < current_nrow){
+			print(i)
+			samples2[[i]] <- window_chain(samples2[[i]], max_size = (min_nrow-1))
+		}
+	}
+
+	# Make the attributes match up (sort of arbitrary)
+	for (i in 1:length(samples)) {
+		#print(attr(samples[[i]], "mcpar"))
+		#print(attr(samples2[[i]], "mcpar"))
+		attr(samples[[i]], "mcpar") = attr(samples[[1]], "mcpar")
+		attr(samples2[[i]], "mcpar") = attr(samples2[[1]], "mcpar")
+	}
+
+	out <- list(samples = as.mcmc.list(samples),
+							samples2 = as.mcmc.list(samples2),
+							metadata = metadata[[1]])
+
+	if(!isFALSE(save)){
+		saveRDS(out, file = save)
+	}
+	return(out)
+}
 
 #' @title norm_sample
 #' @description norm_sample

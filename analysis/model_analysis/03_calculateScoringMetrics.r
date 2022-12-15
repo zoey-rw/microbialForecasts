@@ -18,28 +18,28 @@ calibration_only_not_first = calibration_only %>% filter(timepoint > plot_start_
 # Add scoring metrics to various subsets/groupings
 scoring_metrics <- hindcast_only %>%
 	filter(!is.na(site_prediction)) %>%
-	group_by(fcast_type, pretty_group,model_name,pretty_name,taxon,site_prediction) %>%
+	group_by(fcast_type, pretty_group,model_name,pretty_name,rank,taxon,site_prediction) %>%
 	summarize(add_scoring_metrics(observed = truth,
 														 mean_predicted = mean,
 														 sd_predicted = sd))
 
 calibration_metrics <- calibration_only_not_first %>%
-	filter(!is.na(site_prediction)) %>%
-	group_by(fcast_type, pretty_group,model_name,pretty_name,taxon) %>%
+	#filter(!is.na(site_prediction)) %>%
+	group_by(fcast_type, pretty_group,model_name,rank,pretty_name,taxon) %>%
 	summarize(add_scoring_metrics(observed = truth,
 																mean_predicted = mean,
 																sd_predicted = sd))
 
 calibration_metrics_site <- calibration_only_not_first %>%
-	filter(!is.na(site_prediction)) %>%
+	#filter(!is.na(site_prediction)) %>%
 
-	group_by(fcast_type, pretty_group,model_name,pretty_name,taxon, siteID) %>%
+	group_by(fcast_type, pretty_group,model_name,rank,pretty_name,taxon, siteID) %>%
 	summarize(add_scoring_metrics(observed = truth,
 																mean_predicted = mean,
 																sd_predicted = sd))
 scoring_metrics_site <- hindcast_only %>% #filter(newsite=="Observed site") %>%
 	filter(!is.na(site_prediction)) %>%
-	group_by(fcast_type, pretty_group,model_name,pretty_name, taxon, siteID, site_prediction) %>%
+	group_by(fcast_type, pretty_group,model_name,rank,pretty_name, taxon, siteID, site_prediction) %>%
 	summarize(add_scoring_metrics(observed = truth,
 																mean_predicted = mean,
 																sd_predicted = sd))
@@ -47,15 +47,15 @@ scoring_metrics_site <- hindcast_only %>% #filter(newsite=="Observed site") %>%
 # Pivot longer for easier plotting
 scoring_metrics_long <- scoring_metrics %>% pivot_metrics()
 # Remove infinite values (which come from having only one validation point)
-scoring_metrics_site_long <- scoring_metrics_site  %>% pivot_metrics() %>% filter(!is.infinite(value) & !is.nan(value))
+scoring_metrics_site_long <- scoring_metrics_site  %>% pivot_metrics() %>% filter(!is.infinite(score) & !is.nan(score))
 
 calibration_metrics_long <- calibration_metrics  %>% pivot_metrics()
-calibration_metrics_site_long <- calibration_metrics_site  %>% pivot_metrics()  %>% filter(!is.infinite(value) & !is.nan(value))
+calibration_metrics_site_long <- calibration_metrics_site  %>% pivot_metrics()  %>% filter(!is.infinite(score) & !is.nan(score))
 
 # check correlations between metrics
 
 library(corrplot)
-for_cor <- scoring_metrics_site_long %>% ungroup() %>% pivot_wider(names_from = metric, values_from = value) %>% select(RMSE, MAE, CRPS,CRPS_truncated, RSQ, RSQ.1, RMSE.norm)
+for_cor <- scoring_metrics_site_long %>% ungroup() %>% pivot_wider(names_from = metric, values_from = score) %>% select(RMSE, MAE, CRPS,CRPS_truncated, RSQ, RSQ.1, RMSE.norm)
 cor_scores <- cor(for_cor, use = "pairwise.complete.obs")
 corrplot::corrplot(cor_scores)
 ggplot(for_cor, aes(x = CRPS, y = RSQ.1)) +
@@ -74,27 +74,27 @@ truth_vals <- calibration_only %>%
 
 # Get variation per plot, then average per site
 cv_tax_per_plot <- truth_vals %>%
-	group_by(fcast_type, pretty_name, taxon, siteID, plotID) %>%
+	group_by(pretty_group, rank,taxon, siteID, plotID) %>%
 	dplyr::summarize(per_plot_cv = calc_cv(truth))
 cv_tax_per_plot_site <- cv_tax_per_plot %>% ungroup %>%
-	group_by(fcast_type, pretty_name, taxon, siteID) %>%
+	group_by(pretty_group, rank,taxon, siteID) %>%
 	dplyr::summarize(mean_per_plot_site_cv = mean(per_plot_cv, na.rm=T))
 # And now per taxon
 cv_tax_per_plot_taxon <- cv_tax_per_plot %>%
 	ungroup %>%
-	group_by(fcast_type, pretty_name, taxon) %>%
+	group_by(pretty_group, rank,taxon) %>%
 	summarize(mean_per_plot_cv = mean(per_plot_cv, na.rm=T))
 
 # Get variation per site, then average per taxon
 cv_tax_per_site <- truth_vals %>%
-	group_by(fcast_type, pretty_name, taxon, siteID) %>%
+	group_by(pretty_group, rank,taxon, siteID) %>%
 	summarize(per_site_cv = calc_cv(truth))
 cv_tax_per_site_taxon <- cv_tax_per_site %>% ungroup %>%
-	group_by(fcast_type, pretty_name, taxon) %>%
+	group_by(pretty_group, rank, taxon) %>%
 	summarize(mean_per_site_cv = mean(per_site_cv, na.rm=T))
 
 cv_tax_overall <- truth_vals %>%
-	group_by(fcast_type, pretty_name, taxon) %>%
+	group_by(pretty_group, pretty_name,rank, taxon) %>%
 	summarize(overall_cv = calc_cv(truth))
 
 cv_tax <- cv_tax_overall %>%
@@ -114,7 +114,7 @@ scoring_metrics_cv_long <- scoring_metrics_cv %>% pivot_longer(cols = c(overall_
 
 # CV scaled by rank
 cv_metric_scaled <- scoring_metrics_cv_long %>%
-	group_by(pretty_group, pretty_name, cv_type, metric) %>%
+	group_by(pretty_group, pretty_name, rank, cv_type, metric) %>%
 	mutate(CV_scale = scale(cv)[,1],
 				 metric_scale = scale(score)[,1])
 
@@ -122,15 +122,19 @@ cv_metric_scaled <- scoring_metrics_cv_long %>%
 # Skill score from Scavia 2021
 skill_score_taxon <- scoring_metrics_long %>%
 	filter(metric=="CRPS_truncated") %>%
-	pivot_wider(id_cols = c("fcast_type","pretty_group","model_name","pretty_name","taxon"),
+	pivot_wider(id_cols = c("fcast_type","pretty_group","model_name","pretty_name","rank","taxon"),
 							values_from = "score", names_from = "site_prediction") %>%
 	mutate(skill_score = (1 - (`New time x site (modeled effect)`/`New time (observed site)`)),
 				 skill_score_random = (1 - (`New time x site (random effect)`/`New time (observed site)`)),
 	)
 skill_score_rank <- skill_score_taxon %>%
-	group_by(pretty_group, pretty_name) %>%
+	group_by(pretty_group, pretty_name, rank) %>%
 	summarize(mean_skill_score = mean(skill_score, na.rm=T))
 
+
+
+# Use later to filter: remove taxa that did not converge
+unconverged <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/unconverged_taxa_list.rds")
 
 to_save <- list(cv_metric_scaled = cv_metric_scaled,
 								scoring_metrics_cv = scoring_metrics_cv,
@@ -149,7 +153,8 @@ to_save <- list(cv_metric_scaled = cv_metric_scaled,
 								calibration_metrics_site_long = calibration_metrics_site_long,
 
 								skill_score_taxon = skill_score_taxon,
-								skill_score_rank = skill_score_rank)
+								skill_score_rank = skill_score_rank,
+								unconverged_list = unconverged)
 saveRDS(to_save, here("data", paste0("summary/scoring_metrics_cv.rds")))
 
 
@@ -163,7 +168,7 @@ saveRDS(to_save, here("data", paste0("summary/scoring_metrics_cv.rds")))
 
 #### View predictability scores by rank
 ggplot(scoring_metrics_long %>% filter(model_name == "all_covariates" & pretty_name != "Diversity"),
-			 aes(x = pretty_name, y = value,
+			 aes(x = pretty_name, y = score,
 			 		color = pretty_name)) +
 	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
 	geom_point(size = 4, position = position_jitterdodge(jitter.width = .5), alpha=.2, show.legend = F) +
