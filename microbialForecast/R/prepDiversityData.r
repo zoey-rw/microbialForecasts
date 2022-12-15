@@ -21,6 +21,12 @@
 #
 # rank.df = div_in$full
 
+
+
+#' @title prepDivData
+#' @description prepDivData
+#' @export
+#'
 prepDivData <- function(rank.df,
 												min.date = "20130601",
 												max.date = "20170101",

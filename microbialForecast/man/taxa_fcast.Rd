@@ -10,6 +10,8 @@ taxa_fcast(
   param_samples,
   truth.plot.long,
   plot_summary,
+  drop_other = T,
+  predict_site_effects = NULL,
   Nmc = 1000,
   ...
 )

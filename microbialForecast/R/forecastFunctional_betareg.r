@@ -1,7 +1,9 @@
 # Function to forecast functional  groups at all NEON sites, using parameters estimated from model samples
 #
 ##### Use Nmc samples to make predictions, returns a dataframe with CIs and observed truth values (plot means)
-
+# Nmc = 1000
+# drop_other = F
+# predict_site_effects = unobs_sites
 #' @title fg_fcast_beta
 #' @description Forecast functional groups at NEON plots and sites, using beta regression output
 #' @export
@@ -12,7 +14,10 @@ fg_fcast_beta <- function(plotID,
 											 plot_summary,
 											 Nmc = 1000,
 											 drop_other = T,
+											 predict_site_effects = NULL,
+											 rank.name=NULL,
 											 ...) {
+
 
 
 	siteID <- substr(plotID, 1, 4)
@@ -36,9 +41,12 @@ fg_fcast_beta <- function(plotID,
 		filter(plotID==!!plotID) %>%
 		select(-c(plot_num,site_num))# %>% rename(species = name)
 
+
 	taxon_names <- model.inputs$truth.plot.long %>% select(species) %>% distinct() %>% unlist()
 
-	if (length(taxon_names) == 1) taxon_names <- c(taxon_names[[1]], "other")
+	if (!is.null(rank.name)) other_name = paste0("other_", rank.name,"_", taxon_names[[1]])
+	#if (length(taxon_names) == 1) taxon_names <- c(taxon_names[[1]], "other")
+	if (length(taxon_names) == 1) taxon_names <- c(taxon_names[[1]], other_name)
 
 	n.taxa <- length(taxon_names)
 	all_tax_abs <- array(dim = c(Nmc, n.taxa, NT))
@@ -54,6 +62,11 @@ fg_fcast_beta <- function(plotID,
 
 		if (is_new_site) {
 
+
+			if (!is.null(predict_site_effects)){
+				pred_site_taxon = unobs_sites %>% filter(siteID==!!siteID & taxon ==!!taxon_name)
+				site_effect <- rep(pred_site_taxon$pred, Nmc)
+			} else {
 			# Sample from site effect variance
 			site_effect_tau <- param_samples[row_samples,] %>% select(grep("sig$", colnames(.))) %>% unlist()
 			# Convert precision to SD
@@ -63,8 +76,13 @@ fg_fcast_beta <- function(plotID,
 			new_site_effect <- data.frame(rnorm(Nmc, 0, site_tau))
 			site_effect <- unlist(new_site_effect)
 
-			# Take initial condition & start forecast from mean observed value if possible
-			plot_start_date <- model.inputs$plot_index[plotID]
+			}
+
+			# # Take initial condition & start forecast from mean observed value if possible
+			# plot_start_date <- model.inputs$plot_index[plotID]
+
+			# No! For new sites, begin forecast the timepoint before the first observation, still with random ic
+			plot_start_date <- model.inputs$plot_start[plotID] - 1
 
 		} else {
 
@@ -73,7 +91,7 @@ fg_fcast_beta <- function(plotID,
 			site_param <- paste0("site_effect[", site_num, ", ", i, "]")
 			site_effect <- 	param_samples[row_samples,] %>% select(!!site_param) %>% unlist()
 
-			if (taxon_name != "other"){
+			if (!grepl("other", taxon_name)){
 				# add model estimates if possible
 				plot_est <- plot_summary %>%
 					filter(plotID == !!plotID & species == taxon_name) %>%
@@ -174,7 +192,7 @@ fg_fcast_beta <- function(plotID,
 	ci_single_plot <-  plyr::rbind.fill(all_tax_single_plot)
 
 	if (drop_other) {
-		ci_single_plot <- ci_single_plot %>% filter(taxon_name != "other")
+		ci_single_plot <- ci_single_plot %>% filter(!grepl("other", taxon_name))
 	}
 	return(ci_single_plot)
 }
@@ -185,7 +203,7 @@ fg_fcast_beta <- function(plotID,
 # ggplot(ci_single_plot) +
 # 	facet_grid(rows=vars(species), drop=T, scales="free") +
 # 	geom_line(aes(x = dates, y = mean), show.legend = F, linetype=2) +
-# 	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
+# 	geom_line(aes(x = dates, y = med), show.legend = F) +
 # 	geom_ribbon(aes(x = dates, ymin = lo, ymax = hi), alpha=0.6, fill="blue") +
 # 	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`),fill="red", alpha=0.6) +
 # 	theme_bw()+

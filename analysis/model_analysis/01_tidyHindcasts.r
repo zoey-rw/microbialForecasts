@@ -16,7 +16,10 @@ fg_hindcast_data <- readRDS(here("data/summary/beta_hindcast_fg_2015-11_2018-01.
 # 				 fcast_period = ifelse(dates <= "2017-01-01", "calibration", "hindcast")) %>%
 # 	filter(species != "other")# replace
 
-tax_hindcast_data <- readRDS(here("data/summary/hindcast_single_tax.rds"))
+# Include unconverged models for hindcasts. Unfortunate.
+tax_hindcast_data <- readRDS(here("data/summary/hindcast_single_tax_all.rds"))
+# Nvm.
+#tax_hindcast_data <- readRDS(here("data/summary/hindcast_single_tax.rds"))
 
 hindcast_data <- rbindlist(list(div_hindcast_data,
 																fg_hindcast_data,

@@ -3,42 +3,47 @@
 
 # Visualize effect size estimates (beta covariates) from all model
 
-
 source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
-
 sum.all <- readRDS(here("data/summary/all_fcast_effects.rds"))
-df_all_cov <- sum.all %>% filter(time_period == "2015-11_2018-01" &
-																 	model_name == "all_covariates" & !grepl("other", taxon))
-df_all_cov$beta <- order_betas(df_all_cov$beta)
-df_cycl <- sum.all %>% filter(time_period ==  "2015-11_2018-01") %>%
-	filter(model_name == "cycl_only" & !grepl("other", taxon))
 
-# df_refit_fg_tax <- df_refit %>% filter(fcast_type != "Diversity")
-# df_fg <- df_refit %>% filter(fcast_type == "Functional group")
-# df_tax <- df_refit %>% filter(fcast_type == "Taxonomic")
-
-all_cov_cycl_params <- df_all_cov %>% filter(beta %in% c("sin","cos"))
-all_cov_vals <- all_cov_cycl_params %>% pivot_wider(id_cols = c("taxon","model_name","fcast_type",
-																																"pretty_name","pretty_group","only_rank"),
-																										names_from = beta,
-																										values_from = "Mean")
-cycl_vals <- df_cycl %>% pivot_wider(id_cols = c("taxon","model_name","fcast_type",
-																							 "pretty_name","pretty_group","only_rank"),
-																	 names_from = beta,
-																	 values_from = "Mean")
-
+sum.all_params <- sum.all %>% filter(beta %in% c("sin","cos") & !grepl("other", taxon))
+seas_vals <- sum.all_params %>% pivot_wider(id_cols = c("taxon","model_name","fcast_type","time_period",
+																												"pretty_name","pretty_group","rank","only_rank"),
+																						names_from = beta,
+																						values_from = "Mean")
 
 # Couldn't figure out how to vectorize.
 out <- list()
-for (i in 1:nrow(cycl_vals)) out[[i]] <- sin_cos_to_seasonality(cycl_vals$sin[[i]], cycl_vals$cos[[i]])
-seas <- rbindlist(out)
-cycl_vals <- cbind.data.frame(cycl_vals, seas)
+for (i in 1:nrow(seas_vals)) {
+	out[[i]] <- sin_cos_to_seasonality(seas_vals$sin[[i]], seas_vals$cos[[i]])
+}
+out <- rbindlist(out)
+seas_vals <- cbind.data.frame(seas_vals, out)
 
-out <- list()
-for (i in 1:nrow(all_cov_vals)) out[[i]] <- sin_cos_to_seasonality(all_cov_vals$sin[[i]], all_cov_vals$cos[[i]])
-seas <- rbindlist(out)
-all_cov_vals <- cbind.data.frame(all_cov_vals, seas)
+
+keep = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/converged_taxa_list.rds")
+keep = keep[keep$median_gbr < 1.3,]
+seas_vals_converged = seas_vals %>%
+	mutate(taxon_model_rank = paste(taxon, model_name, rank)) %>%
+	filter(taxon_model_rank %in% keep$taxon_model_rank)
+
+cycl_vals <- seas_vals %>% filter(time_period == "2015-11_2018-01" &
+																		model_name == "cycl_only")
+all_cov_vals <- seas_vals %>% filter(time_period == "2015-11_2018-01" &
+																		 	model_name == "all_covariates")
+
+ggplot(data = seas_vals_converged %>% filter(model_name=="cycl_only"),
+			 aes(x = pretty_group,y = amplitude,
+														 color = pretty_group)) +
+	geom_violin(draw_quantiles = c(.5), show.legend = F) +
+	geom_jitter(alpha=.3, size=3, show.legend = F) +
+	ylab("Seasonal amplitude") +
+	theme_bw() +
+	stat_compare_means(label = "p.signif", show.legend = F) + # Add significance levels
+	stat_compare_means(label.y = .3, show.legend = F) +
+	xlab(NULL) +
+	theme_bw(base_size = 18)
 
 e <- ggplot(data = cycl_vals, aes(x = pretty_group,y = amplitude,
 														 color = pretty_group)) +
@@ -112,7 +117,7 @@ c
 # Test for differences in residual seasonal amplitude sizes between fcast types
 amplitude_tukey_group = list()
 for (group in c("Fungi", "Bacteria")){
-	df_group=all_cov_vals %>% filter(pretty_group==!!group)
+	df_group=all_cov_vals %>% filter(pretty_group==!!group & fcast_type != "Diversity")
 	out = df_group %>%
 		#group_by(beta) %>%
 		aov(amplitude~fcast_type,.) %>%
@@ -153,43 +158,58 @@ ggarrange(c,d, nrow=1)
 saveRDS(list(all_cov_vals, cycl_vals), here("data/summary/seasonalAmplitude.rds"))
 
 
+seas_in = readRDS(here("data/summary/seasonalAmplitude.rds"))
+all_cov_vals = seas_in[[1]]
+cycl_vals = seas_in[[2]]
 
 site_descr <- readRDS(here("data/summary/site_effect_predictors.rds"))
 
 
-hindcast_data <- readRDS(here("data/summary/all_hindcasts.rds"))
+hindcast_data <- readRDS(here("data/summary/all_hindcasts.rds")) %>% mutate(only_rank = rank_only)
 hindcast_data$month <- lubridate::month(hindcast_data$dates)
 hindcast_data$month_label <- lubridate::month(hindcast_data$dates, label = T)
-hindcast_data_site <- merge(hindcast_data, site_descr)  %>% filter(time_period ==  "2015-11_2018-01")
+hindcast_data_site <- merge(hindcast_data, site_descr)  %>% filter(time_period ==  "2015-11_2020-01")
+
+hindcast_data_site$latitude_bin = cut(hindcast_data_site$latitude, breaks = 10)
 
 # Merge seasonality with hindcast data
 # All cov model
-hindcast_all_cov <- merge(hindcast_data %>% filter(model_name == "all_covariates") %>% select(-rank_only),
-												all_cov_vals, by = c("taxon", "model_name", "fcast_type",
+hindcast_all_cov <- merge(hindcast_data_site %>% filter(model_name == "all_covariates"),
+												all_cov_vals, by = c("taxon", "model_name", #"fcast_type",
 																						 "pretty_name", "pretty_group",
 																						 "only_rank"))
 phylum_all_cov <-  hindcast_all_cov %>%
 	filter(pretty_name == "Phylum") %>%
 	distinct()
 
+calibration_all_cov = hindcast_all_cov %>% filter(fcast_period == "calibration")
+
+
 # Cycl model
-hindcast_cycl_only <- merge(hindcast_data %>% filter(model_name == "cycl_only") %>% select(-rank_only),
-														cycl_vals, by = c("taxon", "model_name", "fcast_type",
+hindcast_cycl_only <- merge(hindcast_data_site %>% filter(model_name == "cycl_only") %>% select(-rank_only),
+														cycl_vals, by = c("taxon", "model_name", #"fcast_type",
 																							 "pretty_name", "pretty_group",
 																							 "only_rank"))
 phylum_cycl_only <-  hindcast_cycl_only %>%
 	filter(pretty_name == "Phylum") %>%
 	distinct()
 
+phylum_calibration_all_cov = phylum_all_cov %>% filter(fcast_period == "calibration")
+phylum_calibration_cycl_only = phylum_cycl_only %>% filter(fcast_period == "calibration")
 
-ggplot(phylum_all_cov %>% filter(taxon %in% c("ascomycota","basidiomycota","mortierellomycota",
-																							"glomeromycota","chytridiomycota","rozellomycota"))) +
-	geom_smooth(aes(x = month, y = `50%`,
-									group = interaction(ecoregion, nlcd),
+ggplot(phylum_all_cov %>% filter(taxon %in% c("ascomycota","basidiomycota",#"mortierellomycota",
+																							"glomeromycota"#,"chytridiomycota","rozellomycota"
+																							))) +
+	geom_smooth(aes(x = month, y = med,
+									#group = interaction(ecoregion, nlcd),
 
-									#group = ecoregion,
-									color = nlcd_clean),
+									group = siteID,
+									color = ecoregion),
 							size=1, alpha = .2, na.rm = T, se = F) +
+	geom_point(aes(x = month, y = truth,
+								 #group = ecoregion,
+								 color = siteID),
+						 size=1, alpha = .2) +
 	#scale_x_date(breaks = "2 month") +
 	xlab("Month") +
 	ylab("Abundances (modeled)") +
@@ -198,16 +218,26 @@ ggplot(phylum_all_cov %>% filter(taxon %in% c("ascomycota","basidiomycota","mort
 	ggtitle("Seasonal trends (all-covariate model)") +
 	theme_bw(base_size = 18)
 
+by_ecoregion <- phylum_calibration_all_cov %>% filter(taxon %in% c("ascomycota","basidiomycota",#"mortierellomycota",
+																										"glomeromycota"#,"chytridiomycota","rozellomycota"
+)) %>% filter(!is.na(truth)) %>% group_by(ecoregion) %>% tally() %>% arrange(n)
 
-ggplot(phylum_all_cov %>% filter(
+for_plot = phylum_calibration_all_cov %>% filter(ecoregion %in% c("D01","D03","D14"))
+for_plot = calibration_all_cov %>% filter(ecoregion %in% c("D01","D03","D14"))
+
+ggplot(for_plot %>% filter(
 	taxon %in% c("acidobacteriota","actinobacteriota","firmicutes",
 							 "bacteroidota","chloroflexi","cyanobacteria"))) +
-	geom_smooth(aes(x = month, y = `50%`,
-									group = interaction(ecoregion, nlcd),
+	geom_smooth(aes(x = month, y = med,
+									#group = interaction(ecoregion, nlcd),
 
 									#group = ecoregion,
-									color = nlcd_clean),
+									color = ecoregion),
 							size=1, alpha = .2, na.rm = T, se = F) +
+	geom_jitter(aes(x = month, y = truth,
+								 #group = ecoregion,
+								 color = ecoregion),
+						 size=1, alpha = .2) +
 	#scale_x_date(breaks = "2 month") +
 	xlab("Month") +
 	ylab("Abundances (modeled)") +

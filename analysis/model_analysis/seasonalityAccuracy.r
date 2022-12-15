@@ -1,3 +1,6 @@
+source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+
+
 # from 05_explainSiteEffects.r script
 site_descr <- readRDS(here("data/summary/site_effect_predictors.rds"))
 site_descr$latitude <- round(site_descr$latitude, 1)
@@ -10,23 +13,28 @@ cycl_vals <- seasonality_in[[2]]
 season_site_df_cycl <- merge(site_descr, seasonality_in[[2]])
 season_site_df_all_cov <- merge(site_descr, seasonality_in[[1]])
 
+# from 03_calculateScores.r script
+scores_list = readRDS(here("data", paste0("summary/scoring_metrics_cv.rds")))
+predictability_scores <- scores_list$scoring_metrics %>% ungroup()
 
-predictability_scores <- hindcast_filter
-cycl_vals_scores <- merge(cycl_vals %>% select(-model_name), predictability_scores)
-all_cov_vals_scores <- merge(all_cov_vals %>% select(-model_name), predictability_scores)
+
+cycl_vals_scores <- merge(cycl_vals %>% select(-c(model_name, fcast_type)), predictability_scores)
+all_cov_vals_scores <- merge(all_cov_vals %>% select(-c(model_name, fcast_type)), predictability_scores)
+
+#saveRDS(hindcast_data_out, here("data/summary/all_hindcasts.rds"))
 
 
 sum.all.tax_refit <- readRDS(here("data/summary/single_taxon_summaries_201511_202001.rds"))
 tax_plot_est <- sum.all.tax_refit[[2]]
 tax_plot_est$month <- lubridate::month(tax_plot_est$dates)
 tax_plot_est$month_label <- lubridate::month(tax_plot_est$dates, label = T)
-tax_refit_site <- merge(tax_plot_est, site_descr)
+tax_refit_site <- merge(tax_plot_est, site_descr) %>% filter(!grepl("other", taxon))
 
 sum.all.tax_cal <- readRDS(here("data/summary/single_taxon_summaries_201511_201801.rds"))
 tax_plot_est <- sum.all.tax_cal[[2]]
 tax_plot_est$month <- lubridate::month(tax_plot_est$dates)
 tax_plot_est$month_label <- lubridate::month(tax_plot_est$dates, label = T)
-tax_cal_site <- merge(tax_plot_est, site_descr)
+tax_cal_site <- merge(tax_plot_est, site_descr) %>% filter(!grepl("other", taxon))
 
 
 # Merge seasonality with hindcast data
@@ -107,17 +115,96 @@ ggplot(genus_cycl_only %>% filter(taxon %in% high_seasonality_tax$taxon),
 	theme_bw(base_size = 18) + labs(color = "Domain")
 
 
+
+vals_for_example <- tax_refit_site %>% filter(model_name=="all_covariates" &
+																								taxon %in% c("glomus","chytridiomycota","actinobacteria","agaricomycetes"))
+
+hindcast_data_in = readRDS(here("data/summary/all_hindcasts.rds"))
+
+hindcast_data_in$month <- lubridate::month(hindcast_data_in$dates)
+hindcast_data_in$month_label <- lubridate::month(hindcast_data_in$dates, label = T)
+hindcast_site_info <- merge(hindcast_data_in, site_descr)
+vals_for_example <- hindcast_site_info %>% filter(model_name=="all_covariates" &
+																								taxon %in% c("actinobacteria","agaricomycetes") & siteID %in% c("DEJU","DSNY","HARV"))
+
+																							#STER
+
+pre_2018 = hindcast_site_info %>% filter(dateID < 201801)
+#tax_refit_site_abun <- merge(tax_refit_site, mean_abundance)
+# Across years
+ggplot(vals_for_example,
+			 aes(x = dates, y = med,
+			 					 		color = siteID), alpha=.2) +
+	geom_point(size=1, alpha = .2) +
+	geom_smooth(size=1, alpha = .2, na.rm = T, se = F) +
+	#scale_x_date(breaks = "2 month") +
+	xlab("Month") +
+	ylab("Abundances (modeled)") +
+	#facet_grid(pretty_group~taxon, scales="free") +
+	ggtitle("Seasonal genera are more abundant for bacteria than fungi",
+					"Genera with strong seasonality peak in spring or late fall") +
+	theme_bw(base_size = 18) + labs(color = "Domain") + facet_grid(~pretty_group)
+
+# Seasonal
+#tax_refit_site_abun <- merge(tax_refit_site, mean_abundance)
+ggplot(vals_for_example,
+			 aes(x = month, y = med,
+			 		color = siteID), alpha=.2) +
+	geom_point(size=1, alpha = .2, position = position_jitter()) +
+	geom_smooth(size=1, alpha = .2, na.rm = T, se = F) +
+	theme_bw(base_size = 18) + theme(axis.text.x=element_text(angle = 310, hjust = .1, vjust = .5)) +
+	xlab("Month") +
+	ylab("Abundances (modeled)") +
+	#facet_grid(pretty_group~taxon, scales="free") +
+	ggtitle("Fungi have more variability between sites then bacteria") +
+	 labs(color = "Site") + facet_wrap(taxon~pretty_group, scales = "free")
+
+
+
+functional_vals_for_example <- hindcast_site_info %>% filter(model_name=="all_covariates" &
+																														 	taxon %in% c("ectomycorrhizal","n_fixation") & newsite=="Observed site")
+pre_2018 = functional_vals_for_example %>% filter(dates < "2018-01-01")
+
+functional_vals_for_example <- hindcast_site_info %>% filter(model_name=="all_covariates" &
+																										taxon %in% c("ectomycorrhizal","n_fixation") & newsite=="Observed site" & siteID %in% c("ORNL","DSNY","HARV"))
+#Seasonal
+ggplot(functional_vals_for_example,
+			 aes(x = month, y = med,
+			 		color = siteID), alpha=.2) +
+	geom_point(size=1, alpha = .2, position = position_jitter()) +
+	geom_smooth(size=1, alpha = .2, na.rm = T, se = F) +
+	theme_bw(base_size = 18) + theme(axis.text.x=element_text(angle = 310, hjust = .1, vjust = .5)) +
+	xlab("Month") +
+	ylab("Abundances (modeled)") +
+	#facet_grid(pretty_group~taxon, scales="free") +
+	ggtitle("Fungal functional groups have more variability \nbetween sites then bacterial functional groups") +
+	labs(color = "Site") + facet_wrap(taxon~pretty_group, scales = "free")
 #scores_list = readRDS(here("data", paste0("summary/scoring_metrics_cv.rds")))
+
+# Cal vs hindcast
+ggplot(functional_vals_for_example,
+			 aes(x = dates, y = med,
+			 		color = siteID), alpha=.2) +
+	geom_point(aes(alpha = fcast_period), size=1,  position = position_jitter()) +
+	geom_smooth(size=1, alpha = .2, na.rm = T, se = F, span=.2) +
+	theme_bw(base_size = 18) + theme(axis.text.x=element_text(angle = 310, hjust = .1, vjust = .5)) +
+	xlab("Month") +
+	ylab("Abundances (modeled)") +
+	#facet_grid(pretty_group~taxon, scales="free") +
+	ggtitle("Fungal functional groups have more variability \nbetween sites than bacterial functional groups") +
+	labs(color = "Site") + facet_wrap(taxon~pretty_group, scales = "free")
+
+
 
 # hindcast_wide_site from fig1 script
 site_scores_descr <- merge(site_descr, hindcast_wide_site)
 site_scores_descr <- merge(site_scores_descr, cycl_vals %>% select(-model_name))
 
-site_effects_all <- readRDS(here("data/summary/site_effects.rds"))
-site_effects_refit_only <- site_effects_all %>% filter(time_period == "2015-11_2020-01" &
-																											 	model_name == "all_covariates") %>% mutate(site_effect = Mean)
-
-site_scores_descr <- merge(site_scores_descr, site_effects_refit_only)
+# site_effects_all <- readRDS(here("data/summary/site_effects.rds"))
+# site_effects_refit_only <- site_effects_all %>% filter(time_period == "2015-11_2020-01" &
+# 																											 	model_name == "all_covariates") %>% mutate(site_effect = Mean)
+#
+# site_scores_descr <- merge(site_scores_descr, site_effects_refit_only)
 
 
 ggplot(site_scores_descr,

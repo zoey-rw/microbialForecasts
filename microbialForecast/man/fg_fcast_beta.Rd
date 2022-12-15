@@ -12,6 +12,8 @@ fg_fcast_beta(
   plot_summary,
   Nmc = 1000,
   drop_other = T,
+  predict_site_effects = NULL,
+  rank.name = NULL,
   ...
 )
 }

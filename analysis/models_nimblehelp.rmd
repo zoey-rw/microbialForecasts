@@ -1,0 +1,216 @@
+To demonstrate that this Dirichlet regression can estimate model parameters, we will simulate data from fixed parameters, and use that simulated data to estimate stochastic parameters. First, we will simulat 
+
+Load libraries and set random seed:
+```{r}
+set.seed(1)
+```
+
+Here is our model code, with three fixed effects: 
+	- a species-specific environmental parameter, "beta_mat"
+	- a species-specific parameter for the previous timepoint, "beta_IC"
+	- a species-specific intercept (fixed at zero for first species)
+And a species-specific random effect that varies by site, "site_effect".
+
+```{r}
+library(dplyr)
+library(nimble)
+nimbleMod <- nimbleCode({ 
+	
+	# First timepoint
+	for(i in 1:n.core.by.date){
+		y[i,1:N.spp,1] ~ ddirch(plot_mu[i,1:N.spp,1])
+		for(s in 1:N.spp){
+			plot_mu[i,s,1] ~ dgamma(0.01, 0.01) # Plot means for first date
+			# Convert back to relative abundance
+			plot_rel[i,s,1] <- plot_mu[i,s,1] / sum(plot_mu[i,1:N.spp,1])
+		}
+	}
+	
+	prec ~ dgamma(.1, .1)
+	for (t in 2:N.date){
+		for(i in 1:n.core.by.date){
+			# Core observations (3 per plot):
+			y[i,1:N.spp,t] ~ ddirch(m[i,1:N.spp,t])
+			
+			m[i,1:N.spp,t] <- plot_mu[i,1:N.spp,t] * prec
+			# Process model determines plot mean
+			log(plot_mu[i,1:N.spp,t]) <- #beta_IC[1:N.spp]*log(plot_mu[i,1:N.spp,t-1]) + # Previous timepoint
+				beta_mat[1:N.spp]*mat[plotID[i],t] + # Environmental predictor
+				beta_int[1:N.spp]*int[plotID[i]] + # Intercept
+				site_effect[siteID[i],1:N.spp] # Site random effect
+			for(s in 1:N.spp){
+				# Convert back to relative abundance
+				plot_rel[i,s,t] <- plot_mu[i,s,t] / sum(plot_mu[i,1:N.spp,t])
+			}
+		}
+	}
+	
+	
+	# Priors for site random effects:
+	for(s in 1:N.spp){
+		for(k in 1:N.site){
+			site_effect[k,s] ~ dnorm(0, 3)
+		}
+	}
+	
+	# Priors for fixed effects:
+	for(s in 1:N.spp){
+		beta_mat[s] ~ dnorm(0, 3)
+		beta_IC[s] ~ dnorm(0, 3)
+	}
+	
+		# Priors for intercept:
+	beta_int[1] <- 0
+		for(s in 2:N.spp){
+		beta_int[s] ~ dnorm(0, 3)
+	}
+
+}) #end NIMBLE model.
+
+# Now generate list of constants (no data)
+constants <- list(N.site = 1,
+									#N.plot =  20, 
+									#n.core.by.date = 60,
+									# N.site = 4,
+									# siteID = rep(c(1:4), each = 15), 
+									# plotID = rep(c(1:20), each = 3)
+									N.plot =  5, 
+									N.spp = 3, 
+									n.core.by.date = 15,
+									N.date = 2,
+									siteID = rep(1, each = 5), 
+									plotID = 1:5)
+# Add in covariate data
+constants$mat <- matrix(rnorm(constants$N.plot * constants$N.date, 0, .1),
+ 							nrow = constants$N.plot, ncol = constants$N.date)
+constants$int <- rep(1, constants$N.plot)
+
+# Initialization function
+initsFun <- function(constants){
+	core_per_plot <- 3
+	y_init <- array(rep(DirichletReg::rdirichlet(constants$N.plot * core_per_plot, 
+																							 rep(2, constants$N.spp)), constants$N.date), 
+									dim = c(constants$N.plot * core_per_plot, constants$N.spp, constants$N.date))
+	site_eff_init <- matrix(rnorm(constants$N.site * constants$N.spp,
+																0,1), 
+													nrow = constants$N.site, 
+													ncol = constants$N.spp)
+	plot_mu_init <- array(rnorm(constants$N.plot * core_per_plot * constants$N.spp * constants$N.date,
+															2,.05), 
+												dim = c(constants$N.plot * core_per_plot, constants$N.spp, constants$N.date))
+	intercept_init <- rnorm(constants$N.spp,1,1)
+	intercept_init[1] <- 0
+	beta_IC_init <- rnorm(constants$N.spp,1,1)
+	beta_mat_init <- rnorm(constants$N.spp,1,.1)
+	return(list(
+		y = y_init,
+		site_effect = site_eff_init,
+		plot_mu = plot_mu_init,
+		beta_IC = beta_IC_init,
+		beta_mat = beta_mat_init,
+		beta_int = intercept_init))
+}
+
+initsList <- initsFun(constants)
+initsList$prec <- .1 
+## Configure and run model
+Rmodel <- nimbleModel(code = nimbleMod,
+											constants = constants,
+											inits = initsList)
+
+# # Simulate data from model
+#nodesToSim <- Rmodel$getDependencies(c("plot_mu"), self = T, downstream = T)
+#Rmodel$simulate(nodesToSim)
+#simulatedYs <- Rmodel$y
+# head(simulatedYs)
+# tail(simulatedYs)
+# 
+# # Now let's add those simulated values to the model, but replacing some values with NA 
+# # simulatedYs[1,,2] <- NA
+# # simulatedYs[4,,3] <- NA
+# # simulatedYs[6,,4] <- NA
+# Rmodel$setData(list(y = simulatedYs))
+
+# # Compile model
+# CsimModel <- compileNimble(Rmodel)
+# 
+# # Configure & compile MCMC
+# mcmcConf <- configureMCMC(CsimModel)
+# mcmcConf$addMonitors("plot_mu","plot_rel","y","beta_IC","beta_mat","beta_int")
+# simMCMC <- buildMCMC(mcmcConf)
+# compiled <- compileNimble(simMCMC, project = CsimModel, resetFunctions = T)
+# 
+# # Sample from MCMC
+# samples <- runMCMC(compiled, niter = 1000, nburnin = 500,
+# 									 nchains = 3, samplesAsCodaMCMC = T, thin = 3)
+
+
+
+mcmc.out <- nimbleMCMC(model = Rmodel,
+											 		code = nimbleMod, 
+											 constants = constants,
+											 inits = initsList,
+											 nchains = 3, niter = 1500,
+											 summary = TRUE, 
+											 monitors =
+											 	c("plot_mu","plot_rel","y","beta_IC","beta_mat","beta_int"), samplesAsCodaMCMC = T)
+
+samples <- mcmc.out$samples
+plot(samples[,!grepl("plot_mu|plot_rel|y|site", colnames(samples[[1]]))])
+```
+
+```{r}
+library(coda)
+plot(samples[,!grepl("plot_mu|plot_rel|y|site", colnames(samples[[1]]))])
+
+truth <- c(Rmodel$beta_IC,Rmodel$beta_int, Rmodel$beta_mat)
+impt_cols <- grepl("beta_IC|beta_mat|beta_int", colnames(samples2[[1]]))
+pred_params <- summary(samples2[,impt_cols])
+pred_means <- pred_params$statistics[,1]
+plot(x = pred_means, y = truth, xlab = "Estimated values", ylab = "True values"); abline(0,1)
+# 
+# beta_IC[1:3] <- c(.1, .5, .4)
+# beta_int[1:3] <- c(0, .1, -.1)
+# beta_mat[1:3] <- c(.4, .3, -.6)
+```
+
+```{r}
+gd <- gelman.diag(samples2[,impt_cols], multivariate = FALSE)
+traceplot(samples2[,"intercept[2]"])
+traceplot(samples2[,"intercept[3]"])
+```
+
+```{r}
+library(tibble)
+library(ggplot2)
+library(tidyr)
+#pred.plot.out <- summary(samples2, var='plot_rel')
+full_summary <- summary(samples2)
+
+means <- full_summary[[2]]
+plot_rel_out <- means[grep("plot_rel", rownames(means)),]
+pred.plot <- plot_rel_out %>% as.data.frame() %>%  rownames_to_column() %>% 
+	separate(rowname, sep=",", into=c("plot_num","species_num","date_num")) %>% 
+	mutate(plot_num = as.numeric(gsub("plot_rel\\[", "", plot_num)),
+				 date_num = as.numeric(gsub("\\]", "", date_num)))
+
+ggplot(pred.plot[which(pred.plot$plot_num == 1),], aes(x = date_num)) +
+	geom_line(aes(y = `50%`, color = species_num)) + facet_wrap(~species_num, scales = "free") +
+	geom_ribbon(aes(ymin = `2.5%`, ymax = `97.5%`, fill = species_num), alpha=0.2) #+
+#geom_point(aes(y = truth)) 
+
+truth_plot1 <- simulatedYs %>% map()
+#mutate(truth = as.numeric(as.character(truth))
+			 
+			 # View all species (at one plot)
+			 library(scales)
+			 library(viridis)
+library(hrbrthemes)
+			 ggplot(pred.plot[which(pred.plot$plot_num == 1),], aes(fill=species_num, y=`50%`, x=date_num)) + 
+    geom_bar(position="stack", stat="identity") +
+    scale_fill_viridis(discrete = T) +
+    ggtitle("Studying 4 species..") +
+    theme_ipsum() +
+    xlab("")
+			 
+```			 

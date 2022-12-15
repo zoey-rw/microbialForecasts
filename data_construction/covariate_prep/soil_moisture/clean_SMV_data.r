@@ -9,7 +9,7 @@ smv_dir <- "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/DAAC
 files <- list.files(smv_dir, full.names = T)
 
 # Get list of NEON fieldsites/locations
-fieldsites <- read.csv("https://www.neonscience.org/science-design/field-sites/export")
+fieldsites <- read.csv("https://www.neonscience.org/sites/default/files/NEON_Field_Site_Metadata_20220412.csv")
 
 # Loop through and figure out which site each one came from.
 df.list <- list()
@@ -29,17 +29,17 @@ for (f in files){
 smv_all <- do.call(rbind, df.list)
 
 # Fix weird columns
-smv_all <- smv_all %>% mutate(month = substr(time, 1, 7)) %>% 
-  separate(SMAP_surface, into = c("min_SMAP_s", "max_SMAP_s","mean_SMAP_s"), sep = ";", convert = T) %>% 
-  separate(SMAP_rootzone, into = c("min_SMAP_r", "max_SMAP_r","mean_SMAP_r"), sep = ";", convert = T) %>% 
-  separate(SCAN_surface, into = c("min_SCAN_s", "max_SCAN_s","mean_SCAN_s"), sep = ";", convert = T) %>% 
-  separate(SCAN_rootzone, into = c("min_SCAN_r", "max_SCAN_r","mean_SCAN_r"), sep = ";", convert = T) %>% 
-  separate(GRACE_surface_pctl, into = c("min_GRACE_s", "mean_GRACE_s","max_GRACE_s"), sep = ";", convert = T) 
+smv_all <- smv_all %>% mutate(month = substr(time, 1, 7)) %>%
+  separate(SMAP_surface, into = c("min_SMAP_s", "max_SMAP_s","mean_SMAP_s"), sep = ";", convert = T) %>%
+  separate(SMAP_rootzone, into = c("min_SMAP_r", "max_SMAP_r","mean_SMAP_r"), sep = ";", convert = T) %>%
+  separate(SCAN_surface, into = c("min_SCAN_s", "max_SCAN_s","mean_SCAN_s"), sep = ";", convert = T) %>%
+  separate(SCAN_rootzone, into = c("min_SCAN_r", "max_SCAN_r","mean_SCAN_r"), sep = ";", convert = T) %>%
+  separate(GRACE_surface_pctl, into = c("min_GRACE_s", "mean_GRACE_s","max_GRACE_s"), sep = ";", convert = T)
 
 # Mean per site/month
-smv_month <- smv_all %>% 
-  filter(time > "2013-06-01") %>% 
-  group_by(siteID, month) %>% 
+smv_month <- smv_all %>%
+  filter(time > "2013-06-01") %>%
+  group_by(siteID, month) %>%
   dplyr::summarise(across(starts_with(c("mean", "min", "max")), ~mean(.x, na.rm = TRUE)), .groups="keep")
 smv_month_long <- smv_month %>% pivot_longer(cols = 3:17)
 saveRDS(smv_month, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/DAAC_SMV/monthly_SMV_allsites.rds")

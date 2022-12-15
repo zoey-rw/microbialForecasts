@@ -3,7 +3,7 @@ setwd("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/")
 here::i_am("source.R")
 
 # Pacman package loader is used throughout scripts
-# if (!require("pacman")) install.packages("pacman")
+if (!require("pacman")) install.packages("pacman")
 # if (!require("microbialForecast"))
 
 #install.packages("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/microbialForecast_0.1.0.tar.gz", repos = NULL, type="source")
@@ -11,7 +11,8 @@ here::i_am("source.R")
 	suppressPackageStartupMessages(library(tidyverse, warn.conflicts = F))
 	pacman::p_load(pacman, microbialForecast,
 							 nimble, coda, lubridate, here,
-							 doParallel, data.table)
+							 doParallel, data.table, Rfast, moments,
+							 scoringRules, Metrics, ggpubr)
 
 
 	# Convert sin and cos effect sizes to a seasonal amplitude parameter
@@ -85,6 +86,7 @@ here::i_am("source.R")
 				abundance = mean(observed, na.rm=T),
 				RMSE.norm = RMSE / abundance) %>% select(!!type)
 
+		out_df$RSQ.1 = ifelse(out_df$RSQ.1 < 0, 0, out_df$RSQ.1)
 		return(out_df)
 	}
 
@@ -129,3 +131,116 @@ here::i_am("source.R")
 
 	calc_cv <- function(x) sd(x, na.rm = T) / mean(x, na.rm = T) * 100
 
+
+
+	pivot_metrics = function(df) {
+		df %>% pivot_longer(cols = c(RMSE, BIAS, MAE, CRPS,CRPS_truncated, RSQ, RSQ.1,
+																 RMSE.norm, residual_variance, predictive_variance, total_PL),
+												names_to = "metric", values_to = "score")
+	}
+
+
+
+
+
+
+# Shorten chain if it contains more than a certain number of samples
+	window_chain = function(chain, thin = 1, max_size = 10000) {
+		require(coda)
+		if (all(class(chain) != "mcmc")){
+			chain <- mcmc(as.matrix(chain))
+		}
+		nrow_samples <- nrow(chain)
+		if (nrow_samples < max_size) {
+			message("Sample size not reduced; current size is fewer than ", max_size)
+			out_chain <- chain
+			attr(out_chain, "mcpar")[[1]] <- 1
+			attr(out_chain, "mcpar")[[2]] <- nrow_samples
+
+			return(out_chain)
+		} else {
+
+			first_iter <- attr(chain, "mcpar")[[1]]
+			last_iter <- attr(chain, "mcpar")[[2]]
+
+			window_start = last_iter - max_size
+			out_chain <- window(chain, window_start, last_iter, 1)
+			attr(out_chain, "mcpar")[[1]] <- 1
+			attr(out_chain, "mcpar")[[2]] <- max_size
+			return(out_chain)
+		}
+	}
+
+
+	combine_chains_existing = function(input_list,
+																		 save = FALSE,
+																		 cut_size1 = NULL,
+																		 cut_size2 = NULL){
+		require(coda)
+		require(tidyverse)
+
+		if (is.null(cut_size1)) cut_size1 <- 19999
+		if (is.null(cut_size2)) cut_size2 <- 9999
+
+		readInputRdsFile = function(input_rds){
+			input = tryCatch(readRDS(input_rds),
+											 error = function(c) {
+											 	message("The input *rds is invalid")
+											 	return(NA)
+											 }
+			)
+		}
+
+		# initialize
+		samples <- metadata <- list()
+		first_iter <- last_iter <- list()
+		for(i in 1:length(input_list)){
+			print(i)
+
+			if (class(input_list[[i]])=="character") {
+				# paste model file path to chain number
+				chain <- readInputRdsFile(chain_paths[[i]])
+				if (any(is.na(chain))) next()
+				samples[[i]] <- chain[[1]]
+				#samples2[[i]] <- chain[[2]]
+			} else {
+				samples[[i]]  = input_list[[i]]
+				#samples2[[i]]  = input_list[[i]][[2]]
+			}
+		}
+
+		samples<-samples[!sapply(samples,is.null)]
+#		samples2<-samples2[!sapply(samples2,is.null)]
+
+		# Now make them all the same size
+		nrows <- lapply(samples, nrow) %>% unlist()
+		min_nrow <- min(nrows)
+		for(i in 1:length(samples)){
+			current_nrow <- nrow(samples[[i]])
+			if (min_nrow < current_nrow){
+				samples[[i]] <- window_chain(samples[[i]], max_size = (min_nrow-1))
+			}
+		}
+
+
+		# Now make them all the same size, v2
+		# nrows <- lapply(samples2, nrow) %>% unlist()
+		# min_nrow <- min(nrows)
+		# for(i in 1:length(samples2)){
+		# 	current_nrow <- nrow(samples2[[i]])
+		# 	if (min_nrow < current_nrow){
+		# 		samples2[[i]] <- window_chain(samples2[[i]], max_size = (min_nrow-1))
+		# 	}
+		# }
+
+		# Make the attributes match up (sort of arbitrary)
+		for (i in 1:length(samples)) {
+			attr(samples[[i]], "mcpar") = attr(samples[[1]], "mcpar")
+			#attr(samples2[[i]], "mcpar") = attr(samples2[[1]], "mcpar")
+		}
+
+		out <- as.mcmc.list(samples)
+		#out2 <- as.mcmc.list(samples2)
+
+		return(out)
+	}

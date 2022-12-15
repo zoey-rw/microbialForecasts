@@ -14,22 +14,37 @@ summary_exists <- function(file_path) {
 	} else return(FALSE)
 }
 
+#'  @title samples_exists
+#'  @description Check if samples file (condensing all 4 chains) already exists
+#'
+#' @export
+samples_exists <- function(file_path) {
+	save_path <- gsub("_chain[1234567]","",file_path)
+	if (file.exists(save_path)){
+		sample_info <- file.info(file_path) %>% select(mtime) %>% unlist()
+		summary_info <- file.info(save_path) %>% select(mtime) %>% unlist()
+		if (summary_info > sample_info) {
+			return(TRUE)
+		} else return(FALSE)
+	} else return(FALSE)
+}
 
 #'  @title add_gelman
 #'  @description Calculate gelman diagnostics to assess convergence
 #'
 #' @export
 add_gelman <- function(read_in, rank.name) {
-if ("gelman" %in% names(read_in)) {
+if ("gelman" %in% names(read_in) & !is.null(ncol(read_in$gelman))) {
 	gd <- read_in$gelman %>% cbind.data.frame(effSize = effectiveSize(read_in$samples))
 } else {
+	if (length(read_in$samples)>1) {
 	gd <- cbind.data.frame(gelman.diag(read_in$samples, multivariate = FALSE)[[1]],
 												 effSize = effectiveSize(read_in$samples))
+	} else gd <- cbind.data.frame(effSize = effectiveSize(read_in$samples))
 }
 gd <- gd %>% mutate(rank.name = !!rank.name,
 										#taxon.name = !!taxon.name,
-										niter = read_in$metadata[[2]],
-										nburnin = read_in$metadata[[3]])
+										nburnin = read_in$metadata[[3]]) %>% rownames_to_column("parameter")
 return(gd)
 }
 
@@ -159,9 +174,13 @@ summarize_fg_div_model <- function(file_path, drop_other = TRUE){
 #'  }
 #' }
 #' @export
-summarize_tax_model <- function(file_path, save_summary = NULL, drop_other = TRUE){
+summarize_tax_model <- function(file_path, save_summary = NULL, drop_other = TRUE, overwrite = NULL){
 	require(stringr)
- if(summary_exists(file_path)) return("Summary file already exists")
+ if(summary_exists(file_path)) {
+ 	if (is.null(overwrite)) {
+ 		return("Summary file already exists")
+ 		}
+ }
 
 	# Read in file, assign named contents to global environment
 	read_in <- readRDS(file_path)
@@ -281,20 +300,23 @@ summarize_tax_model <- function(file_path, save_summary = NULL, drop_other = TRU
 	beta_out$effSize <- abs(beta_out$Mean)
 
 	# Combine parameter estimates into summary
-	if (length(unique(beta_out$taxon)) > 2){
+	#if (length(unique(beta_out$taxon)) > 2){
 		summary_df <-
 			plyr::rbind.fill(beta_out, eff_list, site_eff_out) %>%
 			left_join(truth.plot.long[, c("model_name", "taxon", "rank", "group", "rank_only", "time_period",
-																		"fcast_type", "pretty_group")] %>% distinct())
-	} else {
-	summary_df <-
-		plyr::rbind.fill(beta_out, eff_list, site_eff_out) %>%
-		left_join(truth.plot.long[1, 11:18], by="taxon")
-	}
+																		"fcast_type", "pretty_group")] %>% distinct(), by="taxon")
+	# } else {
+	# summary_df <-
+	# 	plyr::rbind.fill(beta_out, eff_list, site_eff_out) %>%
+	# 	left_join(truth.plot.long[, 11:18] %>% distinct(), by="taxon")
+	# }
 
 
 	## Calculate gelman diagnostics to assess convergence
-	gd <- add_gelman(read_in, rank.name)
+	gd <- add_gelman(read_in, rank.name) %>% mutate(rank = rank.name) %>%
+		left_join(truth.plot.long[, c("model_name",
+																	"rank", "group", "rank_only", "time_period",
+																	"fcast_type", "pretty_group")] %>% distinct(), by="rank")
 
 	if (drop_other) {
 		summary_df <- summary_df %>% filter(taxon != "other")
@@ -321,10 +343,13 @@ summarize_tax_model <- function(file_path, save_summary = NULL, drop_other = TRU
 #'  @description Summarize beta regression models for functional groups
 #'
 #' @export
-summarize_fg_beta_model <- function(file_path, save_summary = NULL, drop_other = TRUE){
+summarize_fg_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL, drop_other = TRUE){
 	require(stringr)
-	if(summary_exists(file_path)) return("Summary file already exists")
-
+	if(summary_exists(file_path)) {
+		if (is.null(overwrite)) {
+			return("Summary file already exists")
+		}
+	}
 	# Read in file, assign named contents to global environment
 	read_in <- readRDS(file_path)
 	#list2env(read_in,globalenv())
@@ -445,20 +470,24 @@ summarize_fg_beta_model <- function(file_path, save_summary = NULL, drop_other =
 	beta_out$effSize <- abs(beta_out$Mean)
 
 	# Combine parameter estimates into summary
-	if (length(unique(beta_out$taxon)) > 2){
+	#if (length(unique(beta_out$taxon)) > 2){
 		summary_df <-
-			plyr::rbind.fill(beta_out, eff_list, site_eff_out) %>%
-			left_join(truth.plot.long[, c("model_name", "taxon", "rank", "group", "rank_only", "time_period",
+			plyr::rbind.fill(beta_out, eff_list, site_eff_out) %>% mutate(rank = rank.name) %>%
+			left_join(truth.plot.long[, c("model_name", #"taxon",
+																		"rank", "group", "rank_only", "time_period",
 																		"fcast_type", "pretty_group")] %>% distinct())
-	} else {
-		summary_df <-
-			plyr::rbind.fill(beta_out, eff_list, site_eff_out) %>%
-			left_join(truth.plot.long[1, 11:18], by="taxon")
-	}
+	# } else {
+	# 	summary_df <-
+	# 		plyr::rbind.fill(beta_out, eff_list, site_eff_out)  %>% mutate(rank = rank.name) %>%
+	# 		left_join(truth.plot.long[1, 11:18])
+	# }
 
 
 	## Calculate gelman diagnostics to assess convergence
-	gd <- add_gelman(read_in, rank.name)
+	gd <- add_gelman(read_in, rank.name) %>% mutate(rank = rank.name) %>%
+		left_join(truth.plot.long[, c("model_name", #"taxon",
+																	"rank", "group", "rank_only", "time_period",
+																	"fcast_type", "pretty_group")])
 
 	if (drop_other) {
 		summary_df <- summary_df %>% filter(taxon != "other")

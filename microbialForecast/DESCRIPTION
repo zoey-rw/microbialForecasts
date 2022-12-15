@@ -8,12 +8,17 @@ Description: Collection of functions for preparing data and creating forecasts
 License: What license is it under?
 Encoding: UTF-8
 LazyData: true
-RoxygenNote: 7.1.2
-Depends: 
+RoxygenNote: 7.2.2
+Imports: 
     tidyverse,
     here,
     nimble,
     coda,
     lubridate,
     reshape2,
+    dplyr,
+    pacman,
+    plyr,
+    tibble
+Depends:
     R (>= 2.10)
