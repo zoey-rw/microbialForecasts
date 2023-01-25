@@ -13,7 +13,7 @@ file.list <- list.files(path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_fo
 												full.names = T)
 
 file_path = file.list[[1]]
-file_summaries <- lapply(file.list, summarize_fg_div_model)
+file_summaries <- lapply(file.list, summarize_fg_div_model, drop_other=F)
 
 summary_df <- map(file_summaries, 1) %>% plyr::rbind.fill() %>%
 	mutate(time_period = recode(as.character(time_period), !!!date_recode))

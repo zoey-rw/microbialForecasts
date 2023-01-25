@@ -66,7 +66,7 @@ hindcast_data_simple <- hindcast_data %>% mutate(mean = ifelse(!is.na(Mean), Mea
 																								 sd = ifelse(!is.na(SD), SD, sd),
 																								 hi = ifelse(!is.na(`97.5%`), `97.5%`, hi),
 																								 med = ifelse(!is.na(`50%`), `50%`, med),
-																								 lo = ifelse(!is.na(`25%`), `25%`, lo),
+																								 lo = ifelse(!is.na(`2.5%`), `2.5%`, lo),
 																								 lo_25 = ifelse(!is.na(`25%`), `25%`, lo_25),
 																								 hi_75 = ifelse(!is.na(`75%`), `75%`, lo_75)) %>%
 	select(-c(lo_75, `2.5%`, `25%`, `50%`, `75%`, `97.5%`, Mean, SD, Shannon_orig, Shannon_scale_site, rank_name, species_num))
@@ -110,7 +110,8 @@ calibration_only$is_plot_start_date = ifelse(calibration_only$date_num==calibrat
 calibration_only$is_any_start_date = ifelse(calibration_only$is_plot_start_date|calibration_only$is_site_start_date, T, F)
 calibration_only = calibration_only %>% filter(timepoint >= site_start_date)
 
-hindcast_data_out <- rbindlist(list(hindcast_only, calibration_only), fill = T)
+hindcast_data_out <- rbindlist(list(hindcast_only, calibration_only), fill = T) %>%
+	arrange(model_name, fcast_type, pretty_group, taxon, plotID, timepoint)
 
 saveRDS(hindcast_data_out, here("data/summary/all_hindcasts.rds"))
 

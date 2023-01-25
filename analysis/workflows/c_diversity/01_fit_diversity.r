@@ -21,7 +21,7 @@ params = data.frame(group = c("ITS", "16S"),
 
 # Create function that calls run_MCMC for each uncertainty scenario
 run_scenarios <- function(j) {
-	out <- run_MCMC_diversity(iter = 750000, burnin = 300000, thin = 10,
+	out <- run_MCMC_diversity(iter = 1000000, burnin = 500000, thin = 10,
 									#iter = 600000, burnin = 300000, thin = 10,
 		#iter = 200000, burnin = 100000, thin = 5,
 									test=F, scenario = params$scenario,
@@ -47,12 +47,15 @@ to_run1 <- grep("20160101", params$min.date)
 
 # # Create cluster and pass it everything in the workspace
 library(doParallel)
-cl <- makeCluster(8, type="PSOCK", outfile="")
+cl <- makeCluster(4, type="PSOCK", outfile="")
 registerDoParallel(cl)
 #
-output.list = foreach(j= c(9:16),
+output.list = foreach(j= c(9:12),
 #output.list = foreach(j= to_run,
 											.errorhandling = 'pass') %dopar% {
+												source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+												p_load(microbialForecast)
+
 
 	run_scenarios(j)
 }

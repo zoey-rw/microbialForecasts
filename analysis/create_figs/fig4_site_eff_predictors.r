@@ -5,10 +5,29 @@ library(tidytext)
 site_eff_dredged_in <- readRDS(here("data/summary/site_effects_dredged.rds"))
 unobs_sites <- readRDS(here("data/summary/site_effects_unobserved.rds"))
 
-all.out <- site_eff_dredged_in[[1]]
-pred_sites <- site_eff_dredged_in[[2]]
+obs_sites <- site_eff_dredged_in[[1]] %>% filter(!grepl("other", taxon))
+pred_sites <- site_eff_dredged_in[[2]] %>% filter(!grepl("other", taxon))
 
-all.out <- all.out %>%
+
+obs_sites$predictor_category = recode(obs_sites$predictor, "siOxalate"  = "micronutrient",
+																		"no2Satx" = "macronutrient",
+																		"totalP" = "macronutrient",
+																		"no3Satx" = "macronutrient",
+																		"cecdNh4" = "cations",
+																		"pOxalate"= "macronutrient",
+																		"so4Satx"= "micronutrient",
+																		"mgNh4d" = "micronutrient",
+																		"naNh4d" = "salt",
+																		"mnOxalate" = "salt",
+																		"MAT"	     = "climate",
+																		"feOxalate" = "metal",
+																		"alKcl" = "metal",
+																		"MAP"      = "climate",
+																		"kNh4d"  = "salt",
+																		"caNh4d" = "salt")
+
+
+all.out <- obs_sites %>%
 	group_by(predictor) %>%
 	mutate(importance = round(mean(values), 2)) %>%
 	ungroup() %>%
@@ -31,22 +50,6 @@ all.out <- all.out %>%
 # 																		"kNh4d"  = "macronutrient",
 # 																		"caNh4d" = "macronutrient")
 
-all.out$predictor_category = recode(all.out$predictor, "siOxalate"  = "micronutrient",
-			 "no2Satx" = "macronutrient",
-			 "totalP" = "macronutrient",
-			 "no3Satx" = "macronutrient",
-			 "cecdNh4" = "cations",
-			 "pOxalate"= "macronutrient",
-			 "so4Satx"= "micronutrient",
-			 "mgNh4d" = "micronutrient",
-			 "naNh4d" = "salt",
-			 "mnOxalate" = "salt",
-			 "MAT"	     = "climate",
-			 "feOxalate" = "metal",
-			 "alKcl" = "metal",
-			 "MAP"      = "climate",
-			 "kNh4d"  = "salt",
-			 "caNh4d" = "salt")
 
 # FACET BY PREDICTOR TYPE, compare by MICROBIAL DOMAIN
 	ggplot(all.out,#  %>% filter(rank_only != "functional"),
@@ -68,8 +71,42 @@ all.out$predictor_category = recode(all.out$predictor, "siOxalate"  = "micronutr
 	ylab("Variable importance") +
 	ggtitle("Variables best explaining site random effects") +
 	scale_color_discrete("Domain") +
-	stat_compare_means(method = "t.test", aes(label = ..p.signif..), label.x = 1.5, label.y = .75, show.legend = F, hide.ns = T, size=5)
+	stat_compare_means(method = "t.test", aes(label = ..p.signif..),
+										 label.x = 1.5, label.y = .75, show.legend = F, hide.ns = T, size=5)
 
+
+	group_vals = obs_sites %>%
+		group_by(pretty_group, predictor_category) %>%
+		mutate(mean_importance=mean(values, na.rm=T),
+							sd_importance = sd(values, na.rm=T)) %>%
+		mutate(ymax = mean_importance + 1.96*sd_importance,
+					 ymin = mean_importance - 1.96*sd_importance) %>%
+		arrange(pretty_group, predictor_category)
+
+f_b_category =	ggplot(group_vals,#  %>% filter(rank_only != "functional"),
+				 aes(x = reorder(predictor_category, -mean_importance),
+				 		y = mean_importance,
+				 		color = pretty_group)) +
+		geom_pointrange(aes(ymin = ymin, ymax = ymax,
+												color = pretty_group), position = position_dodge(width = .5)
+										#show.legend = F
+										) + ggtitle(NULL)  +
+		# geom_point(
+		# 					 size=3, alpha = .01) +
+		#facet_wrap(~pretty_group, scales="free") +
+		theme_bw() + theme(
+			text = element_text(size = 16),
+			axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
+			axis.title=element_text(size=18,face="bold")) + xlab("Variable category") +
+		ylab("Importance for \nexplaining site effects") +
+		scale_color_discrete("Domain") +
+		stat_compare_means(method = "t.test",
+											 aes(y = values, label = ..p.signif..),
+											 #label.x = 1.5, label.y = .75,
+											 show.legend = F, hide.ns = T, size=5) #+
+	#	scale_y_sqrt()
+
+f_b_category
 
 
 # FACET BY PREDICTOR, compare by MICROBIAL DOMAIN
