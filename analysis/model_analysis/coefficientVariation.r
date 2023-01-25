@@ -1,53 +1,65 @@
 # Looking at coefficients of variation (volatility) for microbial time series
 
-install.packages("cvequality")
+#install.packages("cvequality")
 library(cvequality)
 
 # Read in microbial abundances
 d <- c(readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_16S_2021.rds"), 
 			 readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS_2021.rds"))
 
-# Only keep functional groups; subset to one rank.
-ranks.keep <- names(d)
-ranks.keep <- ranks.keep[!grepl("bac|fun$", ranks.keep)]
-rank.name <- ranks.keep[1]
-rank.df <- d[[rank.name]] 
-cellulolytic <- d$cellulolytic$cellulolytic
-acidobacteriota <- d$phylum_bac$acidobacteriota
-
-
-sapply(data, function(x) sd(x) / mean(x) * 100)
-
 
 
 scores <- readRDS("./data/summary/CRPS_hindcasts.rds")
-scored_casts_tax <- scores$scored_hindcasts %>% filter(fcast_type=="Taxonomic" & model_name == "all_covariates" & taxon != "other")
 
+# Wide format taxonomic
+scored_casts_tax <- scores$scored_hindcasts %>% filter(fcast_type=="Taxonomic" & model_name == "all_covariates" & taxon != "other")
 scored_casts_tax_wide <- scored_casts_tax %>% 
 	pivot_wider(id_cols = c(timepoint, plotID), names_from = taxon, values_from = truth) %>% 
 	select(-c(timepoint, plotID))
-
-tax_cv <- sapply(scored_casts_tax_wide, function(x) sd(x, na.rm = T) / mean(x, na.rm = T) * 100)
+tax_cv <- sapply(scored_casts_tax_wide, 
+								 function(x) sd(x, na.rm = T) / mean(x, na.rm = T) * 100)
 tax_cv_long <- tax_cv %>% stack()
 colnames(tax_cv_long) <- c("CV", "taxon")
 
-tax_scores <- scores$scored_hindcasts_taxon
-tax_scores <- merge(tax_scores, tax_cv_long)
+
+# Wide format functional group
+scored_casts_fg <- scores$scored_hindcasts %>% 
+	filter(fcast_type=="Functional group" & 
+				 	model_name == "all_covariates" & taxon != "other") %>%  
+	distinct()
+scored_casts_fg_wide <- scored_casts_fg %>% 
+	pivot_wider(id_cols = c(timepoint, plotID), names_from = species, values_from = truth) %>%
+	select(-c(timepoint, plotID))
+fg_cv <- sapply(scored_casts_fg_wide, 
+								 function(x) sd(x, na.rm = T) / mean(x, na.rm = T) * 100)
+fg_cv_long <- fg_cv %>% stack()
+colnames(fg_cv_long) <- c("CV", "taxon")
+
+cv <- rbind(tax_cv_long, fg_cv_long)
+
+tax_scores <- scores$scored_hindcasts_taxon 
+with_scores <- left_join(tax_scores, cv)
 
 
-scores_in <- tax_scores %>% filter(model_name == "all_covariates") %>%
+scores_in <- with_scores %>% filter(model_name == "all_covariates") %>%
 	group_by(pretty_group, pretty_name) %>% 
-	mutate(outlier = ifelse(crps_mean == min(crps_mean), taxon, as.numeric(NA))) 
+	mutate(CV_scale = scale(CV)[,1],
+				 crps_scale = scale(crps_mean)[,1])
+#	mutate(outlier = ifelse(crps_mean == min(crps_mean), taxon, as.numeric(NA))) 
 	
-p <- ggplot(scores_in, aes(x = CV, y = crps_mean)) + 
-	coord_trans(y = "log10") +
+ggplot(scores_in %>% filter(newsite=="Observed site"), 
+			 aes(x = CV_scale, y = crps_scale)) + 
+	#coord_trans(y = "log10") +
 	geom_point(aes(shape = pretty_group, color = pretty_name), #width=.2, #height = 0, 
 							alpha = .4, size=4, 
 							position=position_jitterdodge(dodge.width = 1)) + 
-	facet_wrap(~newsite) +  
-	ylab("Mean continuous ranked probability score (CRPS)") + xlab("Coefficient of Variation") + 
+	#facet_wrap(~newsite) +  
+	ylab("Mean continuous ranked probability score (CRPS)") + 
+	xlab("Coefficient of Variation (scaled by rank)") + 
 	ggtitle("Predictability ~ variability") +
-	theme_minimal(base_size=18) + geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) 
+	geom_smooth(method="lm") +
+	theme_minimal(base_size=18) #+ 
+#	geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) 
 
 
 ggplot(scores_in, aes(x = CV, y = crps_mean)) + 
