@@ -24,8 +24,20 @@ params <- rbind(cbind(params, min.date = "20151101", max.date = "20180101", scen
 								cbind(params, min.date = "20151101", max.date = "20200101", scenario =  "Current only"))
 
 #params <- params[(params$scenario == "Current only"  & params$model_name == "all_covariates"),]
-params <- params[(params$scenario == "Current only"  & params$model_name == "cycl_only"),]
+params <- params[params$`max.date` == "20180101" & params$model_name == "all_covariates",]
 
+# Rerun for some taxa that never saved real values
+# file.list <- list.files("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/single_taxon/",
+# 												pattern = "samples",
+# 												full.names = T, recursive = T)
+# file.list = file.list[grepl("2020", file.list)]
+# info <- file.info(file.list)
+# too_old <- rownames(info[which(info$mtime < "2022-08-01 00:00:00 EDT"),])
+# file.list <- file.list[file.list %in% too_old]
+# to_rerun <- lapply(file.list, FUN = function(x) {
+# 	basename(x) %>% str_split("_") %>% lapply("[[", 4)
+# }) %>% unlist() %>% unique()
+# params <- params[params$species %in% to_rerun,]
 
 # Create function that calls run_MCMC for each uncertainty scenario
 run_scenarios <- function(j, chain, ...) {
@@ -36,20 +48,18 @@ run_scenarios <- function(j, chain, ...) {
 													print(params[j,])
 
 													out <- run_MCMC_single_taxon_bychain(k = params$group[[j]],
-																															 #iter = 500000, burnin = 300000,
-																															 thin = 20,
-																															 #iter = 1001,
-																															 burnin = 150000, init_iter=200000, iter_per_chunk=10000,
+																															 thin = 25,
+																															 burnin = 600000,
+																															 init_iter=750000,
+																															 iter_per_chunk=50000,
 																															 test=F,
-
 																															 #init_iter = 500000, burnin = 300000, iter_per_chunk = 50000,
-																															 scenario ="201511_202001",
+																															 scenario = params$scenario[[j]],
 																															 model_name = params$model_name[[j]],
-																															 #time_period = params$time_period[[j]],
 																															 min.date = params$min.date[[j]],
 																															 max.date = params$max.date[[j]],
 																															 chain_no = chain,
-																																 s = params$species[[j]])
+																																s = params$species[[j]])
 													return(out)
 }
 
@@ -61,7 +71,7 @@ logfile <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/analysi
 cl <- makeCluster(4, type="PSOCK", outfile=logfile)
 registerDoParallel(cl)
 #Run for multiple chains, in parallel (via PSOCK)
-output.list = foreach(chain=c(1:4),
+output.list = foreach(chain=c(5:7),
 											.errorhandling = 'pass') %dopar% {
 												source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 												set.seed(chain)

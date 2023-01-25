@@ -81,13 +81,18 @@ ggarrange(a,b)
 
 
 keep = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/converged_taxa_list.rds")
-keep = keep[keep$median_gbr < 1.3,]
+keep = keep[keep$median_gbr < 3,]
 
 unconverged <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/unconverged_taxa_list.rds")
 
 df_cal_fg_tax_converged = df_cal_fg_tax %>%
 	mutate(taxon_model_rank = paste(taxon, model_name, rank)) %>%
 	#filter(taxon_model_rank %in% keep$taxon_model_rank) %>%
+	filter(!taxon_model_rank %in% unconverged$taxon_model_rank)
+
+
+seas_vals_converged = seas_vals %>%
+	mutate(taxon_model_rank = paste(taxon, model_name, rank)) %>%
 	filter(!taxon_model_rank %in% unconverged$taxon_model_rank)
 
 
@@ -103,16 +108,21 @@ b_vs_f_fcast_type_plot <- ggplot(data=df_cal_fg_tax,
 	#labs(col = "Parameter", title = "Effect sizes of environmental predictors ") +
 	xlab("Domain")+
 	ylab("Absolute effect size") +
-	facet_grid(#rows = vars(fcast_type),
+	facet_grid(rows = vars(fcast_type),
 						 cols = vars(beta), #as.table = T,
 						 drop = T,
 						 scales = "free") +
-	theme_bw() + theme(text = element_text(size = 22),
+	theme_minimal() +
+	theme(text = element_text(size = 22),
 		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
 			angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=22,face="bold")
-	) + stat_compare_means(method="t.test", hide.ns = T, show.legend = F)  + scale_y_log10() # +coord_flip()
-b_vs_f_fcast_type_plot
+		axis.title=element_text(size=20)
+	) + stat_compare_means(method="t.test", hide.ns = T, show.legend = F)  +
+	scale_y_log10()# +coord_flip()
+b_vs_f_fcast_type_plot  + stat_compare_means(
+	aes(label = after_stat(p.signif)),
+	method = "t.test",
+	label.y.npc = .8, hide.ns = T, size=10, show.legend = F)
 
 tukey_list <- list()
 beta_names <- c(#"sin", "cos",
@@ -255,21 +265,23 @@ ggplot(data=df_refit_fg %>% filter(!beta %in% c("sin","cos")),
 
 ##### Cyclical parameter effects (cycl_only) -----
 df_cycl <- sum.all %>% filter(model_name == "cycl_only")
-f_vs_b_cycl <- ggplot(df_cycl,
-						aes(x = beta,y = effSize)) +
+f_vs_b_cycl <- ggplot(seas_vals_converged,
+						aes(x = pretty_group,y = effSize)) +
+	geom_violin(draw_quantiles = c(.5)) +
 	geom_jitter(aes(#shape = as.factor(significant),
-		color = beta), size = 5, height = 0, width=.1, alpha = .5,
+		color = pretty_group), size = 5, height = 0, width=.1, alpha = .1,
 		shape = 16, show.legend = F) + ylim(c(0,.9)) +
-	labs(col = "Parameter", title = "Absolute effect size (refit)") +
-	xlab("Parameter")+
-	ylab(NULL) +
-	facet_grid(rows = vars(fcast_type), cols = vars(group), drop = F,
-						 scales = "free_x", space = "free_x") + #,strip.position="bottom",nrow=2) +
-	theme_bw() + theme(#axis.ticks.x=element_blank(),
-		text = element_text(size = 16),
+	xlab("Domain")+
+	ylab("Seasonal amplitude") +
+	facet_grid(rows = vars(fcast_type),
+						 #cols = vars(group),
+						 #drop = F,
+						 scales = "free", space = "free") + #,strip.position="bottom",nrow=2) +
+	theme_minimal(base_size = 18) + theme(#axis.ticks.x=element_blank(),
 		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
-			angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=22,face="bold"))
+			angle = 320, vjust=1, hjust = -0.05))  +
+	stat_compare_means(
+										 method = "t.test", size=5, label.y.npc = .75, label.x.npc = .4) + scale_y_log10()
 f_vs_b_cycl
 
 

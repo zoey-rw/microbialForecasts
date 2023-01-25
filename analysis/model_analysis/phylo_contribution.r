@@ -29,16 +29,16 @@ merged_tree@phylo$node.label = janitor::make_clean_names(merged_tree@phylo$node.
 
 #### Dec 5 trying again
 merged_fort <- fortify(merged_tree) %>% dplyr::as_data_frame()
-ASVs_betas = ASVs_betas %>% filter(!grepl("other", taxon)) 
+ASVs_betas = ASVs_betas %>% filter(!grepl("other", taxon))
 ASVs_betas[!is.na(ASVs_betas$ASV), ]$ASV = janitor::make_clean_names(ASVs_betas[!is.na(ASVs_betas$ASV), ]$ASV)
 
 # Add in hindcast scores
 scores_list = readRDS(here("data", paste0("summary/scoring_metrics_cv.rds")))
-scores_to_merge = scores_list$scoring_metrics %>% filter(#pretty_group="Bacteria" & 
+scores_to_merge = scores_list$scoring_metrics %>% filter(#pretty_group="Bacteria" &
 																												 	site_prediction=="New time (observed site)" &
-																												 		model_name=="all_covariates" & 
-																												 		!pretty_name %in% c("Functional group", "Diversity")) %>% 
-	ungroup() %>% 
+																												 		model_name=="all_covariates" &
+																												 		!pretty_name %in% c("Functional group", "Diversity")) %>%
+	ungroup() %>%
 	select(taxon, pretty_name, CRPS = CRPS_truncated, RSQ, RSQ.1)
 #scores_to_merge$taxon = janitor::make_clean_names(scores_to_merge$taxon)
 ASVs_betas_scores <- merge(ASVs_betas, scores_to_merge , all.x=T) %>% distinct()
@@ -248,15 +248,15 @@ genus_treedata2 <- merged_fort_beta %>% as.treedata()
 
 genus_treedata_pruned <- ggtree:::drop.tip(genus_treedata, "asv1301", trim.internal = T)
 
-genus_treedata 
+genus_treedata
 
 
-to_keep = merged_fort_beta %>% unnest(cols = c(Temperature, Moisture, pH, pC, `Ectomycorrhizal\ntrees`, LAI, 
-																										sin, cos)) %>% 
+to_keep = merged_fort_beta %>% unnest(cols = c(Temperature, Moisture, pH, pC, `Ectomycorrhizal\ntrees`, LAI,
+																										sin, cos)) %>%
 	filter(isTip & !is.na(label) & rank_only=="genus") %>% group_by(label) %>% dplyr::slice(1) %>% ungroup
 #to_keep = y_genus %>% filter(rank=="ASV" & !is.na(genus_label)) %>% group_by(genus_label) %>% dplyr::slice(1)
 species<-to_keep$label %>% unlist() %>% unique
-genus_treedata <- merged_fort_beta %>% unnest(cols = c(Temperature, Moisture, pH, pC, `Ectomycorrhizal\ntrees`, LAI, 
+genus_treedata <- merged_fort_beta %>% unnest(cols = c(Temperature, Moisture, pH, pC, `Ectomycorrhizal\ntrees`, LAI,
 																											 sin, cos))  %>% filter(!isTip | label %in% species)
 tax_long = pivot_longer(tax, cols=1:7, names_to = "rank", values_to = "label") %>%
 	mutate(label = janitor::make_clean_names(label))
@@ -267,7 +267,7 @@ to_drop =  merged_fort_beta %>% filter(isTip & is.na(pH)) %>% select(label) %>% 
 #genus_treedata_pruned <- ggtree:::drop.tip(as.treedata(genus_treedata), to_drop)
 #genus_treedata_pruned <- drop.tip(genus_treedata2@phylo, to_drop) %>% as.treedata()
 
-genus_tree <- genus_treedata %>% as.treedata %>% 
+genus_tree <- genus_treedata %>% as.treedata %>%
 	ggtree(aes(color=as.numeric(rank)), show.legend = F) +
 	geom_nodelab(geom = "label", aes(label = label), show.legend = F) +
 	scale_color_viridis_c() +
@@ -276,31 +276,32 @@ genus_tree <- genus_treedata %>% as.treedata %>%
 genus_treedata %>%
 	ggtree() +
 	geom_nodelab(geom = "label", aes(label = label, fill=as.numeric(unlist(Temperature))), show.legend = F) +
-	scale_fill_continuous(low = 'blue', high = 'red', 
+	scale_fill_continuous(low = 'blue', high = 'red',
 												na.value = "grey50")
 
 
 
-tree2 = tree_subset(merged_fort_beta %>% as.treedata(), 2, levels_back = 5)  
-tree2 = tree_subset(merged_fort_beta %>% as.treedata(), "phylum/class/order/family/genus")  
+tree2 = tree_subset(merged_fort_beta %>% as.treedata(), 2, levels_back = 5)
+tree2 = tree_subset(merged_fort_beta %>% as.treedata(), "phylum/class/order/family/genus")
+
 
 
 
 library(ggridges)
-ggplot(res_out %>% filter(!is.na(rank) & trait.name != "RSQ.1"), 
-			 aes(x = contributionindex, 
+ggplot(res_out %>% filter(!is.na(rank) & trait.name != "RSQ.1"),
+			 aes(x = contributionindex,
 			 		y = rank,
-			 		group= rank, fill = rank))  + 
-	geom_density_ridges2(aes(alpha=.3), scale = 3) + facet_grid(rows=vars(trait.name), scales = "free") + 
+			 		group= rank, fill = rank))  +
+	geom_density_ridges2(aes(alpha=.3), scale = 3) + facet_grid(rows=vars(trait.name), scales = "free") +
 	theme_bw(base_size = 18)
 
-ggplot(res_out %>% filter(!is.na(rank) & trait.name != "RSQ.1"), 
-			 aes(x = contributionindex, 
+ggplot(res_out %>% filter(!is.na(rank) & trait.name != "RSQ.1"),
+			 aes(x = contributionindex,
 			 		y = rank,
-			 		group= rank, fill = stat(x)))  + 
+			 		group= rank, fill = stat(x)))  +
 	geom_density_ridges_gradient(alpha=.3, scale = 3, show.legend = F) +
-	scale_fill_viridis_c(name = "contributionindex", option = "C")  + 
-	facet_grid(rows=vars(trait.name), scales = "free") + 
+	scale_fill_viridis_c(name = "contributionindex", option = "C")  +
+	facet_grid(rows=vars(trait.name), scales = "free") +
 	theme_ridges()  +
 	scale_x_continuous(trans=scales::pseudo_log_trans(base = 10))
 
@@ -325,4 +326,4 @@ ggplot(data=betas_to_plot %>% filter(!beta %in% c("sin","cos")),
 		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1)) +
 	stat_compare_means(method = "anova")+ # Add global p-value
 	stat_compare_means(aes(label = after_stat(p.signif)),
-										 method = "t.test") 
+										 method = "t.test")

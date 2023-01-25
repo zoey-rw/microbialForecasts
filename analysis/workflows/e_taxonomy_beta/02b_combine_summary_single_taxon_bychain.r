@@ -1,183 +1,160 @@
-# Combine chains
-pacman::p_load(nimble, coda, tidyverse)
+# Combine chains from each taxon model, and create basic summary stats
 source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
+# Do we want to keep all the chain files separately? Deleting them will save space
+delete_samples_files = F
+
+# For interactive use/testing.
 model_name <- "cycl_only"
 model_name <- "all_covariates"
-#for (model_name in c("cycl_only")){
-for (model_name in c("all_covariates")){
+rank <- "order_bac"
+rank <- "order_fun"
+rank <- "phylum_bac"
+rank <- "family_fun"
+rank <- "family_bac"
+rank <- "class_fun"
+rank <- "genus_fun"
+rank <- "genus_bac"
+rank <- "class_bac"
+time_period <- "20151101_20200101"
+time_period <- "20151101_20180101"
+spec = microbialForecast:::rank_spec_names[[rank]][[1]]
 
-	#for (model_name in c("all_covariates", "cycl_only")){
-	print(model_name)
 
+for (model_name in c("all_covariates", "cycl_only")) {
 	file.list <- list.files(path = paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/single_taxon/", model_name),
-													pattern = "_chain",
-													full.names = T)
+			pattern = "_chain",
+			full.names = T)
 
+	# Subset to newer output files
 	info <- file.info(file.list)
-	newer <- rownames(info[which(info$mtime > "2022-08-01 00:00:00 EDT"),])
-	file.list <- file.list[file.list %in% newer]
-	rank <- "order_bac"
-	rank <- "family_fun"
-	rank <- "class_bac"
-	#time_period <- "calibration"
-	time_period <- "20151101_20200101"
+	newer <- rownames(info[which(info$mtime > "2022-08-02 00:00:00 EDT"), ])
+	newer <- rownames(info[which(info$mtime > "2022-12-02 00:00:00 EDT"), ])
 
-	for (rank in microbialForecast:::tax_names[1:10]){
-		print(rank)
+	# Don't want files still being written - at least 2 min old
+	#older <- rownames(info[which(info$mtime < (Sys.time()-120)), ])
+	older <- rownames(info[which(info$mtime < (Sys.time()-3000)), ])
 
-
-		spec = microbialForecast:::rank_spec_names[[rank]][[1]]
-		for (spec in microbialForecast:::rank_spec_names[[rank]]){
-		print(spec)
-			spec_rank = paste0(rank, "_", spec)
-		chain_paths <- file.list[grepl(paste0(spec_rank, "_20"), file.list, fixed=T)]
-		if(length(chain_paths)==0) next()
-			#for (time_period in c("refit")){
-			print(time_period)
-
-			chain_paths_time_period <- chain_paths[grepl(time_period, chain_paths)]
-			if(length(chain_paths_time_period)==0) next()
-
-			savepath <- gsub("_chain[1234]","_summary",chain_paths_time_period[[1]])
-			print(savepath)
-			if (!file.exists(savepath)){
-				# TO DO: remove the problematic chain here
-				#if (rank == "phylum_fun" & model_name == "all_covariates" & time_period == "calibration") chain_paths_time_period <- chain_paths_time_period[c(1,3:4)]#
-				#if (rank == "class_bac" & model_name == "cycl_only") chain_paths_time_period <- chain_paths_time_period[2:4]#
-				#if (rank == "family_bac" & model_name == "cycl_only") chain_paths_time_period <- chain_paths_time_period[2:4]#
-
-				print(chain_paths_time_period)
-
-
-				if(length(chain_paths_time_period)==1) next()
-
-				out <- combine_chains(chain_paths_time_period)
-
-				es <- effectiveSize(out$samples)
-				if (min(es) < 10) {
-					#plot(out$samples[,1:10])
-					#plot(out$samples[,21:30])
-					print(es[1:50])
-				}
-
-				# Calculate summary and save output.
-				param_summary <- fast.summary.mcmc(out$samples)
-				plot_summary <- fast.summary.mcmc(out$samples2)
-
-				out_summary <- list(samples = out$samples,
-														param_summary = param_summary,
-														plot_summary = plot_summary,
-														metadata = out$metadata)
-
-				if (length(out$samples) > 1){
-					gelman_out <- cbind(gelman.diag(out$samples)[[1]], es)
-					out_summary$gelman = out_summary
-				}
-
-				saveRDS(out_summary, savepath, compress = F)
-				cat(paste0("\nSaved summary output for ", model_name, ", ", time_period, ", ",
-									 rank, " to: \n", savepath, "\n"))
-
-
-				# If the summary now exists, delete the chains
-				if (file.exists(savepath)){
-					unlink(chain_paths_time_period)
-				}
-
-
-			} else print("Summary file already exists")
-		}
+	# If deleting sample files, we don't want models still being run - at least 18 hours old
+	if (delete_samples_files) {
+	older <- rownames(info[which(info$mtime < (Sys.time()-64800)), ])
 	}
+
+	file.list <- file.list[file.list %in% newer & file.list %in% older]
+
+	for (rank in microbialForecast:::tax_names[6]) {
+		for (spec in microbialForecast:::rank_spec_names[[rank]]) {
+			for (time_period in c("20151101_20180101")) {
+				#for (time_period in c("20151101_20180101","20151101_20200101")){
+				print(model_name)
+				print(rank)
+				print(spec)
+				print(time_period)
+
+				spec_rank = paste0(rank, "_", spec)
+				spec_rank_time = paste0(rank, "_", spec, "_", time_period)
+				chain_paths <-
+					file.list[grepl(paste0(spec_rank, "_20"), file.list, fixed = T)]
+				chain_paths_time_period <-
+					chain_paths[grepl(time_period, chain_paths)]
+
+
+				savepath <- gsub("_chain[1234567]", "", chain_paths_time_period[[1]])
+
+			if (any(grepl("chain[567]", chain_paths_time_period))) {
+
+				chain_paths_time_period <- chain_paths_time_period[grepl("chain[567]", chain_paths_time_period)]
+
+			}
+
+
+				if (length(chain_paths_time_period) == 0) {
+					next()
+				}
+
+				if (length(chain_paths_time_period) == 1) {
+					message("Skipping ", chain_paths_time_period, "; only one chain")
+					next()
+				}
+
+				# if (samples_exists(chain_paths_time_period[[1]])) {
+				# 	message("Summary file already exists")
+				#
+				#
+				# 	if (delete_samples_files) {
+				# 		unlink(chain_paths_time_period)
+				# 		message("Deleting samples file: ", chain_paths_time_period)
+				# 	}
+				# } else {
+				# 	print(chain_paths_time_period)
+				#
+				# 	# Read in and combine each chain
+				#
+				#
+				# 	# If new chains are 5-7, combine with previous
+				# 	if (grepl("chain[567]", chain_paths_time_period[[1]])) {
+				# 		existing_samples = readRDS(savepath)
+				# 		out = combine_chains_existing(input_list = c(chain_paths_time_period, existing_samples$samples))
+				# 		# Calculate summary on each output subset, using custom summary function
+				# 		param_summary <- fast.summary.mcmc(out)
+				# 		plot_summary <- existing_samples$plot_summary
+				# 		es <- effectiveSize(out)
+				# 		if (length(out) > 1) {
+				# 		gelman_out <- cbind(gelman.diag(out)[[1]], es)
+				# 		} else gelman_out = NULL
+				#
+				# 			metadata = existing_samples$metadata
+				#
+				# 		# Combine and save output
+				# 		out_summary <- list(
+				# 			samples = out,
+				# 			param_summary = param_summary,
+				# 			plot_summary = plot_summary,
+				# 			metadata = metadata,
+				# 			gelman = gelman_out
+				# 		)
+				#
+				# 	} else {
+
+						out <- combine_chains_simple(chain_paths_time_period)
+						# Calculate summary on each output subset, using custom summary function
+						param_summary <- fast.summary.mcmc(out$samples)
+						plot_summary <- fast.summary.mcmc(out$samples2)
+						es <- effectiveSize(out$samples)
+						if (length(out$samples) > 1) {
+							gelman_out <- cbind(gelman.diag(out$samples)[[1]], es)
+						} else gelman_out = NULL
+
+					# Combine and save output
+					out_summary <- list(
+						samples = out$samples,
+						param_summary = param_summary,
+						plot_summary = plot_summary,
+						metadata = out$metadata,
+						gelman = gelman_out
+					)
+					}
+
+					saveRDS(out_summary, savepath, compress = F)
+					message("Saved samples and summary output for ",model_name,", ",time_period,", ",rank," to: ",savepath)
+
+
+if (min(es) < 5) {
+	print(es[1:50])
 }
 
 
 
-chain_paths = chain_paths_time_period
-save = FALSE
-cut_size1 = NULL
-cut_size2 = NULL
-
-combine_chains <- function(chain_paths,
-													 save = FALSE,
-													 cut_size1 = NULL,
-													 cut_size2 = NULL){
-	require(coda)
-	require(tidyverse)
-
-
-	if (is.null(cut_size1)) cut_size1 <- 19999
-	if (is.null(cut_size2)) cut_size2 <- 9999
-
-	readInputRdsFile = function(input_rds){
-		input = tryCatch(readRDS(input_rds),
-										 error = function(c) {
-										 	message("The input *rds is invalid")
-										 	return(NA)
-										 }
-		)
+# If the summary now exists, delete the chains
+if (delete_samples_files){
+	if (samples_exists(chain_paths_time_period[[1]])) {
+		unlink(chain_paths_time_period)
+		message("Deleting samples files, e.g.: ", chain_paths_time_period[[1]])
 	}
+} else message("Not deleting samples files, e.g.: ", chain_paths_time_period[[1]])
 
-
-	# initialize
-	samples <- samples2 <- metadata <- list()
-	for(i in 1:length(chain_paths)){
-
-		print(i)
-		# paste model file path to chain number
-		chain <- readInputRdsFile(chain_paths[[i]])
-		if (is.na(chain)) next()
-		nrow_samples <- nrow(chain[[1]])
-		nrow_samples2 <- nrow(chain[[2]])
-
-		if (nrow_samples < cut_size1) {
-			cut_size1 <- nrow_samples
-		}
-
-		samples[[i]] <- as.mcmc(as.matrix(window(chain[[1]], nrow_samples-cut_size1, nrow_samples, 1)))
-
-
-		if (nrow_samples2 < cut_size2) {
-			cut_size2 <- nrow_samples2
-		}
-		samples2[[i]] <- as.mcmc(as.matrix(window(chain[[2]], nrow_samples2-cut_size1, nrow_samples2, 1)))
-
-		metadata[[i]] <- chain[[3]]
-	}
-
-	samples<-samples[!sapply(samples,is.null)]
-	samples2<-samples2[!sapply(samples2,is.null)]
-	metadata<-metadata[!sapply(metadata,is.null)]
-
-
-	nrows <- lapply(samples, nrow) %>% unlist()
-	min_nrow <- min(nrows)
-	for(i in 1:length(samples)){
-		current_nrow <- nrow(samples[[i]])
-		if (min_nrow < current_nrow){
-			print(i)
-			samples[[i]] <- as.mcmc(as.matrix(window(samples[[i]], (current_nrow-min_nrow+1), current_nrow, 1)))
-		}
-	}
-
-
-	nrows <- lapply(samples2, nrow) %>% unlist()
-	min_nrow <- min(nrows)
-	for(i in 1:length(samples)){
-		current_nrow <- nrow(samples2[[i]])
-		if (min_nrow < current_nrow){
-			print(i)
-			samples2[[i]] <- as.mcmc(as.matrix(window(samples2[[i]], (current_nrow-min_nrow+1), current_nrow, 1)))
-		}
-	}
-
-
-	out <- list(samples = as.mcmc.list(samples),
-							samples2 = as.mcmc.list(samples2),
-							metadata = metadata[[1]])
-
-	if(!isFALSE(save)){
-		saveRDS(out, file = save)
-	}
-	return(out)
-}
+				#}
+		} # End time-period loop
+	} # End species loop
+} # End rank loop
+	} # End model type loop

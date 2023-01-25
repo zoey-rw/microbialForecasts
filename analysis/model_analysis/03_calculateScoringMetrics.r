@@ -85,6 +85,26 @@ cv_tax_per_plot_taxon <- cv_tax_per_plot %>%
 	group_by(pretty_group, rank,taxon) %>%
 	summarize(mean_per_plot_cv = mean(per_plot_cv, na.rm=T))
 
+# from github user T-Engel, https://github.com/T-Engel/CValternatives/blob/master/R/Functions.R
+PV <- function (Z){
+	n = length(Z)
+	pairs = combn(Z,2)
+	min_z = apply(pairs,2, min)
+	max_z = apply(pairs,2, max)
+	z = 1- (min_z/max_z)
+	PV=2*sum(z)/(n*(n-1))
+	return(PV)
+}
+
+PV(truth_vals[truth_vals$plotID=="WOOD_001",]$truth)
+# Get variation per site, then average per taxon
+cv_tax_per_site <- truth_vals %>%
+	group_by(pretty_group, rank,taxon, siteID) %>%
+	summarize(per_site_cv = calc_cv(truth))
+cv_tax_per_site_taxon <- cv_tax_per_site %>% ungroup %>%
+	group_by(pretty_group, rank, taxon) %>%
+	summarize(mean_per_site_cv = mean(per_site_cv, na.rm=T))
+
 # Get variation per site, then average per taxon
 cv_tax_per_site <- truth_vals %>%
 	group_by(pretty_group, rank,taxon, siteID) %>%
