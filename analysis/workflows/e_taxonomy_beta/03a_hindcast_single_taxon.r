@@ -1,16 +1,17 @@
-# hindcast single taxa
+#### Create forecasts for individual taxonomic groups
 
-#Get arguments from the command line
+#### Commands for running as a batch job through OGE cluster ####
+
+# Get arguments from the command line
 argv <- commandArgs(TRUE)
 # Check if the command line is not empty and convert values to numerical values
 if (length(argv) > 0){
 	k <- as.numeric( argv[1] )
 } else k = 1
 
-# Create forecasts for individual taxonomic groups
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+#### Reading in files ####
 
-pacman::p_load(Rfast, moments, scales)
+source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
 # Read in microbial abundances
 cal <- c(readRDS("./data/clean/cal_groupAbundances_16S_2021.rds"),
@@ -18,25 +19,32 @@ cal <- c(readRDS("./data/clean/cal_groupAbundances_16S_2021.rds"),
 val <- c(readRDS("./data/clean/val_groupAbundances_16S_2021.rds"),
 				 readRDS("./data/clean/val_groupAbundances_ITS_2021.rds"))
 
+# Read in model outputs to grab parameter estimates
 single_tax_summaries <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/single_taxon_summaries_201511_201801.rds")
 
-# Loop through each model
+# Read in predicted site effects
+unobs_sites <- readRDS(here("data/summary/site_effects_unobserved.rds"))
 
-# Set some parameters for testing
+# Read in predictor data, just to get the list of sites missing pC data
+all_predictors = readRDS("./data/clean/all_predictor_data.rds")
+
+# Read in list of taxa that passed convergence with simpler model.
+keep_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/converged_taxa_list.rds")
+
+
+#### Set some parameters for testing ####
 # #k = 1
 # #model_name = "cycl_only"
 model_name = "all_covariates"
 time_period = "2015-11_2018-01"
 min.date = "20151101"
 max.date = "20180101"
-
 testing = F
-keep_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/converged_taxa_list.rds")
+#taxon = keep_names[1]
 
 
 #rank_output_list = foreach(k=1:10, .errorhandling = 'pass') %do% {
 #run_single_taxon_fcast <- function(k = 1) {
-
 
 	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
@@ -46,40 +54,30 @@ keep_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data
 	# Filter model estimates for each plot abundance
 	rank_plot_summary <- single_tax_summaries$plot_est %>%
 		filter(time_period == !!time_period &
-					 	model_name == !!model_name &
 					 	rank_name == !!rank.name)
 
-	#rm(single_tax_summaries)
+	#rm(single_tax_summaries); gc()
 
 	cal.rank.df <- cal[[rank.name]]
 	val.rank.df <- val[[rank.name]]
 	rank.df <- rbind(cal.rank.df, val.rank.df)
 
+	# Grab names of taxa to keep
 	keep_names <- colnames(rank.df)[!colnames(rank.df) %in% c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date","other")]
 
-	# Grab names of taxa to keep
-	# keep_names <- keep_list[[rank.name]]$taxon.name
-	#
-	# print(keep_names)
-	taxon = keep_names[1]
-	# taxon = keep_names[2]
-	# taxon = keep_names[4]
-
 	#Run for multiple ranks, in parallel
-	time_period = "2015-11_2018-01"
-
-	cl <- makeCluster(28, type="FORK", outfile="")
+	cl <- makeCluster(27, type="FORK", outfile="")
 	registerDoParallel(cl)
 
 	tax_output_list = foreach(taxon=keep_names, .errorhandling = 'remove') %dopar% {
-	#for (taxon in keep_names) {
 
 		message("Forecasting for taxon: ", taxon)
 
 		keep_vec <- c(taxon, "siteID", "plotID", "dateID", "sampleID", "dates", "plot_date")
 
 		# Prep validation data
-		model.inputs <- prepTaxonomicData(rank.df = rank.df, min.prev = 3,
+		model.inputs <- prepTaxonomicData(rank.df = rank.df,
+																			min.prev = 0,
 																			min.date = min.date,
 																			max.date = "20200101",
 																			full_timeseries = T,
@@ -92,10 +90,12 @@ keep_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data
 
 
 			message("Forecasting with model: ", model_name)
-
+			#rank_taxon = paste0(rank_name, "_", )
 			# Filter model estimates for each plot abundance
 			plot_summary <- rank_plot_summary %>%
-				filter(taxon == !!taxon)
+				#filter(taxon == !!taxon)
+				filter(rank_name == !!rank.name & grepl(!!taxon, rank) &
+							 model_name == !!model_name)
 
 			# Get model outputs
 			f <- file.path("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/single_taxon", model_name,  paste0("samples_", rank.name, "_", taxon, "_", min.date, "_", max.date, ".rds"))
@@ -103,8 +103,24 @@ keep_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data
 			if(!file.exists(f)) next()
 
 			read_in <- readRDS(f)
+
+			# trim.jags <- mcmc.list(read_in$samples[[1]], read_in$samples[[2]])
+			# param_samples <- as.data.frame(as.matrix(trim.jags))
+			#
 			param_samples <- as.data.frame(as.matrix(read_in$samples))
-			truth.plot.long <- model.dat <- read_in$metadata$model_data
+			#truth.plot.long <- model.dat <- read_in$metadata$model_data
+
+
+			rank.df_spec <- rank.df %>%
+				select("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date", !!taxon)
+			rank.df_spec$other <- 1-rank.df_spec[[taxon]]
+			new_model_inputs <- prepTaxonomicData(rank.df = rank.df_spec,
+																				min.prev = 3,
+																				min.date = min.date,
+																				max.date = "20180101")
+
+			truth.plot.long <- model.dat <- new_model_inputs$truth.plot.long
+
 			plot_site_key <- model.dat %>%
 				select(siteID, plotID, dateID, date_num, plot_num, site_num) %>%
 				distinct()
@@ -117,13 +133,20 @@ keep_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data
 				filter(!siteID %in% plot_site_key$siteID)
 			new_site_list <- unique(new_plot_site_key$siteID)
 
-			# Forecast at both observed and unobserved sites
-			full_site_list <- c(site_list, new_site_list)
-			site_output_list <- list()
-			siteID = full_site_list[[1]]
+			if (testing == T) {
+				full_site_list <- c(head(site_list,2), head(new_site_list,2))
+				siteID = new_site_list[[2]]
+			} else {
+				full_site_list <- c(site_list, new_site_list)
+			}
 			#full_site_list <- c(site_list[[1]], new_site_list[[1]])
+
+			# Loop through both observed and unobserved sites
+			site_output_list <- list()
 			for (siteID in full_site_list) {
 				message("SiteID: ", siteID)
+
+				if (siteID %in% all_predictors$site_skip) next()
 
 				#Sample covariate data
 				# covar <- create_covariate_samples(model.inputs, siteID,
@@ -135,6 +158,7 @@ keep_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data
 				plot_list <- unique(plot_key$plotID)
 
 				plot_output_list <- list()
+
 				if (testing == T) {
 				plotID <- plot_list[[1]] #testing
 				plot_list <- plot_list[[1]]
@@ -143,18 +167,49 @@ keep_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data
 				for (plotID in plot_list){
 					message("PlotID: ", plotID)
 
+					# Forecast with known or random site effect
 					#go for it!!!
-					hindcast.plot <- taxa_fcast(plotID,
-																			model.inputs,
-																			param_samples,
-																			truth.plot.long,
-																			plot_summary,
-																			Nmc = 1000)
-						hindcast.plot <- hindcast.plot %>% mutate(model_name = !!model_name,
-																														 time_period = !!time_period,
-																														 species = !!taxon,
-																														 rank_name = !!rank.name,
-																														 fcast_type = "Taxonomic")
+					hindcast.plot <- #microbialForecast::
+						fg_fcast_beta(plotID,
+													model.inputs,
+													param_samples,
+													truth.plot.long,
+													plot_summary,
+													Nmc = 1000,
+													predict_site_effects = NULL,
+													rank.name = rank.name)  %>% mutate(model_name = !!model_name,
+																																	 time_period = !!time_period,
+																																	 species = !!taxon,
+																																	 rank_name = !!rank.name,
+																																	 fcast_type = "Taxonomic group",
+																																	 predicted_site_effect=F,
+																																	 newsite = !!newsite)
+
+					# Forecast with estimated site effect, if available
+					if (newsite){
+						if (!siteID %in% unobs_sites$siteID) next()
+						hindcast.plot_pred_site_eff <- #microbialForecast::
+							fg_fcast_beta(plotID,
+														model.inputs,
+														param_samples,
+														truth.plot.long,
+														plot_summary,
+														Nmc = 1000,
+														predict_site_effects = unobs_sites,
+														rank.name = rank.name)  %>%
+							mutate(model_name = !!model_name,
+										 time_period = !!time_period,
+										 # species = !!rank.name,
+										 # taxon = !!rank.name,
+										 species = !!taxon,
+										 rank_name = !!rank.name,
+										 fcast_type = "Taxonomic group",
+										 predicted_site_effect=T,
+										 newsite = !!newsite)
+						hindcast.plot <- rbind(hindcast.plot,
+																	 hindcast.plot_pred_site_eff)
+					}
+
 	print(tail(hindcast.plot, 1))
 					plot_output_list[[plotID]] <- hindcast.plot
 				}
@@ -168,7 +223,6 @@ keep_list <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data
 		#})
 	}
 	rank_output <- rbindlist(tax_output_list, fill = T)
-	#stopCluster(cl)
 # 	return(rank_output)
 # }
 
