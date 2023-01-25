@@ -1,4 +1,5 @@
 pacman::p_load(scoringRules,reshape2, parallel, lubridate) 
+source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
 crps_in <- readRDS("./data/summary/CRPS_hindcasts.rds")
 
@@ -50,6 +51,7 @@ in_site_rank <- ggplot(crps_in$scored_hindcasts_plot %>% filter(fcast_type != "D
 in_site_rank <- in_site_rank + 	
 	geom_text(data = Tukey_test, aes(x = pretty_name, y = tot, label = Letters_Tukey), col = 2, size = 6, 
 						show.legend = F) 
+
 #####
 in_site_rank
 
@@ -84,11 +86,11 @@ skill_score_taxon_plot
 
 skill_score_rank_allcov <- skill_score %>% filter(model_name == "all_covariates")
 skill_score_rank <- ggplot(skill_score_rank_allcov, 
-			 aes(x = only_rank, y = skill_score, 
+			 aes(x = pretty_name, y = skill_score, 
 			 		color = pretty_group, shape = fcast_type)) + 
 	#	geom_violin(aes(fill = uncert), draw_quantiles = c(0.5), show.legend=F) + 
 	#facet_grid(~model_name, drop = T) +  
-	geom_jitter(aes(x = only_rank, y = skill_score), width=.1, 
+	geom_jitter(aes(x = pretty_name, y = skill_score), width=.1, 
 							height = 0, alpha = .8, size=4) + 
 	#coord_trans(y = "sqrt") +  
 	ylab("Skill score (% change in CRPS)") + xlab(NULL) + 
@@ -96,6 +98,8 @@ skill_score_rank <- ggplot(skill_score_rank_allcov,
 	theme(text = element_text(size = 20),
 				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
 				axis.title=element_text(size=22)) + 
+	guides(shape=guide_legend(title=NULL),
+				 color=guide_legend(title=NULL)) +
 	coord_trans(y=pseudoLog)
 Tukey_test <- tukey(skill_taxon$pretty_name, skill_taxon$skill_score, y.offset = .1) 
 colnames(Tukey_test)[[1]] <- c("pretty_name")
@@ -110,7 +114,7 @@ skill_score_rank
 ##### Compare skill score for F vs B ------
 skill_score_f_vs_b <- ggplot(skill_score %>% filter(model_name == "all_covariates"), 
 														 aes(x = pretty_group, y = skill_score, 
-														 		color = fcast_type, shape = fcast_type)) + 
+														 		color = pretty_name, shape = fcast_type)) + 
 	#	geom_violin(aes(fill = uncert), draw_quantiles = c(0.5), show.legend=F) + 
 	#facet_grid(~model_name, drop = T) +  
 	geom_jitter(aes(x = pretty_group, y = skill_score), width=.1, 
@@ -120,10 +124,29 @@ skill_score_f_vs_b <- ggplot(skill_score %>% filter(model_name == "all_covariate
 	theme(text = element_text(size = 20),
 				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
 				axis.title=element_text(size=22)) + 
+	guides(shape=guide_legend(title=NULL),
+				 color=guide_legend(title=NULL)) +
 	coord_trans(y=pseudoLog)
 skill_score_f_vs_b
 #####
 
+crps_in$scored_hindcasts_plot
+in_site_f_vs_b <- ggplot(crps_in$scored_hindcasts_taxon %>% filter(model_name == "all_covariates",
+																																	 newsite == "Observed site"), 
+														 aes(x = pretty_group, y = crps_mean, 
+														 		color = pretty_name, shape = fcast_type)) + 
+	#	geom_violin(aes(fill = uncert), draw_quantiles = c(0.5), show.legend=F) + 
+	#facet_grid(~model_name, drop = T) +  
+	geom_jitter(aes(x = pretty_group, y = crps_mean), width=.1, 
+							height = 0, alpha = .8, size=4) + 
+	ylab("CRPS") + xlab(NULL) + 
+	theme_minimal(base_size=18) + ggtitle("Predictability at observed sites") + 
+	theme(text = element_text(size = 20),
+				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
+				axis.title=element_text(size=22)) + 
+	guides(shape=guide_legend(title=NULL),
+				 color=guide_legend(title=NULL))
+in_site_f_vs_b
 
 
 
