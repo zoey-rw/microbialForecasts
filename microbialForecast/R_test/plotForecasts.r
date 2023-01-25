@@ -65,8 +65,8 @@ site_plots = "overlap"
 site_plots = NULL
 model_type = "all"
 model_type = "all_covariates"
-input_df = hindcasts
-taxon = "acidobacteriota"
+input_df = all_covariates
+taxon = "actinobacteriota"
 plot_model <- function(input_df,
 											 site_plots = "overlap",
 											 siteID = "HARV",
@@ -135,14 +135,16 @@ if (!taxon %in% c("diversity_ITS","diversity_16S")) p <- p +
 
 if (site_plots == "overlap") {
 	p <- p +
-		geom_ribbon(aes(ymin = lo, ymax = hi, fill = plotID), alpha=0.6) +
+		geom_ribbon(aes(ymin = lo, ymax = hi, fill = plotID), alpha=0.5) +
+		geom_ribbon(aes(ymin = lo_25, ymax = hi_75, fill = plotID), alpha=0.7) +
 		geom_line(aes(y = med, color = plotID, group = plotID), show.legend = F) +
 		geom_jitter(aes(y = as.numeric(truth)), width = .2, height = 0) +
 		xlab(NULL)
 
 } else if (site_plots == "facet") {
 	p <- p +
-		geom_ribbon(aes(ymin = lo, ymax = hi, fill = as.factor(fcast_period))) +
+		geom_ribbon(aes(ymin = lo, ymax = hi, fill = plotID), alpha=0.3) +
+		geom_ribbon(aes(ymin = lo_25, ymax = hi_75, fill = plotID), alpha=0.6) +
 		geom_line(aes(y = med), show.legend = F) +
 		facet_grid(rows = vars(plotID), drop=T, scales="free")  +
 		geom_point(aes(y = as.numeric(truth))) + 	xlab(NULL) +
@@ -281,3 +283,30 @@ plot_summary_inset <- function(input_df,
 library(patchwork)
 
 
+
+plot_model(hindcast_data, taxon = "animal_pathogen", site_plots="facet", siteID= "CPER") + ylim(c(0,.07))
+plot_model(hindcast_data, taxon = "animal_pathogen", site_plots="facet") + ylim(c(0,.07))
+
+
+hindcast_data %>% filter(taxon == "animal_pathogen") %>% ggplot() + geom_boxplot(aes(x = reorder(siteID, truth), y = truth))
+
+
+plot_model(hindcast_data, taxon = "animal_pathogen", site_plots="facet", siteID= "ORNL") + ylim(c(0,.1))
+plot_model(hindcast_data, taxon = "plant_pathogen", site_plots="facet", siteID= "ORNL") + ylim(c(0,.1))
+
+
+hindcast_data %>% filter(taxon %in% c("animal_pathogen","plant_pathogen") & siteID=="ORNL") %>%
+ggplot() +
+	facet_grid(rows=vars(plotID), cols=vars(taxon), drop=T, scales="free") +
+	geom_line(aes(x = dates, y = `50%`), show.legend = F) +
+	geom_ribbon(aes(x = dates, ymin = `2.5%`, ymax = `97.5%`, fill=taxon), alpha=0.2) +
+	geom_ribbon(aes(x = dates, ymin = `25%`, ymax = `75%`, fill=taxon), alpha=0.5) +
+	theme_bw()+
+	scale_fill_brewer(palette = "Paired") +
+	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
+				legend.position = "bottom",legend.title = element_text(NULL),
+				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
+	geom_point(aes(x = dates, y = as.numeric(truth), fill=plotID)) + xlab(NULL) + labs(fill='') +
+	scale_y_log10()
+
+# hindcast_data %>% filter(taxon == "animal_pathogen") %>% ggplot() + geom_point(aes(x = siteID, y = truth))

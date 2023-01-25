@@ -70,6 +70,7 @@ run_MCMC_single_taxon_bychain <- function(k = 1,
                                  max.date = max.date)
 
   out.path <- here("data",paste0("model_outputs/single_taxon/",model_name,"/samples_", rank.name, "_", s, "_",min.date,"_",max.date, ".rds"))
+  out.path2 <- gsub(".rds", paste0("_chain", chain_no, ".rds"), out.path)
 
 
   print(paste("Completed model data for", rank.name, ", group:", s))
@@ -143,8 +144,9 @@ run_MCMC_single_taxon_bychain <- function(k = 1,
 
   out.run<-as.mcmc(as.matrix(compiled$mvSamples))
   out.run2<-as.mcmc(as.matrix(compiled$mvSamples2))
-
-  out.path2 <- gsub(".rds", paste0("_chain", chain_no, ".rds"), out.path)
+  out.run2 <- na.omit(out.run2)
+  # Remove timepoints that had no sampling at all (only zeros)
+  out.run2 <- mcmc(out.run2[, which(colSums(out.run2) != 0)])
 
   saveRDS(list(samples = out.run, samples2 = out.run2, metadata = metadata),
           out.path2)
@@ -160,10 +162,7 @@ run_MCMC_single_taxon_bychain <- function(k = 1,
     # Shorten if more than 10k samples have accumulated
     out.run = window_chain(compiled$mvSamples, max_size = 20000)
     out.run2 <- window_chain(compiled$mvSamples2, max_size = 20000)
-    out.run2 <- na.omit(out.run2)
 
-    # Remove timepoints that had no sampling at all (only zeros)
-    out.run2 <- mcmc(out.run2[, which(colSums(out.run2) != 0)])
 
     saveRDS(list(samples = out.run, samples2 = out.run2, metadata = metadata),
             out.path2)
