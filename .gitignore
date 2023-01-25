@@ -6,6 +6,7 @@
 .Rproj.user/
 */.Rproj.user/
 */microbialForecast/.Rproj.user/
+microbialForecast/.Rproj.user/
 
 # ignore any "old" directories
 */old/
