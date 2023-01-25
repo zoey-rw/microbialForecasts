@@ -1,18 +1,77 @@
 # View predictability by beta effects
+library(cowplot)
+
 source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 library(ggrepel)
 
-predict_scores <- readRDS(here("data/summary/scoring_metrics_cv.rds"))
-cv_metric_scaled <- predict_scores$cv_metric_scaled
+scores_list <- readRDS(here("data/summary/scoring_metrics_cv.rds"))
+cv_metric_scaled <- scores_list$cv_metric_scaled
 
+unconverged = scores_list$unconverged_list %>% filter(median_gbr > 3)
 
-tax_scores <- predict_scores$scoring_metrics_cv %>% filter(model_name == "all_covariates") %>%
-	filter(metric %in% c("CRPS_truncated","RSQ","RSQ.1"))
+scores_list$unconverged_list
+tax_scores <- scores_list$scoring_metrics_cv %>%
+ mutate(taxon_model_rank = paste(taxon, model_name, rank)) %>%
+	filter(!taxon_model_rank %in% unconverged$taxon_model_rank) %>%
+	filter(model_name == "all_covariates" &
+				 	metric %in% c("CRPS_truncated","RSQ","RSQ.1") &
+				 	site_prediction == "New time (observed site)" &
+				 	fcast_type != "Diversity")  %>%
+	filter(metric == "RSQ")
+
 	# group_by(metric) %>%
 	# mutate(CRPS_scale = scale(CRPS_tr)[,1],
 	# 			 predictability = -CRPS_scale)
 
-ggplot(tax_scores, aes(x = score, y = per_site_cv, color = pretty_group)) + geom_point() + geom_smooth() + facet_grid(~metric)
+
+scoreplot = ggplot(tax_scores, aes(x = mean_per_site_cv, y = score)) +
+	geom_smooth(aes(), method = "lm") +
+	stat_cor(
+		aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")),  p.digits = 2)  +
+	theme_pubr() +
+	xlab("Temporal variability (coefficient of variation)") +
+	ylab("Predictability (R2)") +
+	geom_point(aes(color = fcast_type, shape = pretty_group), size=3, alpha = .4)
+
+xplot <- ggplot(tax_scores) +
+	geom_boxplot(aes(x = fcast_type,  y = mean_per_site_cv, fill = fcast_type))  +
+	facet_grid(rows=vars(pretty_group)) +
+	coord_flip() +
+	rremove("legend") + theme_pubr()
+yplot <- ggplot(tax_scores) +
+	geom_boxplot(aes(x = fcast_type,  y = score, fill = fcast_type)) +
+	facet_grid(~pretty_group) +
+	rremove("legend") + theme_pubr(x.text.angle = 290)
+
+grobs <- ggplotGrob(scoreplot)$grobs
+legend <- grobs[[which(sapply(grobs, function(x) x$name) == "guide-box")]]
+
+# yplot <- yplot + clean_theme() +
+# 	rremove("legend")
+# xplot <- xplot + clean_theme()
+
+scoreplot <- scoreplot +
+	rremove("legend")
+
+plot_grid(xplot, legend, scoreplot, yplot, ncol = 2, align = "hv",
+					rel_widths = c(2, 1), rel_heights = c(1, 2))
+
+
+
+ggplot(tax_scores, aes(x = score, y = per_site_cv)) +
+	geom_point(aes( color = pretty_group), alpha=.5) +
+	geom_smooth(span=1, position=position_jitter(height = .01, width = .01), method="loess") +
+#	facet_grid(~metric) +
+	stat_cor(
+		aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")),
+		p.digits = 1, label.x.npc = .65, label.y.npc = .65) +
+	#geom_rug(aes( color = pretty_group), alpha=.05, sides="t", show.legend = F) +
+	geom_rug(aes( color = pretty_group), alpha=.05, sides="r") +
+		theme_minimal(base_size = 18) +
+	ylab("Patchiness (variation within site)") +
+	xlab("Predictability (RSQ at new times)") +
+	labs(color="Domain") + coord_flip()
+
 
 ggplot(tax_scores, aes(x = pretty_group, y = per_site_cv, color = pretty_group)) + geom_point()
 
