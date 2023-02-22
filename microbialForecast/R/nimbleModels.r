@@ -362,3 +362,6 @@ nimbleModFunctional_trunc <- nimbleCode({
 		beta[n] ~ dnorm(0, sd = 1)
 	}
 }) #end NIMBLE model.
+
+
+

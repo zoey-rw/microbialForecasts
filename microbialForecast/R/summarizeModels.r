@@ -378,8 +378,8 @@ summarize_fg_beta_model <- function(file_path, save_summary = NULL, overwrite=NU
 	} else {
 		time_period <- tail(info, 2) %>% paste0(collapse = "_") %>% str_replace(".rds", "")
 	}
-	rank.name <- info %>% head(-2) %>% tail(-2) %>% paste0(collapse = "_")
-	species <- info %>% head(-2) %>% tail(-2) %>% paste0(collapse = "_")
+	rank.name <- info %>% head(3) %>% tail(2) %>% paste0(collapse = "_")
+	species <- info %>% tail(3) %>% head(1) %>% paste0(collapse = "_")
 	rank_only <- info[[3]]
 	fg_cat <- assign_fg_categories(species)
 	group <- assign_fg_kingdoms(fg_cat)

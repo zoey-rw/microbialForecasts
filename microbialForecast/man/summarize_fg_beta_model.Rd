@@ -5,7 +5,12 @@
 \title{@title summarize_fg_beta_model
  @description Summarize beta regression models for functional groups}
 \usage{
-summarize_fg_beta_model(file_path, save_summary = NULL, drop_other = TRUE)
+summarize_fg_beta_model(
+  file_path,
+  save_summary = NULL,
+  overwrite = NULL,
+  drop_other = TRUE
+)
 }
 \description{
 @title summarize_fg_beta_model
