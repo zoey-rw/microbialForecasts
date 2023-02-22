@@ -3,26 +3,64 @@
 pacman::p_load(scoringRules, reshape2, parallel, lubridate, data.table, ggforce)
 source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
-# Read in hindcast data
-hindcast_201306_201701 <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/all_hindcasts_201306_201701.rds")
-hindcast_fg_201306_201701 <- hindcast_201306_201701 %>%
-	filter(fcast_type == "Functional group") %>%
-	mutate(time_period = "2013-06_2017-01")
-
-hindcast_201511_201801 <- readRDS("./data/summary/hindcast_fg_2015-11_2018-01.rds")
+# Read in hindcasts
 hindcast_201511_201801 <- readRDS("./data/summary/beta_hindcast_fg_2015-11_2018-01.rds")
 #hindcast_201511_201801 <- readRDS("./data/summary/hindcast_fg.rds")
 
-hindcast_201511_201801
-category_ingo
-# from fig1 script
-fg_rsq <- hindcast_rsq %>% filter(fcast_type=="Functional group")
+# Read in hindcast scores
+scores_list = readRDS(here("data", paste0("summary/scoring_metrics_cv.rds")))
+
+# Subset to functional groups
+fcast_info_simple <- scores_list$scoring_metrics_site_lon %>% ungroup %>%
+	select(fcast_type, pretty_group, model_name, pretty_name, taxon) %>%
+	distinct()
+fg_rsq <- scores_list$scoring_metrics_long %>%
+	filter(metric %in% c("RSQ.1","RSQ")) %>%
+	mutate(score = ifelse(score < 0, 0, score)) %>%
+	filter(model_name == "all_covariates" & fcast_type == "Functional group") %>%
+	distinct()  %>%
+	merge(fcast_info_simple, all.x=T, all.y=F)
 fg_rsq$fg_category <- microbialForecast:::assign_fg_categories(fg_rsq$taxon)
+fg_rsq$fg_source <- assign_fg_sources(fg_rsq$taxon)
 
 
 
-ggplot(fg_rsq, aes(x = fg_category, y = as.numeric(RSQ.1)))  + geom_boxplot() +
-	geom_jitter( size=3, width = .1, height=0, alpha=.5) + xlab(NULL) + labs(fill='') + stat_compare_means() + theme_bw()
+# Looking at assignment method
+ggplot(fg_rsq %>%
+			 	filter(metric %in% "RSQ.1" & site_prediction == "New time (observed site)"),
+			 aes(x = fg_source, y = as.numeric(score)))  +
+	geom_boxplot() +
+	geom_jitter(aes(color=pretty_group), size=3, width = .1, height=0, alpha=.5) +
+	xlab(NULL) + labs(fill='') +
+	stat_compare_means() + theme_bw(base_size = 18) + facet_grid(metric~site_prediction) +
+	theme(
+		axis.text.x=element_text(
+			angle = 320, vjust=1, hjust = -0.05)	)
+
+# Looking at functional group category
+ggplot(fg_rsq %>%  filter(metric %in% "RSQ.1" & site_prediction == "New time (observed site)"), aes(x = fg_category, y = as.numeric(score)))  +
+	geom_boxplot() +
+	geom_jitter( size=3, width = .1, height=0, alpha=.1) +
+	xlab(NULL) + labs(fill='') +
+	stat_compare_means() + theme_bw()  + theme_bw(base_size = 18) +
+	facet_grid(metric~site_prediction) +
+	theme(
+		axis.text.x=element_text(
+			angle = 320, vjust=1, hjust = -0.05)	)
+
+
+# Not restricted by site-pred type or metric
+ggplot(fg_rsq, aes(x = fg_category, y = as.numeric(score)))  +
+	geom_boxplot() +
+	geom_jitter(aes(color=pretty_group), size=3, width = .1, height=0, alpha=.1) +
+	xlab(NULL) + labs(fill='') +
+	stat_compare_means() + theme_bw() + facet_grid(metric~site_prediction)
+
+ggplot(fg_rsq, aes(x = fg_source, y = as.numeric(score)))  +
+	geom_boxplot() +
+	geom_jitter(aes(color=pretty_group), size=3, width = .1, height=0, alpha=.1) +
+	xlab(NULL) + labs(fill='') +
+	stat_compare_means() + theme_bw() + facet_grid(metric~site_prediction)
 
 
 

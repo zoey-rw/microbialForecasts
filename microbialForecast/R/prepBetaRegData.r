@@ -3,23 +3,24 @@
 # k <- 1
 # j <- 1
 #
-# Read in covariate data
+# # Read in covariate data
 # chem_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")
 # dom_soil_horizons <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/dominantHorizonsSite.rds")
 # predictor_data <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/all_predictor_data.rds")
 # #
 # min.prev = 3;
 # min.date = "20151101"
+# min.date = "20130601"
 # max.date = "20180101"
 # dom_soil_horizons <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/dominantHorizonsSite.rds")
 # predictor_data <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/all_predictor_data.rds")
 # full_timeseries = F
 
 
-#' @title 			prepTaxonomicData
-#' @description prepTaxonomicData
+#' @title 			prepBetaRegData
+#' @description prepBetaRegData
 #' @export
-prepTaxonomicData <- function(rank.df,
+prepBetaRegData <- function(rank.df,
 															min.date = "20130601",
 															max.date = "20170101",
 															predictor_data = NULL, #readRDS("./data/clean/all_predictor_data.rds"),
@@ -44,17 +45,17 @@ prepTaxonomicData <- function(rank.df,
 
 
 	if (!is.null(keep_vec)){
-	dat <- dat[,colnames(rank.df) %in% keep_vec]
+		dat <- dat[,colnames(rank.df) %in% keep_vec]
 	}
-#	colnames(dat) <- lapply(strsplit(colnames(dat), "\\."), "[[", 1)
+	#	colnames(dat) <- lapply(strsplit(colnames(dat), "\\."), "[[", 1)
 
 
 	# If more than one species + other, replace species with other column
 	if (ncol(dat) > 8) {
-			tots <- rowSums(dat[,7:ncol(dat)])
-			dat$other <- 1-tots
-			# Remove samples where more than 99% of reads are "Other"
-			dat <- dat %>% filter(tots > .01)
+		tots <- rowSums(dat[,7:ncol(dat)])
+		dat$other <- 1-tots
+		# Remove samples where more than 99% of reads are "Other"
+		dat <- dat %>% filter(tots > .01)
 	}
 
 	#Remove sites missing key covariates
@@ -128,6 +129,7 @@ prepTaxonomicData <- function(rank.df,
 	siteID = dat_subset$siteID
 	plotID = dat_subset$plotID
 	plot_num			<- match(plotID, names(plot_start))
+	expanded_dat$plot_num			<- match(expanded_dat$plotID, names(plot_start))
 	plot_site 		<- substr(names(plot_start), 1, 4)
 	plot_site_num <- match(plot_site, names(site_start))
 

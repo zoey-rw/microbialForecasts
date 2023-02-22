@@ -920,3 +920,96 @@ order_betas <- function(beta) {
 																			"Moisture","rho"))
 	return(ordered)
 }
+
+
+
+
+#' @title invlogit
+#' @description # invlogit
+#'
+#' @export
+invlogit = function(x) exp(x)/(1+exp(x))
+
+
+
+
+#' @title convert beta params
+#' @description # convert mean/sd values to shape values
+#'
+#' @export
+#'
+convert_beta_params = function(mu, sd){
+	var = sd^2
+
+	# Wiki parameterization
+	alpha = mu * ((mu * (1-mu))/var - 1)
+	beta = (1 - mu) * ((mu * (1-mu))/var - 1)
+	# Looks right to me
+	#hist(rbeta(10000, alpha, beta))
+
+	# Nimble parameterization
+	shape1 = mu^2 * (1-mu)/var - mu
+	shape2 = mu * (1-mu)^2/var + mu - 1
+
+
+	# Colin parameterization
+	tau = exp(var) # i might be getting this wrong
+	tau = exp(sd) # i might be getting this wrong
+	p = mu * tau
+	q = (1 - mu) * tau
+
+	if (shape1 < 0) message("Negative shape1 parameter")
+	if (shape2 < 0) message("Negative shape2 parameter")
+	if (alpha < 0) message("Negative alpha parameter")
+	if (beta < 0) message("Negative beta parameter")
+
+	return(list(nimble = c(shape1, shape2),
+							orig = c(alpha, beta),
+				 colin = c(p, q)))
+}
+
+
+# ## ################################################
+# ## A DISTRIBUTION GIVING THE LOGIT OF A BETA DISTRIBUTION ##
+# ## ################################################
+# dLogitBeta <- nimbleFunction (
+# 	## Returns density of x where
+# 	##                    y ~ Beta(a1,a2)
+# 	##                    x = logit(y)
+# 	run = function(x = double(0),
+# 								 shape1=double(0, default=1.0),
+# 								 shape2=double(0, default=1.0),
+# 								 log = integer(0, default=0)) {
+# 		returnType(double(0))
+# 		y = ilogit(x)
+# 		logProbX = log(y) + log(1 - y) + dbeta(y, shape1=shape1, shape2=shape2, log=TRUE) ## Via change of variables
+# 		if (log)
+# 			return(logProbX)
+# 		return(exp(logProbX))
+# 	}
+# )
+#
+# rLogitBeta <- nimbleFunction (
+# 	## Generates y ~ Beta(a1,a2)
+# 	## Returns   x = logit(y)
+# 	run = function(n = integer(0, default=1),
+# 								 shape1 = double(0, default=1.0),
+# 								 shape2 = double(0, default=1.0)) {
+# 		returnType(double(0))
+# 		if(n != 1)
+# 			nimPrint("Warning: rLogitBeta only allows n = 1; Using n = 1.\n")
+# 		y <- rbeta(1, shape1=shape1, shape2=shape2)
+# 		x <- logit(y)
+# 		return(x)
+# 	}
+# )
+#
+# registerDistributions(list(dLogitBeta = list(
+# 	BUGSdist = "dLogitBeta(shape1, shape2)",
+# 	discrete = FALSE,
+# 	types    = c("value=double(0)"), ## , "para=double(0)"
+# 	pqAvail  = FALSE)))
+#
+
+
+

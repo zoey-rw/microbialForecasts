@@ -33,6 +33,12 @@ cycl_vals <- seas_vals %>% filter(time_period == "2015-11_2018-01" &
 all_cov_vals <- seas_vals %>% filter(time_period == "2015-11_2018-01" &
 																		 	model_name == "all_covariates")
 
+cycl_vals_refit <- seas_vals %>% filter(time_period == "2015-11_2020-01" &
+																		model_name == "cycl_only")
+all_cov_vals_refit <- seas_vals %>% filter(time_period == "2015-11_2020-01" &
+																		 	model_name == "all_covariates")
+
+
 ggplot(data = seas_vals_converged %>% filter(model_name=="cycl_only"),
 			 aes(x = pretty_group,y = amplitude,
 														 color = pretty_group)) +
@@ -155,7 +161,7 @@ d <- ggplot(cycl_vals, aes(x = fcast_type,y = amplitude,
 d
 ggarrange(c,d, nrow=1)
 
-saveRDS(list(all_cov_vals, cycl_vals), here("data/summary/seasonalAmplitude.rds"))
+saveRDS(list(all_cov_vals, cycl_vals, all_cov_vals_refit, cycl_vals_refit), here("data/summary/seasonalAmplitude.rds"))
 
 
 seas_in = readRDS(here("data/summary/seasonalAmplitude.rds"))

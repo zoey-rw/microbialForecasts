@@ -26,6 +26,7 @@ site_time_scores_to_plot = scores_list$scoring_metrics %>%
 				 	fcast_type !="Diversity" &
 				 	!grepl("random", site_prediction))
 
+
 rank_vals = site_time_scores_to_plot %>% filter(grepl("observed", site_prediction))
 rank_means = rank_vals %>% ungroup() %>%
 	group_by(fcast_type, pretty_group, model_name, pretty_name, rank) %>%
@@ -33,6 +34,7 @@ rank_means = rank_vals %>% ungroup() %>%
 						sd_RSQ = sd(RSQ, na.rm=T)) %>%
 	mutate(ymax = mean_RSQ + 1.96*sd_RSQ,
 				 ymin = mean_RSQ - 1.96*sd_RSQ) %>% arrange(pretty_group, pretty_name)
+
 
 
 # Get mean values for plotting
@@ -47,12 +49,27 @@ skill_score_to_plot = skill_score_vals %>% ungroup() %>%
 
 
 
+tukey2 = function (x, y, extra_info = NULL, y.offset = 0.3)
+{
+	new.df <- cbind.data.frame(x = x, y = y)
+	abs_max <- max(new.df[, 2], na.rm=T)
+	maxs <- new.df %>% group_by(x) %>% summarise(tot = max(y, na.rm=T) +
+																							 	y.offset * abs_max)
+	Tukey_test <- aov(y ~ x, data = new.df) %>% agricolae::HSD.test("x",
+																																	group = TRUE) %>% .$groups %>% as_tibble(rownames = "x") %>%
+		rename(Letters_Tukey = "groups") %>% dplyr::select(-y) %>%
+		left_join(maxs, by = "x")
+	if (!is.null(extra_info)) {
+		Tukey_test <- cbind.data.frame(Tukey_test)
+	}
+	return(Tukey_test)
+}
 
 # Calculate Tukey groups
 tukey_list <- list()
 for (pretty_group in c("Bacteria","Fungi")){
 	group_df <- rank_vals %>% filter(pretty_group == !!pretty_group)
-	out <- tukey(group_df$pretty_name, group_df$RSQ	, y.offset = .1)
+	out <- tukey2(group_df$pretty_name, group_df$RSQ	, y.offset = .1)
 	tukey_list[[pretty_group]] <- out %>% mutate(pretty_group = !!pretty_group)
 }
 tukey_list_newtime <- data.table::rbindlist(tukey_list)
