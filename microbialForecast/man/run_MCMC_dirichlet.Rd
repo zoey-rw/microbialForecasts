@@ -7,7 +7,7 @@
 run_MCMC_dirichlet(
   k = 1,
   iter = 1000,
-  init_iter = 100000,
+  init_iter = 1e+05,
   iter_per_chunk = 10000,
   burnin = 500,
   thin = 1,
