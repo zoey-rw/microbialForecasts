@@ -1,74 +1,102 @@
 # Visualize hindcasts for best/worst of each group
 pacman::p_load(scoringRules, reshape2, parallel, lubridate, data.table, ggforce, ggrepel)
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
 library(sp)
 library(rgdal)
 library(cowplot)
 
 # Read in hindcast data
-hindcast_in <- readRDS("./data/summary/all_hindcasts.rds")
+hindcast_in <- readRDS(here("data/summary/all_hindcasts.rds"))
+scores_list = readRDS(here("data/summary/scoring_metrics_cv.rds"))
+scores_list$converged_list
 # Remove first timepoint from calibration
-hindcast = hindcast_in %>% filter(!(fcast_period=="calibration" & is_any_start_date)) %>%
-	filter(fcast_type != "Diversity")
+# hindcast = hindcast_in %>%
+# 	filter(!(fcast_period=="calibration" & is_any_start_date)) %>%
+# 	mutate(timepoint = date_num)
+
+hindcast=hindcast_in %>%
+	mutate(timepoint = date_num)
+
 hindcast$month <- lubridate::month(hindcast$dates)
 hindcast$month_label <- lubridate::month(hindcast$dates, label = T)
 
 # Add duplicated data row so that plotting ribbons are continuous.
 max_cal_date <- hindcast %>%
-	group_by(taxon, plotID) %>%
+	group_by(taxon_name, plotID) %>%
 	filter(fcast_period=="calibration") %>%
-	filter(timepoint == max(timepoint)) %>%
+	filter(timepoint == max(timepoint, na.rm=T)) %>%
 	mutate(fcast_period="hindcast")
 hindcast <- rbind.data.frame(hindcast, max_cal_date)
+
+all_cov_hindcast = hindcast %>% filter(is.na(site_prediction) | grepl("observed", site_prediction))
+																			 # is.na(site_prediction) |
+																			 # 	site_prediction != "New time x site (random effect)")
+# select_hindcasts <- all_cov_hindcast %>% filter(model_name == "all_covariates" & taxon %in% c("cellulolytic","nitrification","heat_stress","plant_pathogen","copiotroph","acidobacteriota"))
+
+select_hindcasts <- all_cov_hindcast %>% filter(model_name == "env_cycl" & taxon %in% c("ectomycorrhizal","denitrification"))
+
+select_plots <- c("HARV_033","HARV_004","KONZ_001","KONZ_002")
+select_plots <- c("HARV_033","HARV_004","KONZ_001","WOOD_001")
+select_plots <- c("CPER_001","WOOD_001","BART_001","HARV_001")
+select_plots <- c("HARV_033","OSBS_026","WOOD_044","KONZ_001")
+
+# plots from hindcast "test" runs
+select_plots <- c("BART_001","CPER_001","BLAN_001","CLBJ_001")
+select_plots <- c("CPER_046","CPER_047","OSBS_003","OSBS_029")
+
+
+ggplot(select_hindcasts  %>% filter(
+																			plotID %in% select_plots), aes(fill=species, x = dates, y =med, group=plotID)) +
+	facet_grid(cols=vars(siteID),
+						 rows=vars(species),
+						 #cols=vars(factor(siteID, levels=c('KONZ','HARV'))),
+						 drop=T, scales="free"    ) +
+	#rows = vars(fcast_type), drop=T, scales="free") +
+	geom_ribbon(data = ~filter(.x, fcast_period=="calibration"),
+							aes(x = dates,ymin = lo, ymax = hi), alpha=0.2) +
+	geom_ribbon(data = ~filter(.x, fcast_period=="calibration"),
+							aes(x = dates,ymin = lo_25, ymax = hi_75), alpha=.5) +
+	geom_ribbon(data = ~filter(.x, fcast_period=="hindcast"),
+							aes(x = dates, ymin = lo_25, ymax = hi_75), alpha=0.3) +
+	geom_ribbon(data = ~filter(.x, fcast_period=="hindcast"),
+							aes(x = dates, ymin = lo, ymax = hi), alpha=0.1) +
+	geom_line(data = ~filter(.x, fcast_period=="calibration"),
+						alpha=0.8) +
+	geom_line(data = ~filter(.x, fcast_period=="hindcast"),
+						aes(x = dates, y = med), alpha=0.3) +
+	geom_point(aes(y = as.numeric(truth)), position = position_jitter()) +
+	xlab(NULL) + labs(fill='') +
+	scale_fill_brewer(palette = "Set2") +
+	scale_color_brewer(palette = "Set2") +
+	theme(panel.spacing = unit(.4, "cm"),
+				legend.position = "bottom",legend.title = element_text(NULL),
+				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
+	ggtitle("Hindcasts at 4 plots") +
+	theme_minimal(base_size = 20) +
+	scale_y_sqrt() +
+	theme(legend.position = "none")
+
+
 
 
 
 #hindcast_in$fcast_period <- ifelse(hindcast_in$dates > "2018-01-01", "hindcast", "calibration")
 
 converged <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/converged_taxa_list.rds")
-converged <- converged %>% filter(median_gbr < 1.5 & model_name == "all_covariates")
 
 
-# Read in CRPS scores
-scores_list <- readRDS("./data/summary/scoring_metrics_cv.rds")
-crps_by_group <- scores_list$scoring_metrics %>% filter(fcast_type != "Diversity")
-best_per_group <- crps_by_group %>%
-	filter(model_name == "all_covariates" & grepl("observed", site_prediction)) %>%
-	group_by(fcast_type) %>%
-	filter(RSQ.1 > 0) %>%
-	filter(CRPS_truncated == min(CRPS_truncated, na.rm=TRUE))
-worst_per_group <- crps_by_group %>%
-	filter(model_name == "all_covariates" & grepl("observed", site_prediction)) %>%
-	group_by(fcast_type) %>%
-	filter(CRPS_truncated == max(CRPS_truncated, na.rm=TRUE))
-
-
-select_hindcasts <- hindcast %>% filter(model_name == "all_covariates" & taxon %in% c("cellulolytic","nitrification","chitin_complex","mortierellales","trichoderma"))
-
-
-bad_hindcasts <- hindcast %>% filter(model_name == "all_covariates" & taxon %in% worst_per_group$taxon)
-good_hindcasts <- hindcast %>% filter(model_name == "all_covariates" & taxon %in% best_per_group$taxon)
-
-# Get best plots for examples (most calibration AND validation points)
-not_na_hindcast <- hindcast %>% filter(fcast_period == "hindcast" & !is.na(truth))
-not_na_calibration <- hindcast %>% filter(fcast_period == "calibration" & !is.na(truth))
-plot_hindcast_counts <- sort(table(not_na_hindcast$plotID))
-plot_calibration_counts <- sort(table(not_na_calibration$plotID))
-top_hindcast_plots <- names(tail(plot_hindcast_counts, 50))
-top_calibration_plots <- names(tail(plot_calibration_counts, 30))
-top_plots <- intersect(top_hindcast_plots, top_calibration_plots)
-top_plots
-# Filter to those plots
-good_hindcasts_top_plots <- good_hindcasts[good_hindcasts$plotID %in% top_plots,]
-bad_hindcasts_top_plots <- bad_hindcasts[bad_hindcasts$plotID %in% top_plots,]
 
 select_plots <- c("HARV_033","OSBS_026","WOOD_044","KONZ_001")
 select_plots <- c("HARV_033","WOOD_044")
 select_plots <- c("HARV_033","KONZ_001")
 select_plots <- c("HARV_033","HARV_004","HARV_001","HARV_034")
 select_plots <- c("HARV_033","HARV_004","KONZ_001","KONZ_002")
+select_plots <- c("HARV_033","HARV_004","KONZ_001","KONZ_002")
 
-select_hindcasts <- hindcast %>% filter(model_name == "all_covariates" & taxon %in% c("chitin_complex","mortierellales"))
+select_plots <- c("BART_001","CPER_001","BLAN_001","CLBJ_001")
+
+
+select_hindcasts <- hindcast %>% filter(model_name == "env_cycl" & taxon %in% c("chitin_complex","ectomycorrhizal","mortierellaceae"))
 # select_hindcasts <- hindcast %>% filter(model_name == "all_covariates" & taxon %in% c("actinobacteriota","acidobacteriota"))
 
 select_hindcasts_top_plots <- select_hindcasts[select_hindcasts$plotID %in% top_plots,]
@@ -80,8 +108,8 @@ select_hindcasts_cycl_only <- hindcast %>% filter(model_name == "cycl_only" &
 
 
 # New facet label names for supp variable
-tax.labs <- c("Bacteria (chitin-enriched)", "Fungi (Order: Mortierellales)")
-names(tax.labs) <- c("chitin_complex", "mortierellales")
+tax.labs <- c("Bacteria (chitin-enriched)", "Fungi (Order: Mortierellales)", "Fungi (ectomycorrhizae)")
+names(tax.labs) <- c("chitin_complex", "mortierellales","ectomycorrhizal")
 # New facet label names for supp variable
 site.labs <- c("Harvard Forest, MA", "Konza Prairie, KS")
 names(site.labs) <- c("HARV", "KONZ")
@@ -89,9 +117,9 @@ names(site.labs) <- c("HARV", "KONZ")
 
 # COlor by species
 examples = ggplot(select_hindcasts_select_plots, aes(fill=species, x = dates, y =med, group=plotID)) +
-	facet_grid(cols=vars(siteID),
+	facet_grid(#cols=vars(siteID),
 						 rows=vars(species),
-						 #cols=vars(factor(siteID, levels=c('KONZ','HARV'))),
+						 cols=vars(factor(siteID, levels=c('KONZ','HARV'))),
 						 drop=T, scales="free",
 						 labeller = labeller(species = tax.labs, siteID = site.labs)
 	) +
@@ -123,7 +151,7 @@ examples = ggplot(select_hindcasts_select_plots, aes(fill=species, x = dates, y 
 	scale_y_sqrt() +
 	theme(legend.position = "none")
 
-
+examples
 
 
 options(stringsAsFactors=F)
@@ -250,7 +278,7 @@ dev.off()
 
 
 
-seasonality= readRDS(here("data/summary/seasonalAmplitude.rds"))
+seasonality= readRDS(here("data/summary/seasonal_amplitude.rds"))
 all_cov_vals = seasonality[[1]]
 cycl_vals = seasonality[[2]]
 all_cov_vals_refit = seasonality[[3]]
@@ -260,7 +288,19 @@ taxon_name = "mortierellales"
 taxon_name = "chitin_complex"
 taxon_names = c("mortierellales", "chitin_complex")
 
+taxon_names = unique(cycl_vals$taxon)
+
+
+input_dateID = c("201401","201402","201403","201404","201405","201406","201407","201408","201409","201410","201412")
+input_months = rep(seq(1:12),2)
+dates = fixDate(input_dateID)
+dates_month = lubridate::month(dates)
+input_date_df = data.frame(x = dates_month,
+													 dates = dates,
+													 dates_month_label = lubridate::month(dates_month, label = T))
+
 plot_list = list()
+out_seas_vals = list()
 for (taxon_name in taxon_names) {
 
 alpha = cycl_vals[cycl_vals$taxon==taxon_name,]$sin
@@ -272,24 +312,28 @@ beta_refit = cycl_vals_refit[cycl_vals_refit$taxon==taxon_name,]$cos
 alpha2_refit = all_cov_vals_refit[all_cov_vals_refit$taxon==taxon_name,]$sin
 beta2_refit = all_cov_vals_refit[all_cov_vals_refit$taxon==taxon_name,]$cos
 
-df = data.frame(x = select_hindcasts_select_plots$month,
-								dates = select_hindcasts_select_plots$dates)
+# df = data.frame(x = input_date_df$month,
+# 								dates = input_date_df$dates)
+df = input_date_df
 df$y_cycl = alpha * sin(2*pi*df$x/12) + beta * cos(2*pi*df$x/12)
-df$y_allcov = alpha2 * sin(2*pi*df$x/12) + beta2 * cos(2*pi*df$x/12)
-df$y_allcov_refit = alpha2_refit * sin(2*pi*df$x/12) + beta2_refit * cos(2*pi*df$x/12)
-df$y_cycl_refit = alpha_refit * sin(2*pi*df$x/12) + beta_refit * cos(2*pi*df$x/12)
+# df$y_allcov = alpha2 * sin(2*pi*df$x/12) + beta2 * cos(2*pi*df$x/12)
+# df$y_allcov_refit = alpha2_refit * sin(2*pi*df$x/12) + beta2_refit * cos(2*pi*df$x/12)
+# df$y_cycl_refit = alpha_refit * sin(2*pi*df$x/12) + beta_refit * cos(2*pi*df$x/12)
+
+out_seas_vals[[taxon_name]] = df %>% mutate(taxon_name = !!taxon_name)
 
 seasonal_cycl = ggplot(df, aes(x=dates, y=y_cycl)) +
 	geom_line(colour = "red") +
 	theme_bw(base_size = 20) +
-	ggtitle(paste0("Seasonal trend in abundance: ", taxon_name)) + ylab("Cyclic component") +
+	#ggtitle(paste0("Seasonal trend in abundance: ", taxon_name)) +
+	ylab("Cyclic component") +
 	#ylim(c(-.2,.2))
 ylim(c(-.1,.1))
-
-seasonal_cycl_refit = ggplot(df, aes(x=dates, y=y_cycl_refit)) +
-	geom_line(colour = "red") +
-	theme_bw(base_size = 20) +
-	ggtitle(paste0("Seasonal trend in abundance: ", taxon_name)) + ylab("Cyclic component") + ylim(c(-.2,.2))
+#
+# seasonal_cycl_refit = ggplot(df, aes(x=dates, y=y_cycl_refit)) +
+# 	geom_line(colour = "red") +
+# 	theme_bw(base_size = 20) +
+# 	ggtitle(paste0("Seasonal trend in abundance: ", taxon_name)) + ylab("Cyclic component") + ylim(c(-.2,.2))
 
 plot_list[[taxon_name]] <- seasonal_cycl
 # seasonal_allcov = ggplot(df, aes(x=dates, y=y_allcov)) +
@@ -299,5 +343,27 @@ plot_list[[taxon_name]] <- seasonal_cycl
 
 }
 
+seas_vals_to_plot = rbindlist(out_seas_vals, fill=T)
+
+seasonal_cycl = ggplot(seas_vals_to_plot, aes(x=dates, y=y_cycl)) +
+	geom_line(colour = "red") +
+	theme_bw(base_size = 20) +
+	ggtitle(paste0("Seasonal trend in abundances")) +
+	ylab("Cyclic component") +
+	xlab(NULL) +
+	#facet_grid(rows=vars(taxon_name)) +
+	facet_wrap(~taxon_name) +
+	scale_x_date(date_labels = "%b")
+seasonal_cycl
+
 ggarrange(plot_list[[1]],plot_list[[2]],nrow=1, common.legend = T)
+ggarrange(plot_list[[1]],
+					plot_list[[2]],
+					plot_list[[3]],
+					plot_list[[4]],
+					plot_list[[5]],
+					plot_list[[6]],
+					plot_list[[7]],
+					ncol=1, common.legend = T)
+ggarrange(plot_list[1:7],ncol=1, common.legend = T)
 
