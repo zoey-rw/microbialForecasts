@@ -1,4 +1,5 @@
 # Converting ITS outputs into formats suitable for modeling.
+source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
 
 library(phyloseq)
 library(dplyr)
@@ -44,9 +45,13 @@ ps_legacy <- phyloseq(otu_table(seqtab_legacy, taxa_are_rows = F), tax_table(as.
 ps_its <- merge_phyloseq(ps_recent, ps_legacy)
 saveRDS(ps_its, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_ITS.rds")
 
+
+
+ps_its <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_ITS.rds")
+
 ## Get abundances
-out <- get_tax_level_abun(ps_its, 
-													tax_rank_list = colnames(tax_table(ps_its)), 
+out <- get_tax_level_abun(ps_its,
+													tax_rank_list = colnames(tax_table(ps_its))[1:5],
 													min_seq_depth = 3000)
 
 master_ps <- ps_its
@@ -55,26 +60,27 @@ master_ps <- ps_its
 n.taxa <- 20
 cal.out.bac <- list()
 val.out.bac <- list()
+out.fun = list()
 ranks <- names(out)
 ranks <- ranks[ranks != "kingdom"]
 for (tax_rank in ranks){
-	
+
 	rank_abun <- out[[tax_rank]]$rel.abundances
-	
+
 	prev_top <- out[[tax_rank]]$prevalence[order(out[[tax_rank]]$prevalence$prevalence, decreasing = T),]
-	
+
 	if (tax_rank %in% c("phylum","genus")) prev_top <- prev_top[prev_top$prevalence > .2,]
 	most_abundant_taxa <- prev_top[, 1]
 	most_abundant_taxa <- most_abundant_taxa[!grepl("unassigned|other|genus|class|family|order|^fungi",most_abundant_taxa)][1:n.taxa]
-	
-	
+
+
 	out_top10 <- rank_abun[,colnames(rank_abun) %in% most_abundant_taxa, drop=F]
 	seqDepth <- rowSums(rank_abun)
 	out_top10$other <- 1-rowSums(out_top10)
 	# Remove samples with a sum of above one (not sure why they exist)
 	out_top10 <- out_top10[which(!rowSums(out_top10) > 1),]
-	
-	
+
+
 	# ps.rank.filt <- prune_samples(sample_names(master_ps) %in% rownames(out_top10), master_ps)
 	# rank.df <- cbind(sample_data(ps.rank.filt)[,c("siteID","plotID","dateID","sampleID","dates","plot_date")], out_top10)
 	sample_dat <- parseNEONsampleIDs(rownames(out_top10)) %>% select(c("siteID","plotID","dateID","sampleID","dates","plot_date"))
@@ -83,18 +89,31 @@ for (tax_rank in ranks){
 	# organize by date
 	rank.df$dates <- as.Date(as.character(rank.df$dates), "%Y%m%d")
 	rank.df <- rank.df[order(rank.df$dates),]
-	# subset by date (till 2016).
-	val <- rank.df[rank.df$dates >= "2017-01-01",]
-	cal <- rank.df[rank.df$dates < "2017-01-01",]
-	
-	cal.out.bac[[tax_rank]]	<- cal
-	val.out.bac[[tax_rank]]	<- val
+	out.fun[[tax_rank]] <- rank.df
 }
-names(cal.out.bac)[1:5] <- paste0(names(cal.out.bac)[1:5], "_fun")
-names(val.out.bac)[1:5] <- paste0(names(val.out.bac)[1:5], "_fun")
 
 
-saveRDS(cal.out.bac, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS_2021.rds")
-saveRDS(val.out.bac, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_ITS_2021.rds")
+names(out.fun)[1:5] <- paste0(names(out.fun)[1:5], "_fun")
+
+
+saveRDS(out.fun_save, here("data/clean/groupAbundances_ITS_2023.rds"))
+
+
+
+
+# Append previous fg abundances since they didn't change
+old_cal = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS_2021.rds")
+old_val = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_ITS_2021.rds")
+
+fg_list = list()
+for (i in 6:length(old_cal)){
+	fg_list[[i]] <- rbind(old_cal[[i]], old_val[[i]])
+}
+fg_list = fg_list[6:length(old_cal)]
+names(fg_list) <- names(old_cal)[6:length(old_cal)]
+out.fun_save <- c(out.fun, fg_list)
+
+saveRDS(out.fun_save, here("data/clean/groupAbundances_ITS_2023.rds"))
+
 
 

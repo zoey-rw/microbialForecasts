@@ -1,38 +1,32 @@
 # Visualize effect size estimates (beta covariates) from all model
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
 pacman::p_load(stringr, forestplot, gridExtra, ggpubr)
 
-sum.all <- readRDS("./data/summary/all_fcast_effects.rds")
+sum.all <- readRDS(here("data/summary/predictor_effects.rds"))
 
 #pass_filter <- readRDS(here("data/summary/tax_filter_pass.rds"))
 
-sum.all_params <- sum.all %>% filter(beta %in% c("sin","cos") & !grepl("other", taxon))
-seas_vals <- sum.all_params %>% pivot_wider(id_cols = c("taxon","model_name","fcast_type","time_period",
-																												"pretty_name","pretty_group","rank","only_rank"),
-																						names_from = beta,
-																						values_from = "Mean")
-# Couldn't figure out how to vectorize.
-out <- list()
-for (i in 1:nrow(seas_vals)) {
-	out[[i]] <- sin_cos_to_seasonality(seas_vals$sin[[i]], seas_vals$cos[[i]])
-}
-out <- rbindlist(out)
-seas_vals <- cbind.data.frame(seas_vals, out) %>%
-	mutate(beta = "residual\nseasonal\namplitude", effSize= amplitude) %>% select(-c(sin, cos, max, amplitude_orig,amplitude)) %>%
-	filter(fcast_type != "Diversity")
 
+converged <- readRDS(here("data/summary/weak_converged_taxa_list.rds"))
+converged_strict <- readRDS(here("data/summary/converged_taxa_list.rds"))
 
-df_cal <- sum.all %>% filter(#(time_period == "2013-06_2017-01" & fcast_type == "Taxonomic") |
+seas_vals =readRDS(here("data/summary/seasonal_amplitude.rds"))
+
+all_seas_vals = seas_vals[[5]] %>% filter(time_period == "2015-11_2018-01")
+
+df_cal_fg_tax <- sum.all %>% filter(#(time_period == "2013-06_2017-01" & fcast_type == "Taxonomic") |
 															 	(time_period == "2015-11_2018-01")) %>%
-	filter(model_name == "all_covariates" & !grepl("other", taxon))
+	filter(model_name == "env_cycl" & model_id %in% converged)  %>%
+	filter(!beta %in% c("sin","cos"))
+df_refit_fg_tax <- df_cal_fg_tax
 
-df_fg <- df_cal %>% filter(fcast_type == "Functional")
-
-df_tax <- df_cal %>% filter(fcast_type == "Taxonomic")
+# df_fg <- df_cal %>% filter(fcast_type == "Functional")
+#
+# df_tax <- df_cal %>% filter(fcast_type == "Taxonomic")
 #df_tax_pass <- df_tax %>% merge(pass_filter, all.y=T)
 
-df_cal_fg_tax <- rbind(df_tax, df_fg) %>% filter(!beta %in% c("sin","cos")) %>%
-	rbind(seas_vals %>% filter(model_name=="all_covariates"), fill=T)
+# df_cal_fg_tax <- rbind(df_tax, df_fg) %>% filter(!beta %in% c("sin","cos")) %>%
+# 	rbind(all_seas_vals %>% filter(model_name=="env_cycl"), fill=T)
 
 
 
@@ -79,34 +73,25 @@ b <- ggplot(df_cal_fg_tax,
 #####
 ggarrange(a,b)
 
+#
+# keep = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/converged_taxa_list.rds")
+# keep = keep[keep$median_gbr < 3,]
+#
+# unconverged <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/unconverged_taxa_list.rds")
 
-keep = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/converged_taxa_list.rds")
-keep = keep[keep$median_gbr < 3,]
-
-unconverged <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/unconverged_taxa_list.rds")
-
-df_cal_fg_tax_converged = df_cal_fg_tax %>%
-	mutate(taxon_model_rank = paste(taxon, model_name, rank)) %>%
-	#filter(taxon_model_rank %in% keep$taxon_model_rank) %>%
-	filter(!taxon_model_rank %in% unconverged$taxon_model_rank)
-
-
-seas_vals_converged = seas_vals %>%
-	mutate(taxon_model_rank = paste(taxon, model_name, rank)) %>%
-	filter(!taxon_model_rank %in% unconverged$taxon_model_rank)
 
 
 ###### # Plot with Tukey, fungi vs bacteria effect sizes -----
 b_vs_f_fcast_type_plot <- ggplot(data=df_cal_fg_tax,
 																 aes(x = pretty_group,
 																 		color = pretty_group, y = effSize)) +
-
+	
 	geom_violin(draw_quantiles = c(.5), show.legend = F, color = 1) +
 	geom_jitter(aes(#shape = as.factor(significant),
-		color = pretty_group), size = 5, height = 0, width=.2, alpha = .1,
+		color = pretty_group), size = 5, height = 0, width=.2, alpha = .2,
 		shape = 16, show.legend = F) +
 	#labs(col = "Parameter", title = "Effect sizes of environmental predictors ") +
-	xlab("Domain")+
+	xlab("Kingdom")+
 	ylab("Absolute effect size") +
 	facet_grid(rows = vars(fcast_type),
 						 cols = vars(beta), #as.table = T,
@@ -114,9 +99,9 @@ b_vs_f_fcast_type_plot <- ggplot(data=df_cal_fg_tax,
 						 scales = "free") +
 	theme_minimal() +
 	theme(text = element_text(size = 22),
-		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
-			angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=20)
+				axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
+					angle = 320, vjust=1, hjust = -0.05),
+				axis.title=element_text(size=20)
 	) + stat_compare_means(method="t.test", hide.ns = T, show.legend = F)  +
 	scale_y_log10()# +coord_flip()
 b_vs_f_fcast_type_plot  + stat_compare_means(
@@ -183,25 +168,25 @@ b_vs_f_fcast_type_plot <- b_vs_f_fcast_type_plot + geom_text(data = tukey, aes(x
 b_vs_f_fcast_type_plot # + ggtitle("Full dataset effect sizes")
 
 ###### # Plot with Tukey, effect sizes across ranks ----
-ranks_beta_plot <- ggplot(df_cal_fg_tax %>% filter(!beta %in% c("sin","cos"))) +
-	geom_jitter(aes(x = only_rank,y = effSize,
-									color = pretty_group),
-							# shape=21,
-							# color="black",
-							width=.3, height = 0, size=4, alpha = .5) +
+ranks_beta_plot <- ggplot(df_cal_fg_tax %>% filter(!beta %in% c("sin","cos")),
+													aes(x = only_rank,y = effSize,
+															color = pretty_group)) +
+	geom_jitter(aes(shape=as.factor(significant)),
+					
+							width=.3, height = 0, size=2, alpha = .5) +
 	labs(title = "Absolute effect size") +
+	geom_violin(draw_quantiles = c(.5), show.legend = F) +
 	xlab("Rank")+
 	ylab(NULL) +
-	facet_grid(rows = vars(beta), cols = vars(pretty_group), drop = T,
+	facet_grid(cols = vars(beta), rows = vars(pretty_group), drop = T,
 						 scales = "free", space = "free_x") + #,strip.position="bottom",nrow=2) +
-	theme_bw() + theme(#axis.ticks.x=element_blank(),
+	theme_minimal() + theme(#axis.ticks.x=element_blank(),
 		text = element_text(size = 16),
 		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
-			angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=22,face="bold"),
-		strip.text.y = element_text(size=12,face="bold")
-	) + geom_smooth(aes(x = as.numeric(only_rank), y = effSize), show.legend = F) #+
-#	scale_fill_manual(values = c("grey30","grey90"))
+			angle = 320, vjust=1, hjust = -0.05)
+	)  + 
+	scale_shape_manual(values = c(21, 16), name = NULL,																																						 labels = c("Not significant","Significant")) + guides(color="none")
+
 
 tukey_list <- list()
 beta_names <- c(#"sin", "cos",
@@ -210,7 +195,7 @@ beta_names <- c(#"sin", "cos",
 for(b in beta_names) {
 	x = "only_rank"
 	y = "effSize"
-	df <- df_refit_fg_tax[which(df_refit_fg_tax$beta == b),]
+	df <- df_refit_fg_tax[which(df_refit_fg_tax$beta == b),] %>% filter(significant==1)
 	new.df <- cbind.data.frame(x = df$only_rank, y = df$effSize)
 	abs_max <- max(new.df[,"y"], na.rm = T)
 	maxs <- new.df %>% group_by(x) %>%
@@ -231,7 +216,7 @@ tukey_list_tax_fg <- data.table::rbindlist(tukey_list)
 
 ranks_beta_plot <- ranks_beta_plot + geom_text(data = tukey_list_tax_fg,
 														aes(x = only_rank, y = tot,
-																label = Letters_Tukey), show.legend = F, color = 2, size =6)
+																label = Letters_Tukey), show.legend = F, color = 1, size =5)
 ######
 ranks_beta_plot
 

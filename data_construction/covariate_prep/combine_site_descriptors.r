@@ -102,4 +102,4 @@ df_predictors <- fieldsites %>%
 
 df_predictors <- merge(df_predictors, fieldsites_raw %>% select(siteID = field_site_id, latitude = field_latitude))
 
-saveRDS(df_predictors, here("data/summary/site_effect_predictors.rds"))
+saveRDS(df_predictors, here("data/clean/site_effect_predictors.rds"))

@@ -1,29 +1,85 @@
 # Comparing functional groups vs taxonomy
-
-
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
 #p_load(multcomp)
 library(ggallin)
+library(emmeans)
+
+scores_list = readRDS(here("data", "summary/scoring_metrics_cv.rds"))
+converged = scores_list$converged_list
+
+#converged =  scores_list$converged_strict_list
+
+sum.all <- readRDS(here("data", "summary/predictor_effects.rds"))
+df_refit = sum.all %>% filter(time_period=="2015-11_2020-01" & model_name=="env_cycl") %>%
+	filter(model_id %in% converged)
+df_cal = sum.all %>% filter(time_period=="2015-11_2018-01" & model_name=="env_cycl") %>%
+	filter(model_id %in% converged)
 
 
-scores_list = readRDS(here("data", paste0("summary/scoring_metrics_cv.rds")))
+skill_score_rmse <- scores_list$scoring_metrics_long %>%
+	filter(model_id %in% converged & model_name == "env_cycl") %>%
+	filter(metric=="RMSE.norm") %>%
+	pivot_wider(id_cols = c("model_id","fcast_type","pretty_group","model_name","pretty_name","rank_name","taxon"),
+							values_from = "score", names_from = "site_prediction") %>%
+	mutate(skill_score = (1 - (`New time x site (modeled effect)`/`New time (observed site)`)),
+				 skill_score_random = (1 - (`New time x site (random effect)`/`New time (observed site)`)),
+	)
 
-sum.all <- readRDS("./data/summary/all_fcast_effects.rds")
-sum.div = readRDS("./data/summary/div_summaries_effects.rds")
-sum.div = sum.div %>% mutate(beta = ifelse(beta == "Ectomycorrhizal trees", "Ectomycorrhizal\ntrees", beta),
-														 pretty_group = ifelse(taxon=="div_16S", "Bacteria", "Fungi"))
+fcast_info_simple <- scores_list$scoring_metrics_site_lon %>% ungroup() %>%
+	select(fcast_type, pretty_group, model_name, pretty_name, taxon) %>% distinct()
 
-df_refit = rbindlist(list(sum.all, sum.div), fill=T) %>% filter(time_period=="2015-11_2020-01")
-df_cal = rbindlist(list(sum.all, sum.div), fill=T) %>% filter(time_period=="2015-11_2018-01")
+cal_rsq_long <- scores_list$calibration_metrics_long %>%
+	filter(model_id %in% converged & model_name == "env_cycl") %>%
+	distinct(.keep_all = T) %>% merge(fcast_info_simple, all.x=T, all.y=F)
+
+cal_rsq = scores_list$calibration_metrics %>%
+	filter(model_id %in% converged & model_name == "env_cycl") %>%
+	distinct(.keep_all = T) %>% merge(fcast_info_simple, all.x=T, all.y=F)
+
+hindcast_rsq <- scores_list$scoring_metrics %>%
+	filter(model_id %in% converged & model_name == "env_cycl" &
+				 	grepl("observed", site_prediction)) %>%
+	distinct()  %>%
+	merge(fcast_info_simple, all.x=T, all.y=F)
+
+# Cap the highest value of normalized RMSE at 5
+hindcast_rsq$RMSE.norm = ifelse(hindcast_rsq$RMSE.norm > 5, 5, hindcast_rsq$RMSE.norm)
+
+hindcast_site <- scores_list$scoring_metrics_site %>%
+	filter(model_id %in% converged & model_name == "env_cycl" & grepl("observed", site_prediction)) %>%
+	distinct()
+hindcast_site$RMSE.norm = ifelse(hindcast_site$RMSE.norm > 5, 5, hindcast_site$RMSE.norm)
+
+calibration_site <- scores_list$calibration_metrics_site %>%
+	filter(model_id %in% converged & model_name == "env_cycl") %>%
+	merge(fcast_info_simple, all.x=T, all.y=F)
 
 
+tukey_fcast_CRPS = hindcast_rsq %>%
+	group_by(pretty_group) %>%
+	summarize(tukey(x = fcast_type, y = CRPS_truncated)) %>% dplyr::rename(fcast_type = x)
+
+tukey_cal_CRPS = cal_rsq %>%
+	group_by(pretty_group) %>%
+	summarize(tukey(x = fcast_type, y = CRPS_truncated)) %>% dplyr::rename(fcast_type = x)
+
+tukey_fcast_site_CRPS = hindcast_site %>%
+	group_by(pretty_group) %>%
+	summarize(tukey(x = fcast_type, y = CRPS_truncated)) %>% dplyr::rename(fcast_type = x)
+
+tukey_cal_site_CRPS = calibration_site %>%
+	group_by(pretty_group) %>%
+	summarize(tukey(x = fcast_type, y = CRPS_truncated)) %>% dplyr::rename(fcast_type = x)
+
+
+beta_names <- c("Ectomycorrhizal\ntrees", "LAI", "pC",
+								"pH", "Temperature", "Moisture")
 # Test for differences in effect sizes between fcast types
 beta_tukey_group = list()
 for (group in c("Fungi", "Bacteria")){
 	beta_tukey = list()
-	for (beta in c("Ectomycorrhizal\ntrees",
-								 "LAI", "pC", "pH", "Temperature", "Moisture")) {
-		df_group=df_refit %>% filter(pretty_group==!!group)
+	for (beta in beta_names) {
+		df_group=df_cal %>% filter(pretty_group==!!group)
 		out = df_group %>% filter(beta %in% !!beta) %>%
 			#group_by(beta) %>%
 			aov(effSize~fcast_type,.) %>%
@@ -35,16 +91,27 @@ for (group in c("Fungi", "Bacteria")){
 	}
 	beta_tukey_group[[group]] = do.call(rbind, beta_tukey)
 }
-tukey_refit_beta = do.call(rbind, beta_tukey_group)
-tukey_refit_beta$tot = tukey_refit_beta$upper.CL + .1
+tukey_cal_beta = do.call(rbind, beta_tukey_group)
+tukey_cal_beta$tot = tukey_cal_beta$upper.CL + .1
 
 # Subset to only predictors that have a difference between types
-diff_letters <- tukey_refit_beta %>% group_by(beta) %>% #any(Letters_Tukey != "a")  %>%
+diff_letters <- tukey_cal_beta %>% group_by(beta) %>% #any(Letters_Tukey != "a")  %>%
 	mutate(eq = replace(Letters_Tukey, n_distinct(Letters_Tukey)==1, '') ) #%>% filter(eq != "")
-df_refit_diff = merge(df_refit, diff_letters, all.x = T) %>% filter(eq != "")
+df_cal_diff = merge(df_cal, diff_letters, all.x = T) %>% filter(eq != "")
+
+
+tukey_cal_beta2 = df_cal %>% filter(!beta %in% c("rho","sin","cos")) %>%
+	group_by(pretty_group, beta) %>%
+	summarize(tukey(x = fcast_type, y = effSize)) %>%
+	rename(fcast_type = x)
+
+
+
+tukey_beta_diff = merge(tukey_cal_beta2,
+												diff_letters[,c("fcast_type","pretty_group","beta","eq")], all.x = T) %>% filter(eq != "")
 
 ###### # Plot with Tukey, effect sizes across fcast types ----
-c <- ggplot(df_refit_diff %>%
+c <- ggplot(df_cal_diff %>%
 							filter(!beta %in% c("sin","cos","rho")),
 						aes(x = fcast_type,y = effSize,color = pretty_group)) +
 	xlab(NULL)+
@@ -54,34 +121,13 @@ c <- ggplot(df_refit_diff %>%
 						 drop = T,
 						 scales = "free", space = "free_x") +
 	theme_bw() +
-	theme(
-		text = element_text(size = 16),
+	theme(text = element_text(size = 16),
 		axis.text.x=element_text(
 			angle = 320, vjust=1, hjust = -0.05),
 		axis.title=element_text(size=18),
-		strip.text.y = element_text(size=12)
-	) +
+		strip.text.y = element_text(size=12)) +
 	geom_violin(draw_quantiles = c(.5), show.legend = F) +
-	geom_jitter(width=.3, height = 0, size=4, alpha = .1, show.legend = F)
-
-tukey_refit_beta = df_refit %>% filter(!beta %in% c("rho","sin","cos")) %>%
-	group_by(pretty_group, beta) %>%
-	summarize(tukey(x = fcast_type, y = effSize)) %>%
-	rename(fcast_type = x)
-
-
-
-# beta_aov = df_refit %>% filter(!beta %in% c("rho","sin","cos")) %>% group_by(beta) %>% aov(effSize~pretty_group+fcast_type,.)
-# aov1.1=aov(skill_score~pretty_group+fcast_type,skill_scores)
-# beta_aov_tukey <- emmeans::emmeans(object = beta_aov,
-# 																		pairwise ~ "fcast_type",
-# 																		adjust = "tukey")
-# tukey_skill_score <- multcomp::cld(object = mod_means_contr$emmeans,
-# 																	 Letters = letters) %>% as.data.frame() %>% rename(Letters_Tukey = `.group`) %>% mutate(tot = 1)
-
-
-tukey_beta_diff = merge(tukey_refit_beta,
-												diff_letters[,c("fcast_type","pretty_group","beta","eq")], all.x = T) %>% filter(eq != "")
+	geom_jitter(width=.2, height = 0, size=4, alpha = .1, show.legend = F)
 
 fcast_type_beta_plot <- c +
 	geom_text(data = tukey_beta_diff,
@@ -91,77 +137,13 @@ fcast_type_beta_plot <- c +
 fcast_type_beta_plot
 
 
-
-fcast_info_simple <- scores_list$scoring_metrics_site_lon %>%
-	select(fcast_type, pretty_group, model_name, pretty_name, taxon) %>% distinct()
-
-
-cal_rsq_filter <- scores_list$calibration_metrics %>%
-	mutate(RSQ.1 = ifelse(RSQ.1 < 0, 0, RSQ.1))  %>%
-	filter(model_name == "all_covariates" & RSQ > .1)
-saveRDS(cal_rsq_filter, here("data/summary/tax_filter_pass.rds"))
-
-
-cal_rsq <- scores_list$calibration_metrics %>%
-	mutate(RSQ.1 = ifelse(RSQ.1 < 0, 0, RSQ.1),
-				 CRPS_penalty = CRPS_truncated - MAE) %>%
-	pivot_longer(cols = c(RMSE, BIAS, MAE, CRPS, CRPS_truncated, CRPS_penalty, RSQ, RSQ.1,
-												RMSE.norm,residual_variance, predictive_variance, total_PL),
-																																		 names_to = "metric") %>%
-
-	filter(model_name == "all_covariates") %>%
-	distinct(.keep_all = T) %>% merge(fcast_info_simple, all.x=T, all.y=F)
-
-hindcast_rsq <- scores_list$scoring_metrics_site_lon %>%
-	mutate(value = ifelse(metric == "RSQ.1" & value < 0, 0, value)) %>%
-	filter(model_name == "all_covariates" &
-																																	metric %in% c("CRPS_penalty","RSQ","RSQ.1","CRPS","residual_variance", "predictive_variance", "total_PL","CRPS_truncated")) %>%
-	distinct() #%>% filter(pretty_group == "Bacteria")
-
-
-hindcast_rsq <- scores_list$scoring_metrics %>%
-	mutate(RSQ.1 = ifelse(RSQ.1 < 0, 0, RSQ.1),
-				 CRPS_penalty = CRPS_truncated - MAE) %>%
-	filter(taxon %in% cal_rsq_filter$taxon | pretty_name == "Diversity") %>%
-	filter(model_name == "all_covariates") %>%
-	distinct()  %>%
-	merge(fcast_info_simple, all.x=T, all.y=F)
-
-hindcast_wide_site <- scores_list$scoring_metrics_site %>%
-	mutate(RSQ.1 = ifelse(RSQ.1 < 0, 0, RSQ.1),
-				 CRPS_penalty = CRPS_truncated - MAE) %>%
-	filter(taxon %in% cal_rsq_filter$taxon | pretty_name == "Diversity") %>%
-	filter(model_name == "all_covariates") %>%
-	distinct()
-
-calibration_wide_site <- scores_list$calibration_metrics_site %>%
-	mutate(RSQ.1 = ifelse(RSQ.1 < 0, 0, RSQ.1),
-				 CRPS_penalty = CRPS_truncated - MAE) %>%
-	filter(model_name == "all_covariates" & pretty_name != "Diversity") %>%
-	merge(fcast_info_simple, all.x=T, all.y=F)
-
-cal_site_rsq_filter <- calibration_wide_site %>%
-	filter(model_name == "all_covariates" & RSQ > .1) %>% mutate(filt = paste(taxon, siteID))
-
-
-hindcast_site_filtered <- hindcast_wide_site %>%
-	filter(paste(taxon, siteID) %in% cal_site_rsq_filter$filt | pretty_name == "Diversity")
-
-
-tukey_fcast_CRPS = hindcast_site_filtered %>% group_by(pretty_group) %>% summarize(tukey(x = fcast_type, y = RSQ.1)) %>% rename(fcast_type = x)
-tukey_fcast_CRPS = hindcast_wide_site %>% group_by(pretty_group) %>% summarize(tukey(x = fcast_type, y = RSQ.1)) %>% rename(fcast_type = x)
-tukey_fcast_CRPS = hindcast_rsq %>% group_by(pretty_group) %>% summarize(tukey(x = fcast_type, y = RSQ)) %>% rename(fcast_type = x)
-tukey_cal_CRPS = calibration_wide_site %>% group_by(pretty_group) %>% summarize(tukey(x = fcast_type, y = CRPS)) %>% rename(fcast_type = x)
-
-
-
 # Test for differences in effect sizes between fcast types
 score_tukey_group = list()
 for (group in c("Fungi", "Bacteria")){
 		df_group=hindcast_rsq %>% filter(pretty_group==!!group)
 		out = df_group %>%
 			#group_by(beta) %>%
-			aov(RSQ.1~fcast_type,.) %>%
+			aov(RMSE.norm~fcast_type,.) %>%
 			emmeans::emmeans(object = ., pairwise ~ "fcast_type", adjust = "tukey") %>% .$emmeans %>%
 			multcomp::cld(object = ., Letters = letters) %>% as.data.frame() %>%
 			rename(Letters_Tukey = `.group`) %>%
@@ -173,24 +155,19 @@ score_tukey_group
 tukey_score = do.call(rbind, score_tukey_group)
 tukey_score$tot = tukey_score$upper.CL + .3
 
-# hindcast_taxon <- scores_list$scoring_metrics %>%
-# 	mutate(RSQ.1 = ifelse(RSQ.1 < 0, 0, RSQ.1)) %>%
-# 	filter(taxon %in% cal_rsq_filter$taxon | pretty_name == "Diversity") %>%
-# 	filter(model_name == "all_covariates") %>%
-# 	distinct()  %>% merge(fcast_info_simple, all.x=T, all.y=F)
 
 # Test for differences in hindcast accuracy
 
 b <-
 	ggplot(hindcast_rsq,
-				 aes(x = fcast_type, y = RSQ.1,
+				 aes(x = fcast_type, y = RMSE.norm,
 				 		color = pretty_group)) +
 	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
 	geom_point(size = 4, position = position_jitterdodge(jitter.width = .4), alpha=.1, show.legend = F) +
-	facet_grid(cols=vars(pretty_group), drop = T, scales="free") +
+	facet_grid(rows=vars(pretty_group), drop = T, scales="free") +
 	# geom_jitter(aes(x = metric, y = value), width=.1,
 	# 						height = 0, alpha = .8, size=4) +
-	ylab("RSQ 1:1 (hindcast accuracy)") + xlab(NULL) +
+	ylab("Relative forecast error (nRMSE)") + xlab(NULL) +
 	theme_bw(base_size=16) +
 	#scale_color_manual(values = c(1,2))	+
 	theme(text = element_text(size = 16),
@@ -257,9 +234,12 @@ fcast_type_crps_plot
 # 	geom_hline(yintercept = 0, linetype=2) +
 # 	theme(plot.margin = margin(1,2,1,1, "cm"))
 
-skill_scores = scores_list$skill_score_taxon %>% filter(model_name == "all_covariates") %>%
-	filter(taxon %in% cal_rsq_filter$taxon | pretty_name == "Diversity")
+skill_scores = scores_list$skill_score_taxon %>%
+	filter(model_id %in% converged & model_name == "env_cycl")
 skill_scores$fcast_type = ifelse(skill_scores$fcast_type=="Diversity", "Evenness", skill_scores$fcast_type)
+
+skill_scores_rank =  scores_list$skill_score_rank  %>%
+	filter(model_id %in% converged & grepl("env_cycl", model_id))
 
 # View skill scores by forecast type
 a <- ggplot(skill_scores,
