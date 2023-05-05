@@ -1,5 +1,5 @@
-#' @title run_MCMC_bychain
-#' @description run_MCMC_bychain
+#' @title run_spatial_model
+#' @description run_spatial_model
 #' @export
 #
 # # For testing
@@ -8,8 +8,6 @@
 # thin <- 1
 # test =T
 # k = 1
-# temporalDriverUncertainty <- TRUE
-# spatialDriverUncertainty <- TRUE
 # scenario <- "full_uncertainty"
 # s = "acidobacteriota"
 # k = 6
@@ -36,7 +34,7 @@ run_MCMC_bychain <- function(rank.name = "phylum_bac",
 														 scenario=NULL,
 														 min.date = "20151101",
 														 max.date = "20180101",
-														 model_name = "cycl_only",
+														 model_name = "spatial",
 														 model_id = NULL,
 														 test = F,
 
@@ -111,61 +109,7 @@ run_MCMC_bychain <- function(rank.name = "phylum_bac",
 	assign('rLogitBeta', rLogitBeta, envir = .GlobalEnv)
 
 
-	modelCode_cycl_only <- nimble::nimbleCode({
-
-
-		# Loop through core observations ----
-		for (i in 1:N.core) {
-			# y[i, 1] ~ dbeta(mean = Ex[plot_num[i], timepoint[i]],
-										#	sd = core_sd)
-			y[i, 1] ~ T(dnorm(mean = plot_mu[plot_num[i], timepoint[i]], sd = core_sd), 0, 1)
-		}
-
-
-		# Plot-level process model ----
-		for (p in 1:N.plot) {
-
-			for (t in plot_start[p]) {
-
-
-				Ex[p, t] ~ dunif(0.0001,.9999)
-				# Add process error (sigma)
-				plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
-
-			}
-
-			for (t in plot_index[p]:N.date) {
-
-				# Dynamic linear model
-				logit(Ex[p, t]) <- rho * logit(plot_mu[p, t - 1]) +
-					beta[1] * sin_mo[t] +
-					beta[2] * cos_mo[t] +
-					site_effect[plot_site_num[p]] +
-					intercept
-
-				# Add process error (sigma)
-				plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
-			}
-		}
-
-
-		# Priors for site effects----
-		for (k in 1:N.site) {
-			site_effect[k] ~ dnorm(0,  sd = sig)
-		}
-
-		core_sd ~ dunif(0,1)
-		sigma ~ dunif(0,1)
-		sig ~ dunif(0,5)
-
-		intercept ~ dnorm(0, sd = 1)
-		rho ~ dnorm(0, sd = 1) # Autocorrelation
-
-		beta[1:2] ~ dmnorm(zeros[1:2], omega[1:2, 1:2])
-
-	}) #end NIMBLE model.
-
-	modelCode_env_covariates <-  nimble::nimbleCode({
+	modelCode_spatial <-  nimble::nimbleCode({
 		# Loop through core observations ----
 		for (i in 1:N.core) {
 			#y[i, 1] ~ dbeta(mean = plot_mu[plot_num[i], timepoint[i]], sd = core_sd)
@@ -176,16 +120,11 @@ run_MCMC_bychain <- function(rank.name = "phylum_bac",
 		for (p in 1:N.plot) {
 
 			# Plot-level process model ----
-			for (t in plot_start[p]) {
 
-				Ex[p, t] ~ dunif(0.0001,.9999)
-				# Add process error (sigma)
-				plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
-			}
 
-			for (t in plot_index[p]:N.date) {
+			for (t in plot_start[p]:N.date) {
 				# Dynamic linear model
-				logit(Ex[p, t]) <- rho * logit(plot_mu[p, t - 1]) +
+				logit(Ex[p, t]) <-
 					site_effect[plot_site_num[p]] +
 					beta[1] * temp_est[plot_site_num[p], t] +
 					beta[2] * mois_est[plot_site_num[p], t] +
@@ -208,7 +147,6 @@ run_MCMC_bychain <- function(rank.name = "phylum_bac",
 		sig ~ dunif(0,5)
 
 		intercept ~ dnorm(0, sd = 1)
-		rho ~ dnorm(0, sd = 1) # Autocorrelation
 
 		beta[1:6] ~ dmnorm(zeros[1:6], omega[1:6, 1:6])
 
@@ -247,88 +185,6 @@ run_MCMC_bychain <- function(rank.name = "phylum_bac",
 	}) #end NIMBLE model.
 
 
-	modelCode_env_cycl <-  nimble::nimbleCode({
-		# Loop through core observations ----
-		for (i in 1:N.core) {
-			#y[i, 1] ~ dbeta(mean = plot_mu[plot_num[i], timepoint[i]], sd = core_sd)
-
-			y[i, 1] ~ T(dnorm(mean = plot_mu[plot_num[i], timepoint[i]], sd = core_sd), 0, 1)
-		}
-
-		for (p in 1:N.plot) {
-
-			# Plot-level process model ----
-			for (t in plot_start[p]) {
-
-				Ex[p, t] ~ dunif(0.0001,.9999)
-				# Add process error (sigma)
-				plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
-			}
-
-			for (t in plot_index[p]:N.date) {
-				# Dynamic linear model
-				logit(Ex[p, t]) <- rho * logit(plot_mu[p, t - 1]) +
-					site_effect[plot_site_num[p]] +
-					beta[1] * temp_est[plot_site_num[p], t] +
-					beta[2] * mois_est[plot_site_num[p], t] +
-					beta[3] * pH_est[p, plot_start[p]] +
-					beta[4] * pC_est[p, plot_start[p]] +
-					beta[5] * relEM[p, t] +
-					beta[6] * LAI[plot_site_num[p], t] +
-					beta[7] * sin_mo[t] +
-					beta[8] * cos_mo[t] +
-					intercept
-				plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
-			}
-		}
-		# Priors for site effects----
-		for (k in 1:N.site) {
-			site_effect[k] ~ dnorm(0,  sd = sig)
-		}
-		# Priors for everything else ----
-
-		core_sd ~ dunif(0,1)
-		sigma ~ dunif(0,1)
-		sig ~ dunif(0,5)
-
-		intercept ~ dnorm(0, sd = 1)
-		rho ~ dnorm(0, sd = 1) # Autocorrelation
-
-		beta[1:8] ~ dmnorm(zeros[1:8], omega[1:8, 1:8])
-
-
-
-		# Add driver uncertainty if desired ----
-		if (temporalDriverUncertainty) {
-			for (k in 1:N.site) {
-				for (t in site_start[k]:N.date) {
-					mois_est[k, t] ~ dnorm(mois[k, t], sd = mois_sd[k, t])
-					temp_est[k, t] ~ dnorm(temp[k, t], sd = temp_sd[k, t])
-				}
-			}
-		} else {
-			for (k in 1:N.site) {
-				for (t in site_start[k]:N.date) {
-					mois_est[k, t] <- mois[k, t]
-					temp_est[k, t] <- temp[k, t]
-				}
-			}
-		}
-
-		# Using 40th time point (values are constant over time)
-		if (spatialDriverUncertainty) {
-			for (p in 1:N.plot) {
-				pH_est[p, plot_start[p]] ~ dnorm(pH[p, plot_start[p]], sd = pH_sd[p, plot_start[p]])
-				pC_est[p, plot_start[p]] ~ dnorm(pC[p, plot_start[p]], sd = pC_sd[p, plot_start[p]])
-			}
-		} else {
-			for (p in 1:N.plot) {
-				pH_est[p, plot_start[p]] <- pH[p, plot_start[p]]
-				pC_est[p, plot_start[p]] <- pC[p, plot_start[p]]
-			}
-		}
-
-	}) #end NIMBLE model.
 	# Read in microbial abundances
 	bacteria <- readRDS(here("data", "clean/groupAbundances_16S_2023.rds"))
 	fungi <- readRDS(here("data", "clean/groupAbundances_ITS_2023.rds"))
@@ -369,21 +225,8 @@ run_MCMC_bychain <- function(rank.name = "phylum_bac",
 													 "pC", "pC_sd", "LAI", "relEM", "sin_mo", "cos_mo")]
 
 
-	if (model_name == "cycl_only"){
-		constants$N.beta = 2
-		Nimble_model = modelCode_cycl_only
-		# constants <- constants[c("plotID",  "timepoint","plot_site",
-		# 												 "site_start", "plot_start", "plot_index",
-		# 												 "plot_num", "plot_site_num",
-		# 												 "N.plot", "N.spp", "N.core", "N.site",
-		# 												 "N.date", "N.beta","sin_mo", "cos_mo")]
-	} else if(model_name == "env_cov"){
 		constants$N.beta = 6
-		Nimble_model = modelCode_env_covariates
-	} else if(model_name == "env_cycl"){
-		constants$N.beta = 8
-		Nimble_model = modelCode_env_cycl
-	} else message("Missing specification of Nimble model.")
+		Nimble_model = modelCode_spatial
 
 	# Some model hyperparameters
 	constants$omega <- 0.0001 * diag(constants$N.beta)

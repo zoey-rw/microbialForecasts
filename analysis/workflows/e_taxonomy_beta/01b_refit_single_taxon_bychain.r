@@ -1,6 +1,6 @@
 # Fit taxa one-by-one to evaluate convergence.
 #install.packages("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/microbialForecast_0.1.0.tar.gz", repos = NULL, type ="source")
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
 
 
 #Get arguments from the command line
@@ -43,15 +43,15 @@ params <- params[params$`max.date` == "20180101" & params$model_name == "all_cov
 run_scenarios <- function(j, chain, ...) {
 	pacman::p_load(doParallel, reshape2)
 
-	source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+	source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
 
 													print(params[j,])
 
 													out <- run_MCMC_single_taxon_bychain(k = params$group[[j]],
 																															 thin = 25,
-																															 burnin = 600000,
-																															 init_iter=750000,
-																															 iter_per_chunk=50000,
+																															 burnin = 900000,
+																															 init_iter=1000000,
+																															 iter_per_chunk=100000,
 																															 test=F,
 																															 #init_iter = 500000, burnin = 300000, iter_per_chunk = 50000,
 																															 scenario = params$scenario[[j]],
@@ -66,14 +66,14 @@ run_scenarios <- function(j, chain, ...) {
 
 #test_out <- run_scenarios(k)
 
-logfile <- paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/analysis/workflows/qsub/", params$rank.names[[j]], "_", params$model_name[[j]], "_", params$min.date[[j]], "_", params$max.date[[j]], "_", params$species[[j]], ".log")
+logfile <- paste0("/projectnb/dietzelab/zrwerbin/microbialForecasts/analysis/workflows/qsub/", params$rank.names[[j]], "_", params$model_name[[j]], "_", params$min.date[[j]], "_", params$max.date[[j]], "_", params$species[[j]], ".log")
 
-cl <- makeCluster(4, type="PSOCK", outfile=logfile)
+cl <- makeCluster(8, type="PSOCK", outfile=logfile)
 registerDoParallel(cl)
 #Run for multiple chains, in parallel (via PSOCK)
-output.list = foreach(chain=c(5:7),
+output.list = foreach(chain=c(1:7),
 											.errorhandling = 'pass') %dopar% {
-												source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+												source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
 												set.seed(chain)
 												out_chain <- run_scenarios(j = j, chain = chain)
 												return(out_chain)

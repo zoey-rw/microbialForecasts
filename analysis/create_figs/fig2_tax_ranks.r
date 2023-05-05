@@ -1,15 +1,22 @@
 
 scores_list = readRDS(here("data", paste0("summary/scoring_metrics_cv.rds")))
+scores_list = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/scoring_metrics_cv.rds")
 
 sum.all <- readRDS("./data/summary/all_fcast_effects.rds")
-sum.div = readRDS("./data/summary/div_summaries_effects.rds")
-sum.div = sum.div %>% mutate(beta = ifelse(beta == "Ectomycorrhizal trees", "Ectomycorrhizal\ntrees", beta),
-														 pretty_group = ifelse(taxon=="div_16S", "Bacteria", "Fungi"))
 
-df_refit = rbindlist(list(sum.all, sum.div), fill=T) %>% filter(time_period=="2015-11_2020-01")
-df_refit = sum.all[sum.all$fcast_type != "Diversity",]
-
-hindcast_filter <- scores_list$scoring_metrics_long %>% filter(!taxon %in% scores_list$unconverged_list$taxon)
+hindcast_filter <- scores_list$scoring_metrics_long %>%
+	mutate(taxon_model_rank = paste(taxon, model_name, rank)) %>%
+	filter(!taxon_model_rank %in% scores_list$unconverged$taxon_model_rank) %>%
+	filter(fcast_type != "Diversity" &
+				 	model_name == "all_covariates" &
+				 	metric %in% c("CRPS_truncated","RSQ","RSQ.1") &
+				 	site_prediction == "New time (observed site)")
+calibration_filter <- scores_list$calibration_metrics_long %>%
+	mutate(taxon_model_rank = paste(taxon, model_name, rank)) %>%
+	filter(!taxon_model_rank %in% scores_list$unconverged$taxon_model_rank) %>%
+	filter(fcast_type != "Diversity" &
+				 	model_name == "all_covariates" &
+				 	metric %in% c("CRPS_truncated","RSQ","RSQ.1"))
 
 # Taxonomic rank effect sizes
 ggplot(df_refit %>% filter(!beta %in% c("sin","cos")),
@@ -70,9 +77,27 @@ ggplot(hindcast_filter %>% filter(pretty_name !="Functional group") %>%
 
 
 
+ggplot(scores_list$calibration_metrics_long %>%
+			 	filter(metric %in% c("RSQ.1")),
+			 aes(x = pretty_name,y = score,
+			 		color = pretty_group)) +
+	geom_jitter(width=.2, height = 0, size=4, alpha = .4, show.legend = F) +
+	geom_violin(draw_quantiles = c(.5)) +
+	xlab(NULL) +
+	ylab("Hindcast predictability (RSQ 1:1)") + xlab("Taxonomic rank") +
+
+	theme_bw() + theme(text = element_text(size = 16),
+										 axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
+										 	angle = 320, vjust=1, hjust = -0.05),
+										 strip.text.y = element_text(size=12,face="bold")) +
+	labs(color = "Domain")
+
+
+
+
 rank_score_plot <- ggplot(hindcast_filter %>%
 														filter(metric %in% c("RSQ.1")),
-													aes(x = pretty_name, y = value,
+													aes(x = pretty_name, y = score,
 															color = pretty_name)) +
 	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
 	geom_point(size = 4, position = position_jitterdodge(jitter.width = .5), alpha=.2, show.legend = F) +
@@ -88,8 +113,7 @@ rank_score_plot <- ggplot(hindcast_filter %>%
 	#guides(color=guide_legend(title=NULL)) +
 	geom_hline(yintercept = 0, linetype=2) +
 	theme(plot.margin = margin(1,2,1,1, "cm"))  +
-	geom_smooth(method = "lm", aes(x = as.numeric(pretty_name), y = value), show.legend = F) +
-	stat_cor(aes(x = as.numeric(pretty_name), y = value), color = 1, size =5, p.accuracy = .001)
+	geom_smooth(method = "lm", aes(x = as.numeric(pretty_name), y = value), show.legend = F)
 
 
 rank_score_plot <- rank_score_plot +

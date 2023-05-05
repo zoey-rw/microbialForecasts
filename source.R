@@ -1,22 +1,49 @@
 # Source script for Nimble models (w/ environmental covariates, & cyclical covariates only)
-setwd("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/")
+setwd("/projectnb/dietzelab/zrwerbin/microbialForecasts/")
 here::i_am("source.R")
 
 # Pacman package loader is used throughout scripts
 if (!require("pacman")) install.packages("pacman")
-# if (!require("microbialForecast"))
+if (!require("microbialForecast")) install.packages("/projectnb/dietzelab/zrwerbin/microbialForecasts/microbialForecast_0.1.0.tar.gz", repos = NULL, type="source")
 
-#install.packages("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/microbialForecast_0.1.0.tar.gz", repos = NULL, type="source")
+library("microbialForecast", lib.loc="/usr3/graduate/zrwerbin/R/x86_64-pc-linux-gnu-library/4.2")
 
 	suppressPackageStartupMessages(library(tidyverse, warn.conflicts = F))
-	pacman::p_load(pacman, microbialForecast,
+	pacman::p_load(pacman,
 							 nimble, coda, lubridate, here,
 							 doParallel, data.table, Rfast, moments,
 							 scoringRules, Metrics, ggpubr)
 
 
+	# Create output directory for MCMC runs
+	model_output_dir = here("data", "model_outputs", "logit_beta_regression")
+	dir.create(model_output_dir, showWarnings = FALSE)
+	model_output_dir = here("data", "model_outputs", "logit_beta_regression", "env_cycl")
+	dir.create(model_output_dir, showWarnings = FALSE)
+	model_output_dir = here("data", "model_outputs", "logit_beta_regression", "cycl_only")
+	dir.create(model_output_dir, showWarnings = FALSE)
+
+	model_output_dir = here("data", "model_outputs", "logit_beta_regression", "env_cov")
+	dir.create(model_output_dir, showWarnings = FALSE)
+
+	model_summary_dir = here("data", "summary")
+	dir.create(model_summary_dir, showWarnings = FALSE)
+
+
+	# New facet label names for supp variable
+	model.labs <- c("Environmental\npredictors", "Seasonality", "Environmental predictors\n& seasonality")
+	names(model.labs) <- c("env_cov", "cycl_only","env_cycl")
+
+
+	
+	metric.labs <- c("Relative forecast error (nRMSE)", "Absolute forecast error (CRPS)")
+	names(metric.labs) <- c("RMSE.norm", "mean_crps")
+	
 	# Convert sin and cos effect sizes to a seasonal amplitude parameter
 	sin_cos_to_seasonality <- function(sin, cos){
+		if (sin==0 & cos==0|is.na(sin)|is.na(cos)) {return(cbind.data.frame(max=NA,
+																									amplitude_orig=NA,
+																									amplitude = NA))}
 		min_max <- getMaxMin(sin, cos, max_only = F)
 		amplitude <- sqrt(sin^2 + cos^2)
 
@@ -56,39 +83,6 @@ if (!require("pacman")) install.packages("pacman")
 	# 										mean_predicted = cal_test$Mean,
 	# 										sd_predicted = cal_test$SD)
 
-	add_scoring_metrics = function(observed, mean_predicted, sd_predicted,
-																 type=c("RMSE","BIAS","MAE",
-																 			 "CRPS", "RSQ", "RSQ.1",
-																 			 "RMSE.norm",  "residual_variance", "predictive_variance", "total_PL", "CRPS_truncated")){
-
-		require(Metrics, scoringRules)
-
-		if(sum(is.na(observed )) > 0){stop('Error: NAs in observed vector.' )}
-		if(sum(is.na(mean_predicted)) > 0){stop('Error: NAs in predicted vector.')}
-
-		out_df <- cbind.data.frame(observed,mean_predicted,sd_predicted) %>%
-			summarise(CRPS = mean(
-				crps_norm(observed, mean_predicted, sd_predicted)),
-				CRPS_truncated = mean(
-					crps(observed,
-							 family = "tnorm",
-							 location = mean_predicted,
-							 scale = sd_predicted, lower = 0, upper = Inf)),
-				RMSE = rmse(actual = observed, predicted = mean_predicted),
-				RSQ.1 = 1 - (RMSE^2)/var(observed),
-				RSQ.1.colin = rsq_1.1(observed, mean_predicted),
-				predictive_loss(observed, mean_predicted, sd_predicted),
-				RMSE = rmse(actual = observed, predicted = mean_predicted),
-				BIAS = bias(actual = observed, predicted = mean_predicted),
-				MAE = mae(actual = observed, predicted = mean_predicted),
-				MAPE = mape(actual = observed, predicted = mean_predicted),
-				RSQ = summary(lm(observed ~ mean_predicted))$r.squared,
-				abundance = mean(observed, na.rm=T),
-				RMSE.norm = RMSE / abundance) %>% select(!!type)
-
-		out_df$RSQ.1 = ifelse(out_df$RSQ.1 < 0, 0, out_df$RSQ.1)
-		return(out_df)
-	}
 
 
 	first = function(x) x %>% nest %>% ungroup %>% slice(1) %>% unnest(data)
@@ -143,33 +137,6 @@ if (!require("pacman")) install.packages("pacman")
 
 
 
-
-# Shorten chain if it contains more than a certain number of samples
-	window_chain = function(chain, thin = 1, max_size = 10000) {
-		require(coda)
-		if (all(class(chain) != "mcmc")){
-			chain <- mcmc(as.matrix(chain))
-		}
-		nrow_samples <- nrow(chain)
-		if (nrow_samples < max_size) {
-			message("Sample size not reduced; current size is fewer than ", max_size)
-			out_chain <- chain
-			attr(out_chain, "mcpar")[[1]] <- 1
-			attr(out_chain, "mcpar")[[2]] <- nrow_samples
-
-			return(out_chain)
-		} else {
-
-			first_iter <- attr(chain, "mcpar")[[1]]
-			last_iter <- attr(chain, "mcpar")[[2]]
-
-			window_start = last_iter - max_size
-			out_chain <- window(chain, window_start, last_iter, 1)
-			attr(out_chain, "mcpar")[[1]] <- 1
-			attr(out_chain, "mcpar")[[2]] <- max_size
-			return(out_chain)
-		}
-	}
 
 
 	combine_chains_existing = function(input_list,
@@ -244,3 +211,89 @@ if (!require("pacman")) install.packages("pacman")
 
 		return(out)
 	}
+
+
+assign_fg_sources <-function (vector)
+	{
+	out <- rep(NA, length(vector))
+	out[which(grepl("lytic", vector))] <-  "Literature review"
+	out[which(grepl("cellulolytic", vector))] <-  "Literature review + genomic pathway"
+	out[which(grepl("nitr|fixa", vector))] <- "Literature review + genomic pathway"
+	out[which(grepl("complex|simple|stress", vector, fixed = F))] <- "Experimental enrichment"
+	out[which(grepl("antibiotic", vector))] <- "Experimental enrichment"
+	out[which(grepl("anaerobic", vector))] <- "Experimental enrichment"
+#	out[which(grepl("nitr|fixa", vector))] <- "Literature review"
+	out[which(grepl("troph", vector))] <- "Literature review"
+	out[which(grepl("sapr|path|arbusc|ecto|endo|lichen", vector))] <- "Literature review"
+	out[which(grepl("other", vector))] <- NA
+
+		#
+		# out <- rep(NA, length(vector))
+		# out[which(grepl("substrates|resistance|anaerobic|stress", vector))] <- "Experimental enrichment"
+		# out[which(grepl("cycling|cellulo", vector))] <- "Genomic pathways"
+		# out[which(grepl("Trophic|Life", vector))] <- "Scientific consensus"
+		return(out)
+}
+
+
+
+rLogitBeta <- nimbleFunction (
+	## Generates y ~ Beta(a1,a2)
+	## Returns   x = logit(y)
+	run = function(n = integer(0, default=1),
+								 shape1 = double(0, default=1.0),
+								 shape2 = double(0, default=1.0)) {
+		returnType(double(0))
+		if(n != 1)
+			nimPrint("Warning: rLogitBeta only allows n = 1; Using n = 1.\n")
+		y <- rbeta(1, shape1=shape1, shape2=shape2)
+		x <- logit(y)
+		return(x)
+	}
+)
+
+
+
+
+summarize_nan_iterations = function(problem_param_name, samples){
+	problem_param = samples[,problem_param_name]
+	problem_iter1 = which(is.nan(problem_param[[1]]))
+	problem_iter2 = which(is.nan(problem_param[[2]]))
+	problem_iter3 = which(is.nan(problem_param[[3]]))
+	fixed_param = problem_param[-c(problem_iter1,problem_iter2,problem_iter3),] %>%
+		lapply(as.mcmc) %>%
+		as.mcmc.list()
+	fixed_param_summary = fast.summary.mcmc(fixed_param)
+	mean_val = fixed_param_summary[[1]]["Mean"]
+	mean_sd = fixed_param_summary[[1]]["SD"]
+	return(list(Mean = mean_val, SD = mean_sd))
+}
+
+
+
+tukey2 = function (x, y, extra_info = NULL, y.offset = 0.3)
+{
+	new.df <- cbind.data.frame(x = x, y = y)
+	abs_max <- max(new.df[, 2], na.rm=T)
+	maxs <- new.df %>% group_by(x) %>% summarise(tot = max(y, na.rm=T) +
+																							 	y.offset * abs_max)
+	Tukey_test <- aov(y ~ x, data = new.df) %>% agricolae::HSD.test("x",
+																																	group = TRUE) %>% .$groups %>% as_tibble(rownames = "x") %>%
+		rename(Letters_Tukey = "groups") %>% dplyr::select(-y) %>%
+		left_join(maxs, by = "x")
+	if (!is.null(extra_info)) {
+		Tukey_test <- cbind.data.frame(Tukey_test)
+	}
+	return(Tukey_test)
+}
+
+
+tag_facet <- function(p, open = "(", close = ")", tag_pool = letters, x = -Inf, y = Inf,
+											hjust = -0.5, vjust = 1.5, fontface = 2, family = "", ...) {
+
+	gb <- ggplot_build(p)
+	lay <- gb$layout$layout
+	tags <- cbind(lay, label = paste0(open, tag_pool[lay$PANEL], close), x = x, y = y)
+	p + geom_text(data = tags, aes_string(x = "x", y = "y", label = "label"), ..., hjust = hjust,
+								vjust = vjust, fontface = fontface, family = family, inherit.aes = FALSE)
+}

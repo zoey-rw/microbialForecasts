@@ -1,180 +1,9 @@
 # Helper functions and global variables for soil microbial forecasts
 
 
-#' @title 			combine_chains
-#' @description Combine MCMC chains using paths, shortening each chain due to RAM constraints
-#' @export
-combine_chains <- function(chain_paths,
-													 save = FALSE,
-													 cut_size1 = NULL,
-													 cut_size2 = NULL){
-	require(coda)
-	require(tidyverse)
-
-
-	if (is.null(cut_size1)) cut_size1 <- 19999
-	if (is.null(cut_size2)) cut_size2 <- 9999
-
-	readInputRdsFile = function(input_rds){
-		input = tryCatch(readRDS(input_rds),
-										 error = function(c) {
-										 	message("The input *rds is invalid")
-										 	return(NA)
-										 }
-		)
-	}
-
-
-	# initialize
-	samples <- samples2 <- metadata <- list()
-	for(i in 1:length(chain_paths)){
-
-		print(i)
-		# paste model file path to chain number
-		chain <- readInputRdsFile(chain_paths[[i]])
-		if (is.na(chain)) next()
-		nrow_samples <- nrow(chain[[1]])
-		nrow_samples2 <- nrow(chain[[2]])
-
-		if (nrow_samples < cut_size1) {
-			cut_size1 <- nrow_samples
-		}
-
-		samples[[i]] <- as.mcmc(as.matrix(window(chain[[1]], nrow_samples-cut_size1, nrow_samples, 1)))
-
-
-		if (nrow_samples2 < cut_size2) {
-			cut_size2 <- nrow_samples2
-		}
-		samples2[[i]] <- as.mcmc(as.matrix(window(chain[[2]], nrow_samples2-cut_size1, nrow_samples2, 1)))
-
-		metadata[[i]] <- chain[[3]]
-	}
-
-	samples<-samples[!sapply(samples,is.null)]
-	samples2<-samples2[!sapply(samples2,is.null)]
-	metadata<-metadata[!sapply(metadata,is.null)]
-
-
-	nrows <- lapply(samples, nrow) %>% unlist()
-	min_nrow <- min(nrows)
-	for(i in 1:length(samples)){
-		current_nrow <- nrow(samples[[i]])
-		if (min_nrow < current_nrow){
-			print(i)
-			samples[[i]] <- as.mcmc(as.matrix(window(samples[[i]], (current_nrow-min_nrow+1), current_nrow, 1)))
-		}
-	}
-
-
-	nrows <- lapply(samples2, nrow) %>% unlist()
-	min_nrow <- min(nrows)
-	for(i in 1:length(samples)){
-		current_nrow <- nrow(samples2[[i]])
-		if (min_nrow < current_nrow){
-			print(i)
-			samples2[[i]] <- as.mcmc(as.matrix(window(samples2[[i]], (current_nrow-min_nrow+1), current_nrow, 1)))
-		}
-	}
-
-
-	out <- list(samples = as.mcmc.list(samples),
-							samples2 = as.mcmc.list(samples2),
-							metadata = metadata[[1]])
-
-	if(!isFALSE(save)){
-		saveRDS(out, file = save)
-	}
-	return(out)
-}
 
 
 
-#' @title 			combine_chains_simple
-#' @description Combine MCMC chains using paths, shortening each chain due to RAM constraints
-#' @export
-combine_chains_simple <- function(chain_paths,
-																	save = FALSE,
-																	cut_size1 = NULL,
-																	cut_size2 = NULL){
-	require(coda)
-	require(tidyverse)
-
-	if (is.null(cut_size1)) cut_size1 <- 19999
-	if (is.null(cut_size2)) cut_size2 <- 9999
-
-	readInputRdsFile = function(input_rds){
-		input = tryCatch(readRDS(input_rds),
-										 error = function(c) {
-										 	message("The input *rds is invalid")
-										 	return(NA)
-										 }
-		)
-	}
-
-
-	# initialize
-	samples <- samples2 <- metadata <- list()
-	first_iter <- last_iter <- list()
-	for(i in 1:length(chain_paths)){
-
-
-		print(i)
-		# paste model file path to chain number
-		chain <- readInputRdsFile(chain_paths[[i]])
-		if (any(is.na(chain))) next()
-		nrow_samples <- nrow(chain[[1]])
-		nrow_samples2 <- nrow(chain[[2]])
-
-		samples[[i]] <- window_chain(chain[[1]])
-		samples2[[i]] <- window_chain(chain[[2]])
-		metadata[[i]] <- chain[[3]]
-	}
-
-	samples<-samples[!sapply(samples,is.null)]
-	samples2<-samples2[!sapply(samples2,is.null)]
-	metadata<-metadata[!sapply(metadata,is.null)]
-
-	# Now make them all the same size
-	nrows <- lapply(samples, nrow) %>% unlist()
-	min_nrow <- min(nrows)
-	for(i in 1:length(samples)){
-		current_nrow <- nrow(samples[[i]])
-		if (min_nrow < current_nrow){
-			print(i)
-			samples[[i]] <- window_chain(samples[[i]], max_size = (min_nrow-1))
-
-		}
-	}
-
-	# Now make them all the same size, chain 2
-	nrows <- lapply(samples2, nrow) %>% unlist()
-	min_nrow <- min(nrows)
-	for(i in 1:length(samples2)){
-		current_nrow <- nrow(samples2[[i]])
-		if (min_nrow < current_nrow){
-			print(i)
-			samples2[[i]] <- window_chain(samples2[[i]], max_size = (min_nrow-1))
-		}
-	}
-
-	# Make the attributes match up (sort of arbitrary)
-	for (i in 1:length(samples)) {
-		#print(attr(samples[[i]], "mcpar"))
-		#print(attr(samples2[[i]], "mcpar"))
-		attr(samples[[i]], "mcpar") = attr(samples[[1]], "mcpar")
-		attr(samples2[[i]], "mcpar") = attr(samples2[[1]], "mcpar")
-	}
-
-	out <- list(samples = as.mcmc.list(samples),
-							samples2 = as.mcmc.list(samples2),
-							metadata = metadata[[1]])
-
-	if(!isFALSE(save)){
-		saveRDS(out, file = save)
-	}
-	return(out)
-}
 
 #' @title norm_sample
 #' @description norm_sample
@@ -311,7 +140,59 @@ create_div_constants <- function(model.dat){
 }
 
 
-#' @title 			initsFun
+#' @title 			createInits
+#' @description Create initial values for MCMC runs
+#' @export
+createInits <- function(constants, type = NULL){
+	#	core_per_plot <- 3
+	y_init <- matrix(runif(constants$N.core, .1, .9),
+									 ncol = 1, nrow = constants$N.core)
+	y_init = cbind(y_init[,1], 1 - y_init[,1])
+
+	plot_mu_init <- matrix(runif(constants$N.plot * constants$N.date,
+															.3,.7),
+												 nrow=constants$N.plot, ncol=constants$N.date)
+
+	beta_init <- rnorm(constants$N.beta, 0, .2)
+	rho_init <- rnorm(1, 0, .2)
+	sigma_init <- runif(1,0,.2)
+	intercept_init <- rnorm(1, 0, .2)
+	Ex_init <- plot_mu_init
+	mois_est <- constants$mois
+	mois_est[is.na(mois_est)] <- 0
+	temp_est <- constants$temp
+	temp_est[is.na(temp_est)] <- 0
+
+	pH_est <- constants$pH
+	pC_est <- constants$pC
+	sig_init <- runif(1,.1,.5)
+	core_sd_init <- runif(1,.1,.5)
+	site_effect_init <- rnorm(constants$N.site, 0, .5)
+
+		logit_plot_mu_init = logit(plot_mu_init)
+
+		out <- list(
+			y = y_init,
+			plot_mu = plot_mu_init,
+			logit_plot_mu = logit_plot_mu_init,
+			intercept =intercept_init,
+			core_sd = core_sd_init,
+			sig = sig_init,
+			beta = beta_init,
+			rho = rho_init,
+			sigma = sigma_init,
+			site_effect = site_effect_init,
+			Ex = plot_mu_init,
+			logit_Ex = logit_plot_mu_init,
+			mois_est = mois_est,
+			temp_est = temp_est,
+			pH_est = pH_est,
+			pC_est = pC_est)
+	return(out)
+}
+
+
+#' @title 			initsFun (DEPRECATED lol)
 #' @description Create initial values for MCMC runs
 #' @export
 initsFun <- function(constants, type = NULL){
@@ -340,7 +221,7 @@ initsFun <- function(constants, type = NULL){
 
 	if (constants$N.spp == 1){ # For diversity models
 		plot_mu_init <- matrix(rnorm(constants$N.plot * constants$N.date,
-																 1,.1),
+																 1,.5),
 													 nrow = constants$N.plot, ncol = constants$N.date)
 		beta_init <- rep(0, constants$N.beta)
 		site_effect_init <- rep(0, constants$N.site)
@@ -362,10 +243,16 @@ initsFun <- function(constants, type = NULL){
 			pC_est = pC_est
 		)
 	} else if (type == "fg") { # for functional groups
+		plot_mu_init = matrix(rep(.5, constants$N.plot*constants$N.date),
+													constants$N.plot, constants$N.date)
+		logit_plot_mu_init = matrix(rep(.5, constants$N.plot*constants$N.date),
+																constants$N.plot, constants$N.date)
+		shape_init = matrix(rep(2, constants$N.plot*constants$N.date),
+												constants$N.plot, constants$N.date)
 		out <- list(
 			y = y_init,
-			plot_mu = matrix(rep(.1, constants$N.plot*constants$N.date),
-											 constants$N.plot, constants$N.date),
+			plot_mu = plot_mu_init,
+			logit_plot_mu = logit_plot_mu_init,
 			intercept = 0,
 			core_sd = .1,
 			sig = sig_init,
@@ -374,8 +261,10 @@ initsFun <- function(constants, type = NULL){
 			sigma = .1,
 			plot_rel = plot_rel_init,
 			site_effect = rep(.1, constants$N.site),
-			Ex = matrix(rep(.1, constants$N.plot*constants$N.date),
-									constants$N.plot, constants$N.date),
+			Ex = plot_mu_init,
+			logit_Ex = logit_plot_mu_init,
+			shape1 = shape_init,
+			shape2 = shape_init,
 			#SIGMA = SIGMA,
 			mois_est = mois_est,
 			temp_est = temp_est,
@@ -504,12 +393,18 @@ traceplots <- function(samples = samples, var = "betas"){
 }
 
 
-#' @title 			tic/toc functions from Colin Averill:
-#' @description  Two clock functions.
+#' @title 			tic
+#' @description  one of two clock functions.
 #' Place tic() at the line in the code where you want to start timing.
 #' Place toc() at the position in the code where you want to stop timing and report.
 #' @export
 tic <- function() {assign("timer", Sys.time(), envir=.GlobalEnv)}
+
+#' @title 			toc
+#' @description  one of two clock functions.
+#' Place tic() at the line in the code where you want to start timing.
+#' Place toc() at the position in the code where you want to stop timing and report.
+#' @export
 toc <- function() print(Sys.time()-timer)
 
 
@@ -613,62 +508,6 @@ rbind.df.list <- function(pl.out){
 }
 
 
-#'  @title 			Tukey
-#'  @description run tukey test
-#'
-#' @export
-tukey <- function(x, y, extra_info = NULL, y.offset = .3){
-	new.df <- cbind.data.frame("x" = x, "y" = y)
-	abs_max <- max(new.df[,2])
-  maxs <- new.df %>%
-    group_by(x) %>%
-    summarise(tot=max(y)+ y.offset * abs_max)
-  Tukey_test <- aov(y ~ x, data=new.df) %>%
-    agricolae::HSD.test("x", group=TRUE) %>%
-    .$groups %>%
-    as_tibble(rownames="x") %>%
-    rename("Letters_Tukey"="groups") %>%
-    dplyr::select(-y) %>%
-    left_join(maxs, by="x")
-  if (!is.null(extra_info)){
-    Tukey_test <- cbind.data.frame(Tukey_test)
-  }
-  return(Tukey_test)
-}
-
-
-
-#'  @title 			get_sin_cos
-#'  @description return sin and cosine components from month or day
-#' @param input_dates a vector of dates in the format "20210130" or "202101"
-#'
-#' @return  a vector of values on the interval (0,1)
-#' @examples
-#' get_sin_cos("20210130")
-#' get_sin_cos("202101")
-#' @export
-#'
-get_sin_cos <- function(input_dates) {
-
-	# if input is month, divide by 12
-	if (class(input_dates[[1]]) == "character"
-			& nchar(input_dates[[1]]) == 6) {
-		mo <- lubridate::month(as.Date(paste0(input_dates, "01"), format="%Y%m%d"))
-		y_sin = sin((2*pi*mo)/12)
-		y_cos = cos((2*pi*mo)/12)
-
-		# if input is day, divide by 365
-	} else if (class(input_dates[[1]]) == "character" &
-						 nchar(input_dates[[1]]) == 8) {
-		doy <- lubridate::yday(as.Date(input_dates, format="%Y%m%d"))
-		y_sin = sin((2*pi*doy)/365.25)
-		y_cos = cos((2*pi*doy)/365.25)
-	}  else {
-		message("Inputs must be in the character format '201601' or date format '20160101'")
-		return()
-	}
-return(list(sin=y_sin, cos=y_cos))
-}
 
 
 #' @title filter_date_site
@@ -711,28 +550,6 @@ pacman::p_load(tidyverse, anytime)
 	return(filt)
 }
 
-
-
-#' @title crib_fun
-#' stolen from colin's NEFI_microbe repo
-#' converts a vector of [0,1] values to (0,1) a la Cribari-Neto & Zeileis 2010
-#' @param x a vector of values on the interval [0,1]
-#' @param N alternative sample size. This is useful when tranforming a matrix in the dirchlet case, rather than just a vector as in the beta case.
-#'
-#' @return  a vector of values on the interval (0,1)
-#' @export
-#'
-crib_fun <- function(x,N = NA){
-	#default use length of vector.
-	if( is.na(N)){
-		out <- (x * (length(x) - 1) + 0.5) / length(x)
-	}
-	#custom- useful when I am in multivariate case.
-	if(!is.na(N)){
-		out <- (x * (N - 1) + 0.5) / N
-	}
-	return(out)
-}
 
 #' @title create_covariate_samples
 #' @description samples covariate values
@@ -861,46 +678,6 @@ is_significant <- function(lo, hi) {
 
 
 
-#' @title getMaxMin
-#' @description # get maximum amplitude from sin and cosine components
-#'
-#' @export
-#'
-getMaxMin <- function(sin, cos, T = 12, max_only = T) {
-
-	print(sin[[1]]);
-	print(cos[[1]])
-
-	print(length(sin));
-	print(length(cos))
-
-	sin <- sin[[1]]
-	cos <- cos[[1]]
-
-	t <- atan(sin/cos) * T/(2*pi)
-
-	if ((sin/cos) > 0){
-		extreme1 <- t
-		extreme2 <- extreme1 + T/2
-	} else if ((sin/cos) <= 0){
-		extreme1 <- t + T/2
-		extreme2 <- t + T
-	}
-
-	if (sin > 0){
-		max <- extreme1
-		min <- extreme2
-	} else if (sin <= 0){
-		min <- extreme1
-		max <- extreme2
-	}
-	if (max_only) {
-		return(max)
-	} else {
-		return(list("min" = min, "max" = max))
-	}
-}
-
 
 
 
@@ -922,13 +699,6 @@ order_betas <- function(beta) {
 }
 
 
-
-
-#' @title invlogit
-#' @description # invlogit
-#'
-#' @export
-invlogit = function(x) exp(x)/(1+exp(x))
 
 
 
@@ -968,6 +738,51 @@ convert_beta_params = function(mu, sd){
 				 colin = c(p, q)))
 }
 
+
+#' @title parse_model_id
+#' @description  parse_model_id
+#'
+#' @export
+#'
+parse_model_id = function(model_id){
+
+	info <- model_id %>% str_split("_") %>% unlist()
+
+	# Extract "time_period"
+		time_period <- tail(info, 2) %>% paste0(collapse = "_") %>% str_replace(".rds", "")
+		info <- info[-c((length(info)-1):length(info))]
+
+	# Extract "model_name"
+		model_name <- info[c(1:2)]  %>% paste0(collapse = "_")
+		info <- info[-c(1:2)]
+
+	rank.name.eval <- info %>% paste0(collapse = "_")
+
+	if (rank.name.eval %in% microbialForecast:::fg_names) {
+		summary_type="functional"
+	} else {
+		summary_type= "taxon"
+	}
+
+	# Add columns based on
+	if (summary_type=="functional") {
+		rank.name <- rank.name.eval
+		rank_only <- "functional"
+		species <- rank.name.eval
+		fg_cat <- assign_fg_categories(species)
+		group <- assign_fg_kingdoms(fg_cat)
+	} else {
+
+		taxa_key = stack(microbialForecast:::rank_spec_names) %>%
+			select(species = values, rank.name = ind)
+
+		species <- rank.name.eval
+		rank.name <- taxa_key[match(species, taxa_key$species),]$rank.name
+		rank_only <-  rank.name  %>% str_split("_") %>% unlist() %>% head(1)
+		group <-  rank.name  %>% str_split("_") %>% unlist() %>% tail(1)
+	}
+return(list(rank.name, time_period, rank_only, species, group, model_name, model_id, summary_type))
+}
 
 # ## ################################################
 # ## A DISTRIBUTION GIVING THE LOGIT OF A BETA DISTRIBUTION ##
