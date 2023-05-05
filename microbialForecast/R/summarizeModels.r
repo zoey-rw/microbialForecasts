@@ -44,7 +44,7 @@ if ("gelman" %in% names(read_in) & !is.null(ncol(read_in$gelman))) {
 }
 gd <- gd %>% mutate(rank.name = !!rank.name,
 										#taxon.name = !!taxon.name,
-										nburnin = read_in$metadata[[3]]) %>% rownames_to_column("parameter")
+										niteration = read_in$metadata$niteration) %>% rownames_to_column("parameter")
 return(gd)
 }
 

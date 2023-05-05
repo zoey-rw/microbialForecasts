@@ -1,5 +1,6 @@
 # Combine chains from each taxon model, and create basic summary stats
-source("./source.R")
+source("source.R")
+#p_info(c("nimble"))
 
 # Do we want to keep all the chain files separately? Deleting them will save space
 delete_samples_files = F
@@ -22,18 +23,17 @@ spec = microbialForecast:::rank_spec_names[[rank]][[1]]
 
 
 for (model_name in c("all_covariates", "cycl_only")) {
-	file.list <- list.files(path = paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/single_taxon/", model_name),
+	file.list <- list.files(path = here("data/model_outputs/single_taxon/", model_name),
 			pattern = "_chain",
 			full.names = T)
 
 	# Subset to newer output files
 	info <- file.info(file.list)
-	newer <- rownames(info[which(info$mtime > "2022-08-02 00:00:00 EDT"), ])
 	newer <- rownames(info[which(info$mtime > "2022-12-02 00:00:00 EDT"), ])
 
 	# Don't want files still being written - at least 2 min old
-	#older <- rownames(info[which(info$mtime < (Sys.time()-120)), ])
-	older <- rownames(info[which(info$mtime < (Sys.time()-3000)), ])
+	older <- rownames(info[which(info$mtime < (Sys.time()-120)), ])
+	#older <- rownames(info[which(info$mtime < (Sys.time()-3000)), ])
 
 	# If deleting sample files, we don't want models still being run - at least 18 hours old
 	if (delete_samples_files) {
@@ -42,7 +42,7 @@ for (model_name in c("all_covariates", "cycl_only")) {
 
 	file.list <- file.list[file.list %in% newer & file.list %in% older]
 
-	for (rank in microbialForecast:::tax_names[6]) {
+	for (rank in microbialForecast:::tax_names) {
 		for (spec in microbialForecast:::rank_spec_names[[rank]]) {
 			for (time_period in c("20151101_20180101")) {
 				#for (time_period in c("20151101_20180101","20151101_20200101")){
@@ -59,15 +59,6 @@ for (model_name in c("all_covariates", "cycl_only")) {
 					chain_paths[grepl(time_period, chain_paths)]
 
 
-				savepath <- gsub("_chain[1234567]", "", chain_paths_time_period[[1]])
-
-			if (any(grepl("chain[567]", chain_paths_time_period))) {
-
-				chain_paths_time_period <- chain_paths_time_period[grepl("chain[567]", chain_paths_time_period)]
-
-			}
-
-
 				if (length(chain_paths_time_period) == 0) {
 					next()
 				}
@@ -77,50 +68,31 @@ for (model_name in c("all_covariates", "cycl_only")) {
 					next()
 				}
 
-				# if (samples_exists(chain_paths_time_period[[1]])) {
-				# 	message("Summary file already exists")
-				#
-				#
-				# 	if (delete_samples_files) {
-				# 		unlink(chain_paths_time_period)
-				# 		message("Deleting samples file: ", chain_paths_time_period)
-				# 	}
-				# } else {
-				# 	print(chain_paths_time_period)
-				#
-				# 	# Read in and combine each chain
-				#
-				#
-				# 	# If new chains are 5-7, combine with previous
-				# 	if (grepl("chain[567]", chain_paths_time_period[[1]])) {
-				# 		existing_samples = readRDS(savepath)
-				# 		out = combine_chains_existing(input_list = c(chain_paths_time_period, existing_samples$samples))
-				# 		# Calculate summary on each output subset, using custom summary function
-				# 		param_summary <- fast.summary.mcmc(out)
-				# 		plot_summary <- existing_samples$plot_summary
-				# 		es <- effectiveSize(out)
-				# 		if (length(out) > 1) {
-				# 		gelman_out <- cbind(gelman.diag(out)[[1]], es)
-				# 		} else gelman_out = NULL
-				#
-				# 			metadata = existing_samples$metadata
-				#
-				# 		# Combine and save output
-				# 		out_summary <- list(
-				# 			samples = out,
-				# 			param_summary = param_summary,
-				# 			plot_summary = plot_summary,
-				# 			metadata = metadata,
-				# 			gelman = gelman_out
-				# 		)
-				#
-				# 	} else {
+				if (samples_exists(chain_paths_time_period[[1]])) {
+					message("Summary file already exists")
+
+
+					if (delete_samples_files) {
+						unlink(chain_paths_time_period)
+						message("Deleting samples file: ", chain_paths_time_period)
+					}
+				} else {
+
+					savepath <- gsub("_chain[1234567]", "", chain_paths_time_period[[1]])
 
 						out <- combine_chains_simple(chain_paths_time_period)
+
+
+
 						# Calculate summary on each output subset, using custom summary function
 						param_summary <- fast.summary.mcmc(out$samples)
 						plot_summary <- fast.summary.mcmc(out$samples2)
 						es <- effectiveSize(out$samples)
+
+						if (min(es) < 5) {
+							print(es[1:50])
+						}
+
 						if (length(out$samples) > 1) {
 							gelman_out <- cbind(gelman.diag(out$samples)[[1]], es)
 						} else gelman_out = NULL
@@ -133,15 +105,12 @@ for (model_name in c("all_covariates", "cycl_only")) {
 						metadata = out$metadata,
 						gelman = gelman_out
 					)
-					}
+
 
 					saveRDS(out_summary, savepath, compress = F)
 					message("Saved samples and summary output for ",model_name,", ",time_period,", ",rank," to: ",savepath)
-
-
-if (min(es) < 5) {
-	print(es[1:50])
 }
+
 
 
 
@@ -153,7 +122,7 @@ if (delete_samples_files){
 	}
 } else message("Not deleting samples files, e.g.: ", chain_paths_time_period[[1]])
 
-				#}
+				} # End if-samples_exists loop
 		} # End time-period loop
 	} # End species loop
 } # End rank loop

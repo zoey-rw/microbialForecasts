@@ -5,7 +5,7 @@
 # # For testing
 # iter <- 500
 # burnin <- 200
-# thin <- 1
+# thin <- thin2 <- 1
 # test =F
 # k = 1
 # temporalDriverUncertainty <- TRUE
@@ -22,8 +22,14 @@
 # s = "acidobacteriota"
 # model_name = "cycl_only"
 
+# s = params$species[[j]]
+# k = params$group[[j]]
+s = "acidimicrobiia"
+k = 1
+
+
 run_MCMC_single_taxon_bychain <- function(k = 1,
-																					iter = 1000,  burnin = 500, thin = 1,
+																					iter = 1000,  burnin = 500, thin = 1, thin2 = 25,
                                   test = F, chain_no = 1,
                                   temporalDriverUncertainty = TRUE, spatialDriverUncertainty = TRUE,
                                   scenario=NULL,
@@ -126,18 +132,20 @@ run_MCMC_single_taxon_bychain <- function(k = 1,
   # Compile model
   cModel <- compileNimble(Rmodel)
   nimbleOptions(multivariateNodesAsScalars = TRUE)
+  nimbleOptions(MCMCjointlySamplePredictiveBranches = FALSE)
+
   # Configure & compile MCMC
   mcmcConf <- configureMCMC(cModel, monitors = c("beta","sigma","site_effect",
                                                  "sig","intercept",
                                                  "rho"),
-                            monitors2 = c("plot_rel"), thin2 = 25,
+                            monitors2 = c("plot_rel"), thin2 = thin2,
                             useConjugacy = T)
 
   myMCMC <- buildMCMC(mcmcConf)
   compiled <- compileNimble(myMCMC, project = Rmodel, resetFunctions = TRUE)
 
 
-  compiled$run(niter=init_iter, thin=thin, thin2 = 25, nburnin = burnin)
+  compiled$run(niter=init_iter, thin=thin, thin2 = thin2, nburnin = burnin)
   cat(paste0("\nInitial run finished for chain", chain_no))
 
   # Sample from MCMC

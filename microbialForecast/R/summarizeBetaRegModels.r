@@ -4,11 +4,11 @@
 #'  @description Summarize NIMBLE state-space beta regression models for microbial taxa and functional groups
 #'  Assumes input RDS files contain a list of:
 #'  MCMC samples, parameter summaries, latent state summaries, and model-fitting metadata
-#'
+#'	@param overwrite want to save new summary files even if there's an existing, recent summary file
 #' @export
 summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL, drop_other = TRUE){
 	require(stringr)
-	if(summary_exists(file_path)) {
+	if(summary_exists(file_path)) { # checks that a summary is needed (samples files are new)
 		if (is.null(overwrite)) {
 			return("Summary file already exists")
 		}
@@ -23,50 +23,48 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	plot_summary <- read_in$plot_summary
 	truth.plot.long <- read_in$metadata$model_data
 
+
 	# Extract run information
 	info <- basename(file_path) %>% str_split("_") %>% unlist()
-	model_name <- basename(dirname(file_path))
-	if (tail(info,1) == "summary.rds") {
-		if (info[[1]] == "refit") {
-			time_period <- "2013-06_2020-01"
-			info <- info[c(2,3,4,5,6)]
+	model_id <- basename(file_path) %>%  str_replace("samples_", "") %>%  str_replace(".rds", "")
 
-		} else if (info[[1]] == "calibration") {
-			time_period <- "2013-06_2017-01"
-			info <- info[c(2,3,4,5,6)]
-		} else 	{
+	parsed_id = parse_model_id(model_id)
+	rank.name.eval <- parsed_id[[1]]
+	model_name <- parsed_id[[6]]
+	summary_type <- parsed_id[[3]]
+	group  <- parsed_id[[5]]
+	time_period <- parsed_id[[2]]
+
+	if (tail(info,1) == "summary.rds") {
 			info <- info %>% head(-1)
-			time_period <- tail(info, 2) %>% paste0(collapse = "_") %>% str_replace(".rds", "")
-		}
-	} else {
-		time_period <- tail(info, 2) %>% paste0(collapse = "_") %>% str_replace(".rds", "")
 	}
 
-	summary_type <- "taxon"
-	# TODO: insert a real check here
+	species <- parsed_id[[4]]
+	rank_only <- parsed_id[[3]]
+
+# Add columns based on
 	if (summary_type=="functional") {
-	rank.name <- info %>% head(2) %>% tail(2) %>% paste0(collapse = "_")
-	species <- info %>% tail(2) %>% head(2) %>% paste0(collapse = "_")
-	rank_only <- info[[3]]
+		rank.name <- rank.name.eval
+		rank_only <- summary_type
 	fg_cat <- assign_fg_categories(species)
 	group <- assign_fg_kingdoms(fg_cat)
 	} else {
-		rank.name <- info %>% head(3) %>% tail(2) %>% paste0(collapse = "_")
-		rank_only <-  info %>% head(2) %>% tail(1)
-		species <- info %>% tail(3) %>% head(1) %>% paste0(collapse = "_")
-		group <- info %>% head(3) %>% tail(1)
+
+		taxa_key = stack(microbialForecast:::rank_spec_names) %>%
+			select(species = values, rank.name = ind)
+
+		rank.name <- taxa_key[match(species, taxa_key$species),]$rank.name
+		rank_only <-  rank.name  %>% str_split("_") %>% unlist() %>% head(1)
 		}
+	taxon.name = species
 
-	message("\nSummarizing ",group,", ", rank.name, ", ", time_period, ", ", model_name)
-
-	if (model_name == "convergence_testing") {
-		model_name = "cycl_only"
-		taxon.name = info[[4]]
-	}
+	message("Summarizing ", species, ", ", rank.name, ", ", time_period, ", ", model_name)
 
 
 	cov_key <- switch(model_name,
 										"all_covariates" = microbialForecast:::all_covariates_key,
+										"env_cov" = microbialForecast:::all_covariates_key,
+										"env_cycl" = microbialForecast:::all_covariates_key,
 										"cycl_only" = microbialForecast:::cycl_only_key)
 
 	taxon_key <- unique(truth.plot.long$species)
@@ -86,7 +84,11 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 					 group = !!group,
 					 rank_only = !!rank_only,
 					 time_period = !!time_period,
-					 pretty_group = ifelse(group %in% c("16S","bac"), "Bacteria", "Fungi"))
+					 fcast_type = !!summary_type,
+					 pretty_group = ifelse(group %in% c("16S","bac"), "Bacteria", "Fungi"),
+					 model_id = !!model_id) %>%
+		mutate(time_period =
+					 	recode(as.character(!!time_period), !!!microbialForecast:::date_recode))
 
 	if (summary_type=="functional") {
 		truth.plot.long <- truth.plot.long %>%
@@ -103,30 +105,24 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	}
 
 	if (nchar(species) > 0) {
-		# truth.plot.long <- truth.plot.long %>%
-		# 	mutate(taxon = !!species,
-		# 				 species = !!species)
 		taxon_key[[1]] = species
 	}
 
 	# Calculate plot median and quantiles
 	pred.quantiles <- plot_summary[[2]] %>% parse_plot_mu_vars() %>%
-		mutate(taxon = !!species) %>%
-		merge(truth.plot.long, by = c("plot_num", "timepoint","taxon"), all = T)
+		merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
 
 
 	# For scoring the predictions, need mean and SD
 	pred.means <- plot_summary[[1]] %>% parse_plot_mu_vars() %>%
-		mutate(taxon = !!species) %>%
-		#mutate(taxon = recode(species_num, !!!taxon_key)) %>%
-		merge(truth.plot.long, by = c("plot_num", "timepoint","taxon"), all = T)
+		merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
 
 	pred.quantiles$Mean <- pred.means$Mean
 	pred.quantiles$SD <- pred.means$SD
 
 	# Get mean values for parameters
 	means <- param_summary[[1]]
-	eff_list <- lapply(c("sigma", "sig$", "intercept", "rho"),
+	eff_list <- lapply(c("sigma", "sig$", "intercept", "rho", "core_sd"),
 										 function(x) extract_summary_row(means, var = x)) %>%
 		plyr::rbind.fill() %>%
 		mutate(taxon = !!species) #%>%
@@ -162,7 +158,7 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 		plyr::rbind.fill(beta_out, eff_list, site_eff_out) %>% mutate(rank = rank.name) %>%
 		left_join(truth.plot.long[, c("model_name", #"taxon",
 																	"rank", "group", "rank_only", "time_period",
-																	"fcast_type","pretty_group")] %>% distinct())
+																	"fcast_type","pretty_group","model_id")] %>% distinct())
 	# } else {
 	# 	summary_df <-
 	# 		plyr::rbind.fill(beta_out, eff_list, site_eff_out)  %>% mutate(rank = rank.name) %>%
@@ -174,7 +170,7 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	gd <- add_gelman(read_in, rank.name) %>% mutate(rank = rank.name,  taxon = !!species) %>%
 		left_join(truth.plot.long[, colnames(truth.plot.long) %in% c("model_name", #"taxon",
 																	"rank", "group", "rank_only", "time_period",
-																	"fcast_type", "pretty_group")])
+																	"fcast_type", "pretty_group","model_id")]  %>% distinct())
 
 	if (drop_other) {
 		summary_df <- summary_df %>% filter(taxon != "other")
