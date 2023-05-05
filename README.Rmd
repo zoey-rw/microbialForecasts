@@ -1,26 +1,31 @@
 
 ## Overview
 
-This analysis uses state-space hierarchical models to explore spatio-temporal variation across the soil microbiomes of the United States. Model/forecast types:
+This analysis uses state-space hierarchical models to explore spatio-temporal variation and predictability across the soil microbiomes of the United States. Model/forecast types:
 - Relative abundance (taxonomic groups)
 - Relative abundance (functional groups)
-- Shannon diversity 
+- 3 different linear model structures (see publication)
 
 Models are constructed separately for fungi (ITS sequences) and for bacteria (16S sequences). Response variables are modeled at the plot (20m x 20m) level, with three soil cores taken as replicates. ~2000 soil cores come from 18 sites across the United States (NEON), each site sampled multiple times per year.
 
-## Main directories:
+We use the "here" package to keep filepaths relative the main directory. The "source.R" script must be run before any script to check for installed packages and create file paths. The microbialForecast R package contains the functions to fit and evaluate models and hindcasts.
+
+## Main repo directories:
 
 ### data_construction
 Scripts for downloading and preparing covariate and microbial data from NEON and other sources.
 
 ### analysis
-Scripts for fitting and analyzing Bayesian state-space models in the NIMBLE language. 
+Scripts for fitting and analyzing Bayesian state-space models in the NIMBLE language. Scripts 0-4 create models and clean up their output. Scripts 5-8 create and evaluate forecasts. 
+
+### analysis/create_figures/
+Creating figures using outputs from analysis scripts 
 
 ### shinyapp/ 
 For visualizing forecasts of specific microbial forecasts, parameter estimates, and model convergence diagnostics. (never finished debugging this, sorry)
 
 ### figures/
-Output folder for some figures but not many
+Output folder for publication figures.
 
 ### data/ 
-Reference data, raw data, model_outputs, and model inputs ("clean/"). Raw data and model outputs are not pushed to GitHub.
+Reference data, raw data, model_outputs, and model inputs ("clean/"). Raw data and model outputs are not pushed to GitHub, but everything needed to run the "analysis" scripts is there.
