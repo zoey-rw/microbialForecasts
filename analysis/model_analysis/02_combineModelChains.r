@@ -1,121 +1,139 @@
 # Combine chains from each taxon model, and create basic summary stats
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
-
-# Do we want to keep all the chain files separately? Deleting them will save space
-delete_samples_files = T
-
-# For interactive use/testing.
-model_name <- "cycl_only"
-model_name <- "all_covariates"
-rank <- "order_bac"
-rank <- "order_fun"
-rank <- "phylum_bac"
-rank <- "phylum_fun"
-rank <- "family_fun"
-rank <- "family_bac"
-rank <- "class_fun"
-rank <- "genus_fun"
-rank <- "genus_bac"
-rank <- "class_bac"
-time_period <- "20151101_20200101"
-time_period <- "20151101_20180101"
-spec = microbialForecast:::rank_spec_names[[rank]][[1]]
+source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
 
 
-for (model_name in c("all_covariates", "cycl_only")) {
-	file.list <- list.files(path = paste0("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/logit_beta_regression/", model_name),
-			pattern = "_chain",
-			full.names = T)
+# # For interactive use/testing.
+# model_name <- "cycl_only"
+#model_id = "env_cycl_animal_pathogen_20151101_20180101"
 
-	# Subset to newer output files
+# Summarize all available models
+params_in = read.csv(here("data/clean/model_input_df.csv")) %>% filter(min.date=="20151101" & max.date == "20180101")
+model_id_list = unique(params_in$model_id)
+
+# Or, subset to certain model runs
+# params <- params_in %>% filter(min.date=="20151101" & max.date == "20180101")
+# params <- params_in %>% filter(min.date=="20151101" &
+# 															 	max.date == "20180101",
+# 															 model_name=="cycl_only")
+# model_id_list <- gsub("env_cov","all_covariates",model_id_list)
+# model_id_list = unique(params$model_id)
+
+cl <- makeCluster(28, outfile="")
+registerDoParallel(cl)
+#for(model_id in model_id_list){
+foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
+	source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+
+	# Do we want to keep all the chain files separately? Deleting them will save space
+	delete_samples_files = F
+
+	#for (model_name in c("all_covariates", "cycl_only")) {
+	file.list <- list.files(path = here("data/model_outputs/logit_beta_regression/"),
+													pattern = "_chain",
+													recursive = T,
+													full.names = T)
+
+	# Subset to newest output files
 	info <- file.info(file.list)
-	newer <- rownames(info[which(info$mtime > "2022-08-02 00:00:00 EDT"), ])
-	newer <- rownames(info[which(info$mtime > "2022-12-02 00:00:00 EDT"), ])
+
+	# Subset more than 200MB (otherwise, some parameters probably didn't save)
+	large_enough <- rownames(info[which(info$size > 100000000), ])
+
+	#newer <- rownames(info[which(info$mtime > "2023-03-09 06:00:00 EDT"), ])
+	newer <- rownames(info[which(info$mtime > "2023-04-28 18:00:00 EDT"), ])
 
 	# Don't want files still being written - at least 2 min old
 	older <- rownames(info[which(info$mtime < (Sys.time()-120)), ])
-	#older <- rownames(info[which(info$mtime < (Sys.time()-3000)), ])
 
 	# If deleting sample files, we don't want models still being run - at least 18 hours old
 	# if (delete_samples_files) {
 	# 	older <- rownames(info[which(info$mtime < (Sys.time()-64800)), ])
 	# }
+	file.list <- file.list[file.list %in% newer & file.list %in% large_enough]
 
-	file.list <- file.list[file.list %in% newer & file.list %in% older]
-
-	for (rank in microbialForecast:::tax_names[1]) {
-		for (spec in microbialForecast:::rank_spec_names[[rank]]) {
-			for (time_period in c("20151101_20180101")) {
-				#for (time_period in c("20151101_20180101","20151101_20200101")){
-				print(model_name)
-				print(rank)
-				print(spec)
-				print(time_period)
-
-				spec_rank = paste0(rank, "_", spec)
-				spec_rank_time = paste0(rank, "_", spec, "_", time_period)
-				chain_paths <-
-					file.list[grepl(paste0(spec_rank, "_20"), file.list, fixed = T)]
-				chain_paths_time_period <-
-					chain_paths[grepl(time_period, chain_paths)]
+	message("Searching model outputs for ",model_id)
 
 
-				if (length(chain_paths_time_period) == 0) {
-					next()
-				}
+	# Subset to files of interest
+	chain_paths <-
+		file.list[grepl(model_id, file.list, fixed = T)]
 
-
-				savepath <- gsub("_chain[1234567]", "", chain_paths_time_period[[1]])
-
-
-
-				if (length(chain_paths_time_period) == 1) {
-					message("Skipping ", chain_paths_time_period, "; only one chain")
-					next()
-				}
-
-						out <- combine_chains_simple(chain_paths_time_period)
-						# Calculate summary on each output subset, using custom summary function
-						param_summary <- fast.summary.mcmc(out$samples)
-						plot_summary <- fast.summary.mcmc(out$samples2)
-						es <- effectiveSize(out$samples)
-						if (length(out$samples) > 1) {
-							gelman_out <- cbind(gelman.diag(out$samples)[[1]], es)
-						} else gelman_out = NULL
-
-					# Combine and save output
-					out_summary <- list(
-						samples = out$samples,
-						param_summary = param_summary,
-						plot_summary = plot_summary,
-						metadata = out$metadata,
-						gelman = gelman_out
-					)
-					#}
-
-					saveRDS(out_summary, savepath, compress = F)
-					message("Saved samples and summary output for ",model_name,", ",time_period,", ",rank," to: ",savepath)
-
-
-if (min(es) < 500) {
-	print(es[1:50])
-}
-
-
-
-# If the summary now exists, delete the chains
-if (delete_samples_files){
-	if (samples_exists(chain_paths_time_period[[1]])) {
-		unlink(chain_paths_time_period)
-		message("Deleting samples files, e.g.: ", chain_paths_time_period[[1]])
+	if (length(chain_paths) == 0)
+		return(message("Skipping ", chain_paths, "; no chains"))
+	if (length(chain_paths) == 1) {
+		return(message("Skipping ", chain_paths, "; only one chain"))
+		#next()
 	}
-} #else message("Not deleting samples files, e.g.: ", chain_paths_time_period[[1]])
+	savepath <- gsub("_chain[1234567]", "", chain_paths[[1]])
 
-				#}
-		} # End time-period loop
-	} # End species loop
-} # End rank loop
-	} # End model type loop
+
+	# Don't run loop if the samples file is already newer than the chain files
+	if (samples_exists(chain_paths[[1]])) message("Summary samples file already exists") else {
+		
+		
+	# Calculate summary on each output subset, using custom summary function
+	out <- combine_chains_simple(chain_paths)
+
+	# Remove chains if one has very different values than the other 3
+	chains <- out$samples
+	means <- lapply(chains, function(x) mean(x[,"intercept"], na.rm=T))
+	scaled_means = scale(unlist(means))
+	potential_outlier <- which(abs(scaled_means) > 1.3)
+	if (length(potential_outlier) %in% c(1,2)){
+	chains_without_outlier <- chains[-c(potential_outlier)]
+	new_gelman= gelman.diag(chains_without_outlier, multivariate = F)[[1]][,1] %>%  mean(na.rm=T)
+	old_gelman= gelman.diag(chains, multivariate = F)[[1]][,1] %>%  mean(na.rm=T)
+	improvement = old_gelman - new_gelman
+	remove <- ifelse(improvement > .1, T, F)
+	if (remove) {
+		message(model_id, " removing outlier chain: ", potential_outlier,
+						"\nGelman diagnostic improves from ", round(old_gelman, 3), " to ", round(new_gelman, 3))
+		out$samples = chains_without_outlier
+		out$samples2 = out$samples2[-c(potential_outlier)]
+	}
+	}
+
+
+
+	param_summary <- fast.summary.mcmc(out$samples)
+	plot_summary <- fast.summary.mcmc(out$samples2)
+	es <- effectiveSize(out$samples)
+	if (length(out$samples) > 1) {
+		gelman_out <- cbind(gelman.diag(out$samples, multivariate = F)[[1]], es)
+	} else gelman_out = cbind(`Point est.`=NA, `Upper C.I.`=NA, es)
+
+	# Combine and save output
+	out_summary <- list(
+		samples = out$samples,
+		param_summary = param_summary,
+		plot_summary = plot_summary,
+		metadata = out$metadata,
+		gelman = gelman_out
+	)
+
+	saveRDS(out_summary, savepath, compress = F)
+	message("Saved combined samples output for ", model_id, " to: ",savepath)
+
+
+	if (min(es) < 500) {
+		message("Low effective sample sizes - check for unconverged parameters in model: ", model_id)
+		print(head(gelman_out, 50))
+	}
+
+
+	# If the summary now exists, delete the chains
+	if (delete_samples_files){
+		if (samples_exists(chain_paths_time_period[[1]])) {
+			unlink(chain_paths_time_period)
+			message("Deleting samples files, e.g.: ", chain_paths_time_period[[1]])
+		}
+	} #else message("Not deleting samples files, e.g.: ", chain_paths_time_period[[1]])
+	}
+	return()
+} # End model_id loop
+
+
+stopCluster(cl)
 
 
 

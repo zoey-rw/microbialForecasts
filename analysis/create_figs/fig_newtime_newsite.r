@@ -1,47 +1,37 @@
 
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
 #p_load(forestmangr)
 scores_list = readRDS(here("data/summary/scoring_metrics_cv.rds"))
-#scores_list = readRDS(here("data/summary/scoring_metrics_cv_jan18.rds"))
 
 library(ggallin)
 
 #keep = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/converged_taxa_list.rds")
-unconverged = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/unconverged_taxa_list.rds")
-converged = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/converged_taxa_list.rds")
-#keep = keep[keep$median_gbr < 3,]
-unconverged = unconverged[unconverged$median_gbr > 7,]
-#unconverged = unconverged[unconverged$median_gbr > 3,]
-#converged = converged[converged$median_gbr < 4,]
-all_cov = converged[converged$model_name=="all_covariates",]
-
+unconverged = scores_list$unconverged_list
+converged = scores_list$converged_list
+converged_strict = scores_list$converged_strict_list
 
 
 # Get mean values for plotting
 site_time_scores_to_plot = scores_list$scoring_metrics %>%
-	mutate(taxon_model_rank = paste(taxon, model_name, rank)) %>%
-	#	filter(!taxon_model_rank %in% unconverged$taxon_model_rank)%>%
-	#filter(taxon_model_rank %in% converged$taxon_model_rank)%>%
-	filter(model_name=="all_covariates" &
-				 	fcast_type !="Diversity" &
+	filter(model_id %in% converged_strict) %>%
+	filter(model_name=="env_cycl" &
 				 	!grepl("random", site_prediction))
 
 
-rank_vals = site_time_scores_to_plot %>% filter(grepl("observed", site_prediction))
+rank_vals = site_time_scores_to_plot %>%
+	filter(grepl("observed", site_prediction))
 rank_means = rank_vals %>% ungroup() %>%
-	group_by(fcast_type, pretty_group, model_name, pretty_name, rank) %>%
+	group_by(fcast_type, pretty_group, model_name, pretty_name) %>%
 	summarize(mean_RSQ=mean(RSQ, na.rm=T),
 						sd_RSQ = sd(RSQ, na.rm=T)) %>%
 	mutate(ymax = mean_RSQ + 1.96*sd_RSQ,
 				 ymin = mean_RSQ - 1.96*sd_RSQ) %>% arrange(pretty_group, pretty_name)
 
-
-
 # Get mean values for plotting
 skill_score_vals = scores_list$skill_score_taxon %>%
-	filter(model_name=="all_covariates" & fcast_type !="Diversity")
+	filter(model_id %in% converged_strict & model_name=="env_cycl")
 skill_score_to_plot = skill_score_vals %>% ungroup() %>%
-	group_by(fcast_type, pretty_group, model_name, pretty_name, rank) %>%
+	group_by(fcast_type, pretty_group, model_name, pretty_name) %>%
 	summarize(mean_skill_score=mean(skill_score, na.rm=T),
 						sd_skill_score = sd(skill_score, na.rm=T)) %>%
 	mutate(ymax = mean_skill_score + 1.96*sd_skill_score,
@@ -49,21 +39,6 @@ skill_score_to_plot = skill_score_vals %>% ungroup() %>%
 
 
 
-tukey2 = function (x, y, extra_info = NULL, y.offset = 0.3)
-{
-	new.df <- cbind.data.frame(x = x, y = y)
-	abs_max <- max(new.df[, 2], na.rm=T)
-	maxs <- new.df %>% group_by(x) %>% summarise(tot = max(y, na.rm=T) +
-																							 	y.offset * abs_max)
-	Tukey_test <- aov(y ~ x, data = new.df) %>% agricolae::HSD.test("x",
-																																	group = TRUE) %>% .$groups %>% as_tibble(rownames = "x") %>%
-		rename(Letters_Tukey = "groups") %>% dplyr::select(-y) %>%
-		left_join(maxs, by = "x")
-	if (!is.null(extra_info)) {
-		Tukey_test <- cbind.data.frame(Tukey_test)
-	}
-	return(Tukey_test)
-}
 
 # Calculate Tukey groups
 tukey_list <- list()
@@ -113,8 +88,6 @@ newtime_by_rank +
 
 
 
-
-
 # Compare new-time only across taxonomic ranks and functional groups
 newsite_by_rank = ggplot(skill_score_to_plot,
 												 aes(x = pretty_name, y = mean_skill_score, color = pretty_group)) +
@@ -149,12 +122,11 @@ cal_scores = scores_list$calibration_metrics
 
 # Get mean values for plotting
 cal_score_vals = scores_list$calibration_metrics %>%
-	mutate(taxon_model_rank = paste(taxon, model_name, rank)) %>%
-	filter(model_name=="all_covariates" & fcast_type !="Diversity") %>%
-	filter(!taxon_model_rank %in% unconverged$taxon_model_rank)
+	filter(model_name=="env_cycl") %>%
+	filter(model_id %in% converged & model_name=="env_cycl")
 
 cal_score_vals_to_plot = cal_score_vals %>% ungroup() %>%
-	group_by(fcast_type, pretty_group, model_name, pretty_name, rank)  %>%
+	group_by(fcast_type, pretty_group, model_name, pretty_name, rank_name)  %>%
 	summarize(mean_RSQ=mean(RSQ, na.rm=T),
 						sd_RSQ = sd(RSQ, na.rm=T)) %>%
 	mutate(ymax = mean_RSQ + 1.96*sd_RSQ,

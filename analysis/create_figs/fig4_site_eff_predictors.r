@@ -1,89 +1,95 @@
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
 library(tidytext)
 
 
-site_eff_dredged_in <- readRDS(here("data/summary/site_effects_dredged.rds"))
-unobs_sites <- readRDS(here("data/summary/site_effects_unobserved.rds"))
+site_eff_dredged_in <- readRDS(here("data/summary/site_effects_dredged_env_cycl.rds"))
 
-obs_sites <- site_eff_dredged_in[[1]] %>% filter(!grepl("other", taxon))
-pred_sites <- site_eff_dredged_in[[2]] %>% filter(!grepl("other", taxon))
+converged <- readRDS(here("data/summary/weak_converged_taxa_list.rds"))
+converged_strict <- readRDS(here("data/summary/converged_taxa_list.rds"))
 
 
-obs_sites$predictor_category = recode(obs_sites$predictor, "siOxalate"  = "micronutrient",
+
+# Read in predicted site effects
+unobs_sites_env_cov <- readRDS(here("data/summary/site_effects_dredged_env_cov.rds"))[[1]]
+unobs_sites_cycl_only <- readRDS(here("data/summary/site_effects_dredged_cycl_only.rds"))[[1]]
+unobs_sites_env_cycl <- readRDS(here("data/summary/site_effects_dredged_env_cycl.rds"))[[1]]
+obs_sites <- list(unobs_sites_env_cov, unobs_sites_cycl_only, unobs_sites_env_cycl) %>% 
+	rbindlist() %>% filter(model_id %in% converged) %>% as.data.frame()
+
+
+# 
+# obs_sites <- site_eff_dredged_in[[1]] %>% filter(model_name == "env_cycl" & model_id %in% converged) %>% as.data.frame()
+# pred_sites <- site_eff_dredged_in[[2]] %>% filter(model_name == "env_cycl" & model_id %in% converged)
+
+pred_sites$fcast_type = ifelse(grepl("function", pred_sites$rank_only), "Functional group",
+															 ifelse(grepl("diversity", pred_sites$taxon_rank), "Diversity", "Taxonomic group"))
+
+obs_sites$fcast_type = ifelse(grepl("function", obs_sites$rank_only), "Functional group",
+															 ifelse(grepl("diversity", obs_sites$taxon_rank), "Diversity", "Taxonomic group"))
+
+# Add zeros since unimportant predictors were dropped by dredge
+obs_sites$values <- as.numeric(obs_sites$values)
+obs_sites <- obs_sites %>% group_by(pretty_group, fcast_type, model_name, taxon_rank, rank_only) %>% complete(taxon, predictor, fill = list(values = 0))
+
+
+obs_sites$predictor_category = recode(obs_sites$predictor, 
 																		"no2Satx" = "macronutrient",
 																		"totalP" = "macronutrient",
 																		"no3Satx" = "macronutrient",
-																		"cecdNh4" = "cations",
 																		"pOxalate"= "macronutrient",
-																		"so4Satx"= "micronutrient",
-																		"mgNh4d" = "micronutrient",
-																		"naNh4d" = "salt",
-																		"mnOxalate" = "salt",
-																		"MAT"	     = "climate",
 																		"feOxalate" = "metal",
 																		"alKcl" = "metal",
+																		"cecdNh4" = "cations",
+																		"mgNh4d" = "cations",
+																		"naNh4d" = "cations",
+																		"mnOxalate" = "cations",
+																		"kNh4d"  = "cations",
+																		"caNh4d" = "cations",
+																		"MAT"	     = "climate",
 																		"MAP"      = "climate",
-																		"kNh4d"  = "salt",
-																		"caNh4d" = "salt")
+																		"so4Satx"= "micronutrient",
+																		"siOxalate"  = "micronutrient")
+
+
+obs_sites$predictor = recode(obs_sites$predictor, 
+																			"no2Satx" = "nitrite",
+																			"totalP" = "total phosphorus",
+																			"no3Satx" = "nitrate",
+																			"pOxalate"= "phosphate",
+																			"feOxalate" = "iron",
+																			"alKcl" = "aluminum",
+																			"cecdNh4" = "cation exchange",
+																			"mgNh4d" = "magnesium",
+																			"naNh4d" = "sodium",
+																			"mnOxalate" = "manganese",
+																			"kNh4d"  = "potassium",
+																			"caNh4d" = "calcium",
+																			"MAT"	     = "mean annual temperature",
+																			"MAP"      = "mean annual precipitation",
+																			"so4Satx"= "sulfate",
+																			"siOxalate"  = "silicon")
 
 
 all.out <- obs_sites %>%
-	group_by(predictor) %>%
+	group_by(predictor, model_name) %>%
 	mutate(importance = round(mean(values), 2)) %>%
 	ungroup() %>%
-	#group_by(pretty_group, only_rank) %>%
 	mutate(predictor = factor(predictor),
 				 predictor = fct_reorder(predictor, importance))
 
-# all.out$predictor_category = recode(all.out$predictor, "siOxalate"  = "micronutrient",
-# 																		"no2Satx" = "macronutrient",
-# 																		"totalP" = "macronutrient",
-# 																		"no3Satx" = "macronutrient",
-# 																		"cecdNh4" = "cations",
-# 																		"pOxalate"= "macronutrient",
-# 																		"so4Satx"= "macronutrient",
-# 																		"naNh4d" = "micronutrient",
-# 																		"mnOxalate" = "micronutrient",
-# 																		"MAT"	     = "climate",
-# 																		"feOxalate" = "micronutrient",
-# 																		"MAP"      = "climate",
-# 																		"kNh4d"  = "macronutrient",
-# 																		"caNh4d" = "macronutrient")
+group_vals = obs_sites %>%
+	group_by(pretty_group,model_name, predictor_category) %>%
+	mutate(mean_importance=mean(values, na.rm=T),
+				 sd_importance = sd(values, na.rm=T)) %>%
+	mutate(ymax = mean_importance + 1.96*sd_importance,
+				 ymin = mean_importance - 1.96*sd_importance) %>%
+	arrange(pretty_group, predictor_category) %>% ungroup
+
 
 
 # FACET BY PREDICTOR TYPE, compare by MICROBIAL DOMAIN
-	ggplot(all.out,#  %>% filter(rank_only != "functional"),
-				 aes(x = pretty_group,
-				 		y = values,
-				 		color = pretty_group)) +
-	geom_violin(draw_quantiles = c(.5))+
-	geom_point(aes(x = pretty_group,
-								 y = values,
-								 color = pretty_group),
-						 size=3, alpha = .2,
-						 position=position_jitterdodge(dodge.width = 1, jitter.width = .1, jitter.height = .1)) +
-	facet_wrap(~predictor_category, scales="free") +
-	theme_bw() + theme(
-		text = element_text(size = 16),
-		axis.text.x=element_blank(),
-		#axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
-		axis.title=element_text(size=22,face="bold")) + xlab(NULL) +
-	ylab("Variable importance") +
-	ggtitle("Variables best explaining site random effects") +
-	scale_color_discrete("Domain") +
-	stat_compare_means(method = "t.test", aes(label = ..p.signif..),
-										 label.x = 1.5, label.y = .75, show.legend = F, hide.ns = T, size=5)
-
-
-	group_vals = obs_sites %>%
-		group_by(pretty_group, predictor_category) %>%
-		mutate(mean_importance=mean(values, na.rm=T),
-							sd_importance = sd(values, na.rm=T)) %>%
-		mutate(ymax = mean_importance + 1.96*sd_importance,
-					 ymin = mean_importance - 1.96*sd_importance) %>%
-		arrange(pretty_group, predictor_category)
-
-f_b_category =	ggplot(group_vals,#  %>% filter(rank_only != "functional"),
+f_b_category =	ggplot(group_vals %>% filter(model_name == "env_cycl"),
+											# %>% filter(rank_only != "functional"),
 				 aes(x = reorder(predictor_category, -mean_importance),
 				 		y = mean_importance,
 				 		color = pretty_group)) +
@@ -91,35 +97,41 @@ f_b_category =	ggplot(group_vals,#  %>% filter(rank_only != "functional"),
 												color = pretty_group), position = position_dodge(width = .5)
 										#show.legend = F
 										) + ggtitle(NULL)  +
-		# geom_point(
-		# 					 size=3, alpha = .01) +
+		# geom_point(data = obs_sites, aes(x = predictor_category,
+		# 																 y = values,
+		# 																 color = pretty_group), size=3, alpha = .1, position = position_jitterdodge(dodge.width = .5, jitter.width = .1, jitter.height = .1)) +
 		#facet_wrap(~pretty_group, scales="free") +
 		theme_bw() + theme(
-			text = element_text(size = 16),
+			text = element_text(size = 20),
 			axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
 			axis.title=element_text(size=18,face="bold")) + xlab("Variable category") +
 		ylab("Importance for \nexplaining site effects") +
-		scale_color_discrete("Domain") +
+		scale_color_discrete("Kingdom") +
 		stat_compare_means(method = "t.test",
 											 aes(y = values, label = ..p.signif..),
-											 #label.x = 1.5, label.y = .75,
-											 show.legend = F, hide.ns = T, size=5) #+
+											  label.y = 1,
+											 show.legend = F, hide.ns = T, size=8) #+
 	#	scale_y_sqrt()
-
 f_b_category
+
+png(here("figures","site_effect_f_b_category.png"), width = 800, height=800)
+print(f_b_category)
+dev.off()
 
 
 # FACET BY PREDICTOR, compare by MICROBIAL DOMAIN
-ggplot(all.out,#  %>% filter(rank_only != "functional"),
+all_vars_domain <- ggplot(all.out %>% filter(model_name == "env_cycl"),
+													#  %>% filter(rank_only != "functional"),
 			 aes(x = pretty_group,
 			 		y = values,
 																																	color = pretty_group)) +
-	geom_violin(draw_quantiles = c(.5))+
+	#geom_violin(draw_quantiles = c(.5))+
+	geom_boxplot(draw_quantiles = c(.5))+
 	geom_point(aes(x = pretty_group,
 								 y = values,
 								 color = pretty_group),
-						 size=3, alpha = .2,
-						 position=position_jitterdodge(dodge.width = 1, jitter.width = .1, jitter.height = .1)) +
+						 size=3, alpha = .1,
+						 position=position_jitterdodge(dodge.width = 1, jitter.width = .1, jitter.height = 0)) +
 	facet_wrap(predictor_category~predictor, scales="free") +
 	theme_bw() + theme(
 		text = element_text(size = 16),
@@ -128,12 +140,66 @@ ggplot(all.out,#  %>% filter(rank_only != "functional"),
 		axis.title=element_text(size=22,face="bold")) + xlab(NULL) +
 	ylab("Variable importance") +
 	ggtitle("Variables best explaining site random effects") +
+	scale_color_discrete("Kingdom") +
+	stat_compare_means(method = "t.test", aes(label = ..p.signif..),
+										 label.x= 1.5, 
+										 label.y = .75,
+										 show.legend = F, hide.ns = T, size=8)
+all_vars_domain
+
+png(here("figures","site_effect_predictors.png"), width = 800, height=1000)
+print(all_vars_domain)
+dev.off()
+
+
+f_b_importance =	ggplot(group_vals,#  %>% filter(rank_only != "functional"),
+											aes(x = reorder(predictor, -values),
+													y = values,
+													color = pretty_group)) +
+	geom_point(position = position_jitter(width = .1, height=0), show.legend = F, alpha=.1) +
+	ggtitle(NULL)  +
+	#geom_violin(draw_quantiles = (.5)) +
+	facet_grid(rows=vars(pretty_group), scales="free") +
+	theme_bw() + theme(
+		text = element_text(size = 20),
+		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
+		axis.title=element_text(size=20,face="bold")) + xlab("Variable") +
+	ylab("Importance for \nexplaining site effects") +
+	scale_color_discrete("Domain")
+f_b_importance <- f_b_importance %>% ggadd(c("mean_sd"), color = "pretty_group", show.legend = F)
+f_b_importance
+
+png(here("figures","site_effect_predictor_importance.png"), width = 1200, height=1000)
+print(f_b_importance)
+dev.off()
+
+
+ggplot(all.out,#  %>% filter(rank_only != "functional"),
+			 aes(x = pretty_group,
+			 		y = values,
+			 		color = fcast_type)) +
+	geom_violin(draw_quantiles = c(.5))+
+	geom_point(aes(x = pretty_group,
+								 y = values,
+								 color = fcast_type),
+						 size=3, alpha = .2,
+						 position=position_jitterdodge(dodge.width = 1, jitter.width = .1, jitter.height = 0)) +
+	facet_wrap(predictor~pretty_group, scales="free") +
+	theme_bw() + theme(
+		text = element_text(size = 16),
+		axis.text.x=element_blank(),
+		axis.title=element_text(size=22,face="bold")) + xlab(NULL) +
+	ylab("Variable importance") +
+	ggtitle("Variables best explaining site random effects") +
 	scale_color_discrete("Domain") +
-	stat_compare_means(method = "t.test", aes(label = ..p.signif..), label.x = 1.5, label.y = .75, show.legend = F, hide.ns = T, size=5)
+	stat_compare_means(method = "t.test", aes(label = ..p.signif..),
+										 label.x= 1.5, label.y.npc = .75,
+										 show.legend = F, hide.ns = T, size=8)
+
+##### Misc checks #####
 
 
-
-# FACET BY PREDICTOR
+# FACET BY PREDICTOR across taxonomic ranks
 ggplot(all.out) + geom_point(aes(x = rank_only,
 																 y = values,
 																 color = pretty_group),
@@ -147,91 +213,32 @@ ggplot(all.out) + geom_point(aes(x = rank_only,
 	ggtitle("Variables best explaining site random effects, across taxonomic ranks")
 
 
-ggplot(all.out %>% filter(rank_only != "diversity"), aes(x = rank_only,
-										y = values,
-										color = pretty_group)) + geom_point(
-											size=3, alpha = .2,
-											position=position_jitterdodge(dodge.width = 1, jitter.width = .1, jitter.height = .1)) +
-	facet_wrap(~predictor_category, scale="free") +
-	theme_bw() + theme(
-		text = element_text(size = 16),
-		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
-		axis.title=element_text(size=22,face="bold")) + xlab(NULL) +
-	ggtitle("Variables best explaining site random effects, across taxonomic ranks") +
-	geom_smooth(aes(x = as.numeric(rank_only)), span=.7)
 
-
-pred_sites$fcast_type = ifelse(grepl("function", pred_sites$rank_only), "Functional group",
-															 ifelse(grepl("diversity", pred_sites$taxon_rank), "Diversity", "Taxonomic group"))
 ### Overall predictability of site effects ###
-ggscatter(pred_sites %>% filter(fcast_type != "Diversity"), x = "Mean", y = "pred",color = "pretty_group",
+ggscatter(pred_sites %>% filter(model_name == "env_cycl") %>% filter(fcast_type != "Diversity"), 
+					x = "Mean", y = "pred",color = "pretty_group",
 					add = "reg.line",                                 # Add regression line
 					conf.int = TRUE,                                  # Add confidence interval
-					add.params = list(color = "pretty_group"))+
+					add.params = list(color = "pretty_group", alpha=.3))+
 	stat_cor(method = "pearson", label.x = -2,  p.digits = 2) +
 	geom_abline(slope = 1, intercept = 0, linetype=2) +
 	xlab("Observed") + ylab("Predicted") + theme(
 		text = element_text(size = 16)) +
-	ggtitle("Fungal functional group site effects are \nless predictable from soil chemistry and climate") + facet_grid(pretty_group~fcast_type)
+	#ggtitle("Fungal functional group site effects are \nless predictable from soil chemistry and climate") + 
+	facet_grid(pretty_group~fcast_type)
 
-
-
-#####
-# older
-
-
-# FACET BY PREDICTOR
-all.out$rank_only  <- ordered(all.out$rank_only , levels = c("genus",
-																								 "family",
-																								 "order",
-																								 "class",
-																								 "phylum", "functional", "diversity"))
-ggplot(all.out) + geom_point(aes(x = rank_only,
-																 y = values,
-																 color = pretty_group),
-														 size=3, alpha = .2,
-														 position=position_jitterdodge(dodge.width = 1, jitter.width = .1, jitter.height = .1)) +
-	facet_wrap(~predictor, scale="free") +
+### Visualize absolute size of site effects ###
+ggplot(data=pred_sites,
+			 aes(x = rank_only,y = abs(Mean)))+
+	geom_jitter(aes(color = pretty_group), size = 4, width=.2) +
+	labs(col = "Site", title = "Absolute site effect size") +
+	xlab("Rank")+ 	facet_grid(#rows = vars(only_rank),
+		rows = vars(pretty_group), drop = T,
+		scales = "free", space = "free_x") +
+	ylab(NULL)+
 	theme_bw() + theme(
-		text = element_text(size = 16),
+		text = element_text(size = 18),
 		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
-		axis.title=element_text(size=22,face="bold")) + xlab(NULL) +
-	ggtitle("Variables best explaining site random effects, across taxonomic ranks")
-
-# FACET BY RANK
-ggplot(all.out) + geom_point(aes(x = reorder_within(predictor, values, rank_only),
-																 y = values,
-																 color = pretty_group),
-														 size=3, alpha = .2,
-														 position=position_jitterdodge(dodge.width = 1, jitter.width = .1, jitter.height = .1)) +
-	facet_wrap(~rank_only, scale="free") +
-	theme_bw() + theme(
-		text = element_text(size = 16),
-		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
-		axis.title=element_text(size=22,face="bold")) + xlab(NULL) +
-	ggtitle("Variables best explaining site random effects")
-
-
-all.out_filter = all.out %>% filter(taxon %in% pass_filter$taxon)
-
-
-# FACET BY PREDICTOR and TYPE
-ggplot(all.out  %>% filter(rank_only != "functional"), aes(x = pretty_group,
-																																	y = values,
-																																	color = pretty_group)) +
-	geom_point(aes(x = rank_only,
-																			y = values,
-																			color = pretty_group),
-																	size=3, alpha = .2,
-																	position=position_jitterdodge(dodge.width = 1, jitter.width = .1, jitter.height = .1)) +
-			 	facet_wrap(predictor_category~predictor, scale="free") +
-			 	theme_bw() + theme(
-			 		text = element_text(size = 16),
-			 		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
-			 		axis.title=element_text(size=22,face="bold")) + xlab(NULL) +
-	ylab("Variable importance") +
-			 	ggtitle("Variables best explaining site random effects")
-
-
-
+		axis.title=element_text(size=22,face="bold")
+	)
 
