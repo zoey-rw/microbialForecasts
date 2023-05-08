@@ -5,6 +5,7 @@ source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
 phenophase_in = readRDS(here("data/clean/group_peak_phenophases.rds"))
 seasonality_mode2 = phenophase_in[[1]]
 max_abun = phenophase_in[[2]]
+freq_phenophase = phenophase_in[[5]] %>% pivot_wider(values_from=freq, names_from=sampling_season)
 
 library(ggrepel)
 ggplot(max_abun %>% filter(fcast_type=="Functional"),
