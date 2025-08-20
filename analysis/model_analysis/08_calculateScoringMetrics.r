@@ -1,10 +1,28 @@
 # Calculate and visualize scoring metrics and coefficient of variation for taxonomic forecasts
 # Produces "scoring_metrics_cv.rds"
 
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("../../source.R")
+
+# Source the stats functions directly since they're not exported in the package
+source(here("microbialForecast/R/statsFunctions.r"))
+
+# Source the robust version of add_scoring_metrics
+source(here("robust_add_scoring_metrics.R"))
 
 # Read in hindcast data created by 01_tidyHindcasts.r
-hindcast_data <- readRDS(here("data/summary/all_hindcasts.rds"))
+# Check if Parquet file exists, otherwise use RDS
+parquet_file <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
+rds_file <- here("data/summary/all_hindcasts_plsr2.rds")
+
+if (file.exists(parquet_file)) {
+  cat("Using Parquet file for memory efficiency...\n")
+  hindcast_data <- arrow::read_parquet(parquet_file)
+} else if (file.exists(rds_file)) {
+  cat("Parquet file not found, using RDS file...\n")
+  hindcast_data <- readRDS(rds_file)
+} else {
+  stop("Neither Parquet nor RDS hindcast files found!")
+}
 
 # Create some subsets
 hindcast_only = hindcast_data %>% filter(fcast_period=="hindcast") %>%
@@ -15,44 +33,139 @@ calibration_only = hindcast_data %>% filter(fcast_period=="calibration") %>%
 # For the calibration, the first observed date per plot is always wonky due to model structure, so we leave it out of our scoring metrics
 calibration_only_not_first = calibration_only %>% filter(date_num > plot_start_date)
 
-# Add scoring metrics to various subsets/groupings
-scoring_metrics <- hindcast_only %>%
+# Add scoring metrics to various subsets/groupings using data.table for better performance
+library(data.table)
+
+# Convert to data.table for faster processing
+hindcast_dt <- as.data.table(hindcast_only %>%
 	filter(!is.na(site_prediction)) %>%
 	group_by(model_id,fcast_type, pretty_group,model_name,pretty_name,rank_name,taxon,site_prediction) %>%
 	mutate(mean_crps_sample = mean(crps, na.rm=T)) %>%
-	group_by(model_id,fcast_type, pretty_group,model_name,pretty_name,rank_name,taxon,site_prediction, mean_crps_sample) %>%
-	summarize(add_scoring_metrics(observed = truth,
-														 mean_predicted = mean,
-														 sd_predicted = sd))
+	ungroup())
 
+# Calculate scoring metrics for each group with error handling
+scoring_metrics_list <- hindcast_dt[, {
+			# Check if we have data for this group
+		if(.N == 0) {
+			# Return NA values for empty groups
+			list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_, 
+						RMSE.iqr = NA_real_, RMSE.norm = NA_real_, CRPS_truncated = NA_real_,
+						residual_variance = NA_real_, predictive_variance = NA_real_, total_PL = NA_real_)
+		} else {
+			# Calculate scoring metrics for this group
+			tryCatch({
+				result <- robust_add_scoring_metrics(
+					observed = truth,
+					mean_predicted = mean,
+					median_predicted = med,
+					sd_predicted = sd
+				)
+				as.list(result)
+			}, error = function(e) {
+				cat("Warning: Error in group", paste(.BY, collapse=", "), ":", e$message, "\n")
+				list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_, 
+						RMSE.iqr = NA_real_, RMSE.norm = NA_real_, CRPS_truncated = NA_real_,
+						residual_variance = NA_real_, predictive_variance = NA_real_, total_PL = NA_real_)
+			})
+		}
+}, by = .(model_id, fcast_type, pretty_group, model_name, pretty_name, rank_name, taxon, site_prediction, mean_crps_sample)]
+
+# Convert back to data.frame
+scoring_metrics <- as.data.frame(scoring_metrics_list)
+
+#%>% select(-c("RSQ.1", "RMSE.norm"))
 
 calibration_metrics <- calibration_only_not_first %>%
 	#filter(!is.na(site_prediction)) %>%
-	group_by(model_id,fcast_type, pretty_group,model_name,rank_name,pretty_name,taxon) %>%
-	summarize(add_scoring_metrics(observed = truth,
-																mean_predicted = mean,
-																sd_predicted = sd))
+	as.data.table() %>%
+	.[, {
+		# Check if we have data for this group
+		if(.N == 0) {
+			# Return NA values for empty groups
+			list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_, 
+						RMSE.iqr = NA_real_, RMSE.norm = NA_real_, CRPS_truncated = NA_real_,
+						residual_variance = NA_real_, predictive_variance = NA_real_, total_PL = NA_real_)
+		} else {
+			# Calculate scoring metrics for this group
+			tryCatch({
+				result <- robust_add_scoring_metrics(
+					observed = truth,
+					median_predicted = med,
+					mean_predicted = mean,
+					sd_predicted = sd
+				)
+				as.list(result)
+			}, error = function(e) {
+				cat("Warning: Error in calibration group", paste(.BY, collapse=", "), ":", e$message, "\n")
+				list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_, 
+							RMSE.iqr = NA_real_, RMSE.norm = NA_real_, CRPS_truncated = NA_real_,
+							residual_variance = NA_real_, predictive_variance = NA_real_, total_PL = NA_real_)
+			})
+		}
+	}, by = .(model_id, fcast_type, pretty_group, model_name, rank_name, pretty_name, taxon)] %>%
+	as.data.frame()
 
 calibration_metrics_site <- calibration_only_not_first %>%
 	#filter(!is.na(site_prediction)) %>%
+	as.data.table() %>%
+	.[, {
+		# Check if we have data for this group
+		if(.N == 0) {
+			# Return NA values for empty groups
+			list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_, 
+						RMSE.iqr = NA_real_, RMSE.norm = NA_real_, CRPS_truncated = NA_real_,
+						residual_variance = NA_real_, predictive_variance = NA_real_, total_PL = NA_real_)
+		} else {
+			# Calculate scoring metrics for this group
+			tryCatch({
+				result <- robust_add_scoring_metrics(
+					observed = truth,
+					median_predicted = med,
+					mean_predicted = mean,
+					sd_predicted = sd
+				)
+				as.list(result)
+			}, error = function(e) {
+				cat("Warning: Error in calibration site group", paste(.BY, collapse=", "), ":", e$message, "\n")
+				list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_, 
+							RMSE.iqr = NA_real_, RMSE.norm = NA_real_, CRPS_truncated = NA_real_,
+							residual_variance = NA_real_, predictive_variance = NA_real_, total_PL = NA_real_)
+			})
+		}
+	}, by = .(model_id, fcast_type, pretty_group, model_name, rank_name, pretty_name, taxon, siteID)] %>%
+	as.data.frame()
 
-	group_by(model_id,fcast_type, pretty_group,model_name,rank_name,pretty_name,taxon, siteID) %>%
-	summarize(add_scoring_metrics(observed = truth,
-																mean_predicted = mean,
-																sd_predicted = sd))
-
-# This one took forever so I'm running it with mutate/distinct instead of summarize
+# This one took forever so I'm running it with data.table for better performance
 scoring_metrics_site <- hindcast_only %>% #filter(newsite=="Observed site") %>%
 	filter(!is.na(site_prediction)) %>%
-	group_by(model_id, siteID, site_prediction) %>%
-	mutate(mean_crps_sample = mean(crps, na.rm=T)) %>%
-	group_by(model_id, siteID, site_prediction, mean_crps_sample) %>%
-	mutate(add_scoring_metrics(observed = truth,
-																mean_predicted = mean,
-																sd_predicted = sd)) %>%
-	select(model_id,fcast_type, pretty_group,model_name,rank_name,pretty_name, taxon, siteID, site_prediction,
-				 RMSE, BIAS, MAE, CRPS,CRPS_truncated, RSQ, RSQ.1,
-				 RMSE.norm, residual_variance, predictive_variance, total_PL, mean_crps_sample) %>% distinct()
+	as.data.table() %>%
+	.[, mean_crps_sample := mean(crps, na.rm=T), by = .(model_id, siteID, site_prediction)] %>%
+	.[, {
+		# Check if we have data for this group
+		if(.N == 0 || .N == 1) {
+			# Return NA values for empty or single-row groups (can't calculate statistics)
+			list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_, 
+						RMSE.iqr = NA_real_, RMSE.norm = NA_real_, CRPS_truncated = NA_real_,
+						residual_variance = NA_real_, predictive_variance = NA_real_, total_PL = NA_real_)
+		} else {
+			# Calculate scoring metrics for this group
+			tryCatch({
+				result <- robust_add_scoring_metrics(
+					observed = truth,
+					mean_predicted = mean,
+					median_predicted = med,
+					sd_predicted = sd
+				)
+				as.list(result)
+			}, error = function(e) {
+				cat("Warning: Error in scoring site group", paste(.BY, collapse=", "), ":", e$message, "\n")
+				list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_, 
+							RMSE.iqr = NA_real_, RMSE.norm = NA_real_, CRPS_truncated = NA_real_,
+							residual_variance = NA_real_, predictive_variance = NA_real_, total_PL = NA_real_)
+			})
+		}
+	}, by = .(model_id, siteID, site_prediction, mean_crps_sample)] %>%
+	as.data.frame()
 
 
 # Pivot longer for easier plotting
@@ -130,8 +243,16 @@ cv_metric_scaled <- scoring_metrics_cv_long %>%
 				 metric_scale = scale(score)[,1])
 
 
+# Use later to filter: remove taxa that did not converge
+unconverged <- readRDS(here("data/summary/unconverged_taxa_list.rds"))
+converged <- readRDS(here("data/summary/weak_converged_taxa_list.rds"))
+converged_strict <- readRDS(here("data/summary/converged_taxa_list.rds"))
+
+
+
 # Skill score from Scavia 2021
 skill_score_taxon <- scoring_metrics_long %>%
+	filter(model_id %in% converged) %>%
 	filter(metric=="CRPS_truncated") %>%
 	pivot_wider(id_cols = c("model_id","fcast_type","pretty_group","model_name","pretty_name","rank_name","taxon"),
 							values_from = "mean_crps_sample", names_from = "site_prediction") %>%
@@ -142,6 +263,7 @@ skill_score_taxon <- scoring_metrics_long %>%
 
 # Skill score from Scavia 2021, except with RMSE
 skill_score_taxon_RMSE <- scoring_metrics_long %>%
+	filter(model_id %in% converged) %>%
 	filter(metric=="RMSE.norm") %>%
 	pivot_wider(id_cols = c("model_id","fcast_type","pretty_group","model_name","pretty_name","rank_name","taxon"),
 							values_from = "score", names_from = "site_prediction") %>%
@@ -155,10 +277,6 @@ skill_score_rank <- skill_score_taxon %>%
 
 
 
-# Use later to filter: remove taxa that did not converge
-unconverged <- readRDS(here("data/summary/unconverged_taxa_list.rds"))
-converged <- readRDS(here("data/summary/weak_converged_taxa_list.rds"))
-converged_strict <- readRDS(here("data/summary/converged_taxa_list.rds"))
 
 to_save <- list(cv_metric_scaled = cv_metric_scaled,
 								scoring_metrics_cv = scoring_metrics_cv,
@@ -182,7 +300,7 @@ to_save <- list(cv_metric_scaled = cv_metric_scaled,
 								unconverged_list = unconverged,
 								converged_list = converged,
 								converged_strict_list = converged_strict)
-saveRDS(to_save, here("data", paste0("summary/scoring_metrics_cv.rds")))
+saveRDS(to_save, here("data", paste0("summary/scoring_metrics_plsr2.rds")))
 
 
 

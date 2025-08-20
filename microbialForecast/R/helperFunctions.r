@@ -442,6 +442,38 @@ assign_fg_kingdoms <- function(vector) {
 
 
 
+
+#'  @title 			assign_fg_sources
+#'  @description Assign sources based on functional group development method
+#' @export
+assign_fg_sources <- function (vector) {
+	out <- rep(NA, length(vector))
+	out[which(grepl("lytic", vector))] <-  "Literature review"
+
+	# Berlemont & Martiny 2013
+	out[which(grepl("cellulolytic", vector))] <-  "Literature review + genomic pathway"
+
+	# Albright 2018
+	out[which(grepl("nitr|fixa", vector))] <- "Literature review + genomic pathway"
+
+	# Naylor modules
+	out[which(grepl("complex|simple|stress", vector, fixed = F))] <- "Experimental enrichment"
+	out[which(grepl("antibiotic", vector))] <- "Experimental enrichment"
+	out[which(grepl("anaerobic", vector))] <- "Experimental enrichment"
+	#	out[which(grepl("nitr|fixa", vector))] <- "Literature review"
+	out[which(grepl("troph", vector))] <- "Literature review"
+	out[which(grepl("sapr|path|arbusc|ecto|endo|lichen", vector))] <- "Scientific consensus (FUNGuild)"
+	out[which(grepl("other", vector))] <- NA
+
+	#
+	# out <- rep(NA, length(vector))
+	# out[which(grepl("substrates|resistance|anaerobic|stress", vector))] <- "Experimental enrichment"
+	# out[which(grepl("cycling|cellulo", vector))] <- "Genomic pathways"
+	# out[which(grepl("Trophic|Life", vector))] <- "Scientific consensus"
+	return(out)
+}
+
+
 #'  @title 			parseNEONsampleIDs
 #'  @description create sample information data.frame from NEON sample names
 #'  @export
@@ -609,10 +641,15 @@ parse_plot_mu_vars <- function(input_df) {
 			mutate(plot_num = as.integer(gsub("plot_rel\\[|plot_mu\\[", "", plot_num)),
 						 timepoint = as.integer(gsub("\\]", "", timepoint)))
 	} else if (str_count(with_rowname_col$rowname[1], ',') == 1) {
-	parsed <- with_rowname_col %>%
-		separate(rowname, sep=", ", into=c("plot_num","timepoint"))  %>%
-		mutate(plot_num = as.integer(gsub("plot_mu\\[|plot_rel\\[", "", plot_num)),
-				 timepoint = as.integer(gsub("\\]", "", timepoint)))
+		parsed <- with_rowname_col %>%
+			separate(rowname, sep=", ", into=c("plot_num","timepoint"))  %>%
+			mutate(plot_num = as.integer(gsub("plot_mu\\[|plot_rel\\[", "", plot_num)),
+					 timepoint = as.integer(gsub("\\]", "", timepoint)))
+	} else {
+		# Default case - create minimal structure
+		parsed <- with_rowname_col %>%
+			mutate(plot_num = 1,
+						 timepoint = 1)
 	}
 	return(parsed)
 }
@@ -671,7 +708,7 @@ extract_bracketed_vals <- function(input_df, varname1 = "beta_num", varname2 = N
 # Does confidence interval include 0? If so, not significant (0) otherwise significant (1)
 is_significant <- function(lo, hi) {
 	ifelse(lo < 0 & hi < 0 |
-				 	lo > -0 & lo > -0, 1, 0)
+				 	lo > 0 & hi > 0, 1, 0)
 }
 
 

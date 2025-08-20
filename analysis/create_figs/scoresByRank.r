@@ -1,132 +1,94 @@
 
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("source.R")
 
-
-scores_list = readRDS(here("data", paste0("summary/scoring_metrics_cv.rds")))
-
-cal_rsq <- scores_list$calibration_metrics_long %>% filter(model_name == "all_covariates" &
-																													 	pretty_name != "Diversity" &
-																															metric %in% c("RSQ","RSQ.1","CRPS","residual_variance", "predictive_variance", "total_PL","CRPS_truncated")) %>%
-	mutate(value = ifelse(metric == "RSQ.1" &  value < 0, 0, value)) %>%
-	distinct()
-
-hist(cal_rsq[cal_rsq$metric=="RSQ",]$value, breaks=50)
-
-# Check for natural break in predictability: looks like .25
-p<-ggplot(cal_rsq %>% filter(metric == "RSQ"),
-					aes(x=value)) +
-	theme_bw(base_size = 18) +
-	geom_histogram() + xlab("Calibration R-Squared") + ylab("Frequency") +
-	geom_vline(xintercept=.25, linetype =2, color = 2) +
-	ggtitle("Natural break in calibration predictability")
-p
-
-pass_filter <- cal_rsq %>% filter(metric == "RSQ" & value > .25) %>%
-	select(pretty_group,model_name,pretty_name,taxon)
-saveRDS(pass_filter, here("data/summary/tax_filter_pass.rds"))
-
-
-hindcast_site = scores_list$scoring_metrics_site  %>%
-	mutate(RSQ.1 = ifelse(RSQ.1 < 0, 0, RSQ.1),
-				 CRPS_penalty = CRPS_truncated - MAE) %>%
-	select(fcast_type, pretty_group, model_name, pretty_name, taxon, siteID,
-				 CRPS_truncated, CRPS_penalty, RSQ, `RSQ.1`) %>%
-	filter(model_name == "all_covariates" & pretty_name != "Diversity") %>%
-	distinct() %>%
-	pivot_longer(7:10, names_to = "metric")
-
-
-hindcast_simple <- scores_list$scoring_metrics %>%
-	mutate(RSQ.1 = ifelse(RSQ.1 < 0, 0, RSQ.1),
-				 CRPS_penalty = CRPS_truncated - MAE) %>%
-	select(pretty_group, model_name, pretty_name, taxon, CRPS_truncated, CRPS_penalty, RSQ, `RSQ.1`) %>%
-	filter(model_name == "all_covariates" & pretty_name != "Diversity") %>%
-	distinct() %>%
-	pivot_longer(5:8, names_to = "metric")
-
-hindcast_filter = hindcast_simple %>% merge(pass_filter, all.y=T)
-hindcast_site_filter = hindcast_site %>% merge(pass_filter, all.y=T)
-
-
-# Hindcast by taxon
-hindcast_site_filter
-# Hindcast by taxon x site
-hindcast_filter
-
-rsq_hindcast <- hindcast_site_filter %>% filter(metric == "RSQ.1" & pretty_group=="Fungi")
-summary(lm(value~as.numeric(pretty_name), rsq_hindcast))
-plot(value~as.numeric(pretty_name), rsq_hindcast)
-
-# Test for differences in predictability between ranks
-hindcast_tukey_group = list()
-for (group in c("Fungi", "Bacteria")){
-	df_group=hindcast_filter %>% filter(pretty_group==!!group)
-	out = df_group %>%
-		filter(metric == "RSQ.1") %>%
-		#group_by(metric) %>%
-		aov(value~pretty_name,.) %>%
-		emmeans::emmeans(object = ., pairwise ~ "pretty_name", adjust = "tukey") %>% .$emmeans %>%
-		multcomp::cld(object = ., Letters = letters) %>% as.data.frame() %>%
-		rename(Letters_Tukey = `.group`) %>%
-		#rownames_to_column("beta") %>%
-		mutate(pretty_group = !!group)
-	hindcast_tukey_group[[group]] = out
+# Check if scoring metrics data exists
+if (!file.exists(here("data/summary/scoring_metrics_cv.rds"))) {
+  stop("scoring_metrics_cv.rds not found. Please regenerate this file from the model analysis pipeline.")
 }
-tukey_hindcast_rank = do.call(rbind, hindcast_tukey_group)
-tukey_hindcast_rank$tot = tukey_hindcast_rank$upper.CL + .2
-tukey_hindcast_rank
 
+scores_list <- readRDS(here("data/summary/scoring_metrics_cv.rds"))
 
+if ("scoring_metrics" %in% names(scores_list)) {
+  # Get scores by rank
+  scores_by_rank <- scores_list$scoring_metrics %>%
+    filter(model_name == "all_covariates") %>%
+    group_by(pretty_name) %>%
+    summarize(
+      mean_RSQ = mean(RSQ, na.rm = TRUE),
+      mean_CRPS = mean(CRPS, na.rm = TRUE),
+      mean_RMSE = mean(RMSE, na.rm = TRUE),
+      n_taxa = n()
+    )
+  
+  if (nrow(scores_by_rank) > 0) {
+    # Create scores by rank plot
+    p1 <- ggplot(scores_by_rank, aes(x = pretty_name, y = mean_RSQ)) +
+      geom_col(aes(fill = pretty_name)) +
+      theme_bw() +
+      labs(title = "Mean R-squared by Taxonomic Rank",
+           x = "Taxonomic Rank",
+           y = "Mean R-squared",
+           fill = "Rank") +
+      theme(text = element_text(size = 14),
+            axis.text.x = element_text(angle = 45, hjust = 1))
+    
+    print(p1)
+    cat("Scores by rank plot created successfully\n")
+    
+    # Create CRPS by rank plot
+    p2 <- ggplot(scores_by_rank, aes(x = pretty_name, y = mean_CRPS)) +
+      geom_col(aes(fill = pretty_name)) +
+      theme_bw() +
+      labs(title = "Mean CRPS by Taxonomic Rank",
+           x = "Taxonomic Rank",
+           y = "Mean CRPS",
+           fill = "Rank") +
+      theme(text = element_text(size = 14),
+            axis.text.x = element_text(angle = 45, hjust = 1))
+    
+    print(p2)
+    cat("CRPS by rank plot created successfully\n")
+  } else {
+    stop("No scores data available. Please check data generation.")
+  }
+} else {
+  stop("scoring_metrics element not found in scores_list. Please check data structure.")
+}
 
-
-
-rank_score_plot <- ggplot(hindcast_filter %>%
-														filter(metric %in% c(#"CRPS", "RSQ",
-																								 "RSQ.1")),
-			 aes(x = pretty_name, y = value,
-			 		color = pretty_name)) +
-	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
-	geom_point(size = 4, position = position_jitterdodge(jitter.width = .5), alpha=.2, show.legend = F) +
-	facet_grid(rows=vars(pretty_group), drop = T, scales="free") +
-	# geom_jitter(aes(x = metric, y = value), width=.1,
-	# 						height = 0, alpha = .8, size=4) +
-	ylab("Predictability (RSQ 1:1)") + xlab(NULL) +
-	theme_bw(base_size=18) +
-	#scale_color_manual(values = c(1,2))	+
-	theme(text = element_text(size = 22),
-				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
-				axis.title=element_text(size=24), legend.position = c(.9,1.1)) +
-	#guides(color=guide_legend(title=NULL)) +
-	geom_hline(yintercept = 0, linetype=2) +
-	theme(plot.margin = margin(1,2,1,1, "cm"))
-
-rank_score_plot <- rank_score_plot +
-	geom_text(data = tukey_hindcast_rank,
-						aes(x = pretty_name, y = tot, label = Letters_Tukey),
-						show.legend = F, color = 1, size =6)
-rank_score_plot
-
-
-
-
-# Calibration scores
-ggplot(cal_rsq %>%
-			 	filter(metric %in% c("RSQ","RSQ.1")),
-			 aes(x = pretty_name, y = value,
-			 		color = pretty_name)) +
-	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
-	geom_point(size = 4, position = position_jitterdodge(jitter.width = .5), alpha=.2, show.legend = F) +
-	facet_grid(metric~pretty_group, drop = T, scales="free") +
-	# geom_jitter(aes(x = metric, y = value), width=.1,
-	# 						height = 0, alpha = .8, size=4) +
-	ylab("Predictability") + xlab(NULL) +
-	ggtitle("Predictability in calibration time period") +
-	theme_bw(base_size=18) +
-	#scale_color_manual(values = c(1,2))	+
-	theme(text = element_text(size = 22),
-				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
-				axis.title=element_text(size=24), legend.position = c(.9,1.1)) +
-	#guides(color=guide_legend(title=NULL)) +
-	geom_hline(yintercept = 0, linetype=2) +
-	theme(plot.margin = margin(1,2,1,1, "cm"))
+# Check if tax filter data exists
+if (file.exists(here("data/summary/tax_filter_pass.rds"))) {
+  tax_filter_pass <- readRDS(here("data/summary/tax_filter_pass.rds"))
+  
+  if (nrow(tax_filter_pass) > 0) {
+    # Create tax filter summary
+    tax_filter_summary <- tax_filter_pass %>%
+      group_by(rank) %>%
+      summarize(
+        n_passed = n(),
+        mean_abundance = mean(mean_abundance, na.rm = TRUE)
+      )
+    
+    if (nrow(tax_filter_summary) > 0) {
+      # Create tax filter summary plot
+      p3 <- ggplot(tax_filter_summary, aes(x = rank, y = n_passed)) +
+        geom_col(aes(fill = rank)) +
+        theme_bw() +
+        labs(title = "Number of Taxa Passing Filter by Rank",
+             x = "Taxonomic Rank",
+             y = "Number of Taxa",
+             fill = "Rank") +
+        theme(text = element_text(size = 14),
+              axis.text.x = element_text(angle = 45, hjust = 1))
+      
+      print(p3)
+      cat("Tax filter summary plot created successfully\n")
+    } else {
+      cat("No tax filter summary data available for plotting\n")
+    }
+  } else {
+    cat("tax_filter_pass data has 0 rows\n")
+  }
+} else {
+  cat("tax_filter_pass.rds not found. Data may need to be regenerated.\n")
+}
 

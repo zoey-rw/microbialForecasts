@@ -1,8 +1,8 @@
 # Visualize effect size estimates (beta covariates) from all model
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("source.R")
 pacman::p_load(stringr, forestplot, gridExtra, ggpubr) 
 
-sum.all <- readRDS("./data/summary/all_fcast_effects.rds")
+sum.all <- readRDS(here("data/summary/all_fcast_effects.rds"))
 df_refit <- sum.all %>% filter((time_period == "2013-06_2017-01" & 
 																	fcast_type == "Taxonomic") |
 															 	(time_period == "2015-11_2018-01")) %>% 

@@ -1,4 +1,4 @@
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("source.R")
 pacman::p_load(stringr, forestplot, gridExtra, ggpubr, rstatix)
 #remotes::install_github('rpkgs/gg.layers')
 
@@ -49,7 +49,9 @@ for(b in beta_names) {
 	x = "rank_only"
 	y = "effSize"
 	df <- group_df[which(group_df$beta == b),]
+	
 	new.df <- cbind.data.frame(x = df$rank_only, y = df$effSize)
+	new.df <- new.df[!is.na(new.df$y), ]
 	abs_max <- max(new.df[,"y"], na.rm = T)
 	maxs <- new.df %>% group_by(x) %>%
 		summarise(tot=max(y, na.rm=T)+ 0.2 * abs_max)
@@ -70,13 +72,13 @@ for(b in beta_names) {
 
 tukey_list_tax_fg <- data.table::rbindlist(tukey_list)
 
-
+# Initialize test result variables
 
 
 ###### # Plot with Tukey, effect sizes across ranks ----
 ranks_beta_plot <- ggplot(plotting_df, aes(x = rank_only,y = effSize,
 																					 color = pretty_group)) +
-	geom_jitter(
+	geom_jitter(aes(shape=as.factor(significant)),
 							width=.1, height = 0, size=3, alpha = .2, show.legend = F) +
 	geom_violin(draw_quantiles = c(.5), show.legend = F) +
 	labs(title = "Absolute effect size") +
@@ -89,8 +91,9 @@ ranks_beta_plot <- ggplot(plotting_df, aes(x = rank_only,y = effSize,
 						 scales = "free", space = "free") +
 	theme(axis.text.x=element_text(
 		angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=22,face="bold"),
-		strip.text.y = element_text(size=12,face="bold"))
+		axis.title=element_text(size=22),
+		strip.text.y = element_text(size=12)) +
+	scale_shape_manual(values = c(21, 16), name = NULL,																																						 labels = c("Not significant","Significant")) + guides(color="none")
 
 
 ranks_beta_plot <- ranks_beta_plot  +
@@ -131,8 +134,6 @@ tukey <- plotting_df %>%
 	tukey_hsd(effSize ~ rank_only) %>%
 	add_significance() %>%
 	add_xy_position()
-
-
 
 ggplot(plotting_df, aes(x = rank_only,y = effSize,
 												color = pretty_group)) +

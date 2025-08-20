@@ -21,7 +21,15 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	samples <- read_in$samples
 	param_summary <- read_in$param_summary
 	plot_summary <- read_in$plot_summary
-	truth.plot.long <- read_in$metadata$model_data
+	
+	# Handle different data structures
+	# Newer models have truth.plot.long nested under model_data
+	# Older models have the data directly in model_data
+	if("truth.plot.long" %in% names(read_in$metadata$model_data)) {
+		truth.plot.long <- read_in$metadata$model_data$truth.plot.long
+	} else {
+		truth.plot.long <- read_in$metadata$model_data
+	}
 
 
 	# Extract run information
@@ -122,19 +130,27 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 
 	# Get mean values for parameters
 	means <- param_summary[[1]]
+	quantiles <- param_summary[[2]]
 	eff_list <- lapply(c("sigma", "sig$", "intercept", "rho", "core_sd"),
 										 function(x) extract_summary_row(means, var = x)) %>%
 		plyr::rbind.fill() %>%
-		mutate(taxon = !!species) #%>%
-		#mutate(taxon = recode(taxon_num, !!!taxon_key))
+		mutate(taxon = !!species)
+	eff_list2 <- lapply(c("sigma", "sig$", "intercept", "rho", "core_sd"),
+											function(x) extract_summary_row(quantiles, var = x)) %>%
+		plyr::rbind.fill() %>%
+		mutate(taxon = !!species)
+	eff_list$Median = eff_list2[,"50%"]
 
 	# Get site effect sizes
 	site_eff_out <- extract_summary_row(means, var = "site") %>%
 		extract_bracketed_vals(varname1 = "site_num")  %>%
-		mutate(taxon = !!species, #) %>%
-
-		#mutate(taxon = recode(taxon_num, !!!taxon_key),
+		mutate(taxon = !!species,
 					 siteID = recode(site_num, !!!site_key))
+	site_eff_out2 <- extract_summary_row(quantiles, var = "site") %>%
+		extract_bracketed_vals(varname1 = "site_num")  %>%
+		mutate(taxon = !!species,
+					 siteID = recode(site_num, !!!site_key))
+	site_eff_out$Median = site_eff_out2[,"50%"]
 
 	# Get beta sizes per rank
 	beta_out <- extract_summary_row(means, var = "beta") %>%

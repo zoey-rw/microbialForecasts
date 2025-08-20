@@ -1,6 +1,20 @@
 # Calculate percentage of points within 95% credible intervals
 
-hindcast_data <- readRDS(here("data/summary/all_hindcasts.rds")) %>% mutate(truth=as.numeric(truth))
+# Check if Parquet file exists, otherwise use RDS
+parquet_file <- here("data/summary/parquet/all_hindcasts.parquet")
+rds_file <- here("data/summary/all_hindcasts.rds")
+
+if (file.exists(parquet_file)) {
+  cat("Using Parquet file for memory efficiency...\n")
+  hindcast_data <- arrow::read_parquet(parquet_file)
+} else if (file.exists(rds_file)) {
+  cat("Parquet file not found, using RDS file...\n")
+  hindcast_data <- readRDS(rds_file)
+} else {
+  stop("Neither Parquet nor RDS hindcast files found!")
+}
+
+hindcast_data <- hindcast_data %>% mutate(truth=as.numeric(truth))
 
 
 observed <- hindcast_data %>% filter(!is.na(truth) & !is.na(lo) & newsite=="Observed site") %>%

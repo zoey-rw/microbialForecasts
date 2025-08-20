@@ -130,8 +130,16 @@ prepBetaRegData <- function(rank.df,
 	plotID = dat_subset$plotID
 	plot_num			<- match(plotID, names(plot_start))
 	expanded_dat$plot_num			<- match(expanded_dat$plotID, names(plot_start))
-	plot_site 		<- substr(names(plot_start), 1, 4)
-	plot_site_num <- match(plot_site, names(site_start))
+	
+	# CRITICAL FIX: Proper plot-to-site indexing for site-level effects and covariates
+	# Each plot belongs to a site, and we need to map plot index p to site index k
+	plot_site 		<- substr(names(plot_start), 1, 4)  # Extract site ID from plot ID
+	unique_sites <- unique(plot_site)  # Get unique site IDs in order they appear
+	site_indices <- 1:length(unique_sites)  # Create sequential site indices
+	names(site_indices) <- unique_sites  # Name them with site IDs
+	
+	# Now map each plot to its site index: plot_site_num[p] gives site index for plot p
+	plot_site_num <- site_indices[plot_site]
 
 
 	# Create output timepoints

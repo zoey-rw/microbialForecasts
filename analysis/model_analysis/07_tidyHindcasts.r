@@ -1,15 +1,30 @@
 # Combine hindcasts from all workflows
 # This script must be run before other analysis scripts
 
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("../../source.R")
 
-# # Combine forecast files (1 per group)
-# file.list = list.files(here("data/summary/"), recursive = T,
-# 											 pattern = "hindcast_", full.names = T)
-# all_rank_hindcasts <- purrr::map(file.list, readRDS)
+# Load required packages for memory efficiency
+if (!require(arrow, quietly = TRUE)) {
+  install.packages("arrow", repos = "https://cran.rstudio.com/")
+  library(arrow)
+}
 
+# Check if Parquet file exists, otherwise use RDS
+parquet_file <- here("data/summary/parquet/all_hindcasts_raw_plsr2.parquet")
+rds_file <- here("data/summary/all_hindcasts_raw_plsr2.rds")
 
-all_rank_hindcasts <- readRDS(here(paste0("data/summary/all_hindcasts_raw.rds")))
+if (file.exists(parquet_file)) {
+  cat("Using Parquet file for memory efficiency...\n")
+  all_rank_hindcasts <- read_parquet(parquet_file)
+  cat(sprintf("Loaded %d rows from Parquet file\n", nrow(all_rank_hindcasts)))
+} else if (file.exists(rds_file)) {
+  cat("Parquet file not found, using RDS file...\n")
+  cat("WARNING: This may cause memory issues!\n")
+  all_rank_hindcasts <- readRDS(rds_file)
+  cat(sprintf("Loaded %d rows from RDS file\n", nrow(all_rank_hindcasts)))
+} else {
+  stop("Neither Parquet nor RDS hindcast files found!")
+}
 hindcast_data <- all_rank_hindcasts %>%
 	mutate(dates=fixDate(dateID),
 				 fcast_period = ifelse(dates <= "2018-01-01" & (newsite == FALSE|is.na(newsite)),
@@ -98,15 +113,35 @@ calibration_fun <- merge(calibration_fun,
 												 fun_plot_start_dates, by=c("plotID","pretty_group"))
 
 calibration_only = rbind.data.frame(calibration_bac, calibration_fun)
+
+# Clean up memory after processing large datasets
+cat("Cleaning up memory...\n")
+rm(all_rank_hindcasts, bac_site_start_dates, bac_plot_start_dates, fun_site_start_dates, fun_plot_start_dates,
+   calibration_bac, calibration_fun)
+gc()
+
+cat("✓ Hindcast processing complete!\n")
 calibration_only$is_site_start_date = ifelse(calibration_only$date_num==calibration_only$site_start_date, T, F)
 calibration_only$is_plot_start_date = ifelse(calibration_only$date_num==calibration_only$plot_start_date, T, F)
 calibration_only$is_any_start_date = ifelse(calibration_only$is_plot_start_date|calibration_only$is_site_start_date, T, F)
-calibration_only = calibration_only %>% filter(date_num >= site_start_date)
+calibration_only = calibration_only %>% filter(date_num >= plot_start_date)
 
 hindcast_data_out <- rbindlist(list(hindcast_only, calibration_only), fill = T) %>%
 	arrange(model_name, fcast_type, pretty_group, taxon, plotID, date_num)
 
-saveRDS(hindcast_data_out, here("data/summary/all_hindcasts.rds"))
+hindcast_data_out <- hindcast_data_out %>% select(-c(is_any_start_date,is_site_start_date,site_start_date))
+
+# Save as both RDS and Parquet for compatibility
+saveRDS(hindcast_data_out, here("data/summary/all_hindcasts_plsr2.rds"))
+cat("✓ Saved RDS file: all_hindcasts_plsr2.rds\n")
+
+# Save as Parquet for memory efficiency
+if (require(arrow, quietly = TRUE)) {
+  arrow::write_parquet(hindcast_data_out, here("data/summary/parquet/all_hindcasts_plsr2.parquet"))
+  cat("✓ Saved Parquet file: all_hindcasts_plsr2.parquet\n")
+} else {
+  cat("⚠️  Arrow package not available, skipping Parquet save\n")
+}
 
 
 

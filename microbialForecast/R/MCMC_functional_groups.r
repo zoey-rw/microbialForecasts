@@ -32,8 +32,10 @@ run_MCMC_functional <- function(k = 17,
 																min.date = "20160101",
 																...) {
 	#pacman::p_load(reshape2, parallel)
-	source(here::here("source.R"))
-	source(here::here("functions", "prepFunctionalData.r"))
+	# Use local source file instead
+	# source(here::here("source.R"))
+	# Function already available in package
+	# source(here::here("functions", "prepFunctionalData.r"))
 
 	ranks.keep <- keep_fg_names
 	rank.name <- ranks.keep[k]

@@ -1,5 +1,5 @@
 
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("source.R")
 #p_load(forestmangr)
 scores_list = readRDS(here("data/summary/scoring_metrics_cv.rds"))
 

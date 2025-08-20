@@ -1,43 +1,162 @@
-# Source script for Nimble models (w/ environmental covariates, & cyclical covariates only)
-setwd("/projectnb/dietzelab/zrwerbin/microbialForecasts/")
+# ====================
+# Microbial Forecasts Environment Setup
+# ====================
+# Source script for NIMBLE models and analysis environment
+# This script sets up the R environment for microbial forecasting analysis
+
+# Automatically detect project root directory
+if (!exists("project_root")) {
+  # Try multiple methods to find project root
+  if (rstudioapi::isAvailable() && !is.null(rstudioapi::getActiveProject())) {
+    # If in RStudio with a project
+    project_root <- rstudioapi::getActiveProject()
+  } else if (file.exists("source.R")) {
+    # If source.R exists in current directory
+    project_root <- getwd()
+  } else if (file.exists("microbialForecasts/source.R")) {
+    # If in parent directory
+    project_root <- file.path(getwd(), "microbialForecasts")
+  } else {
+    # Default to current working directory
+    project_root <- getwd()
+    warning("Could not automatically detect project root. Using current working directory.")
+  }
+}
+
+# Set working directory and establish here root
+setwd(project_root)
 here::i_am("source.R")
 
-# Pacman package loader is used throughout scripts
-if (!require("pacman")) install.packages("pacman")
-if (!require("microbialForecast")) install.packages("/projectnb/dietzelab/zrwerbin/microbialForecasts/microbialForecast_0.1.0.tar.gz", repos = NULL, type="source")
+cat("Project root set to:", project_root, "\n")
 
-library("microbialForecast", lib.loc="/usr3/graduate/zrwerbin/R/x86_64-pc-linux-gnu-library/4.2")
+# ====================
+# Package Installation and Loading
+# ====================
+# Install pacman if not available
+if (!require("pacman", quietly = TRUE)) {
+  install.packages("pacman")
+  library("pacman")
+}
 
-	suppressPackageStartupMessages(library(tidyverse, warn.conflicts = F))
-	pacman::p_load(pacman,
-							 nimble, coda, lubridate, here,
-							 doParallel, data.table, Rfast, moments,
-							 scoringRules, Metrics, ggpubr)
+# Try to load microbialForecast package
+microbial_pkg_loaded <- FALSE
 
+# First, try loading from standard library locations
+if (require("microbialForecast", quietly = TRUE)) {
+  microbial_pkg_loaded <- TRUE
+  cat("microbialForecast package loaded from library\n")
+} else {
+  # Try to install from local package directory
+  local_pkg_path <- here::here("microbialForecast")
+  if (dir.exists(local_pkg_path)) {
+    tryCatch({
+      devtools::install_local(local_pkg_path, quiet = TRUE)
+      library("microbialForecast")
+      microbial_pkg_loaded <- TRUE
+      cat("microbialForecast package installed and loaded from local source\n")
+    }, error = function(e) {
+      cat("Failed to install from local source:", e$message, "\n")
+    })
+  }
+  
+  # If still not loaded, try to find tar.gz file
+  if (!microbial_pkg_loaded) {
+    pkg_files <- list.files(pattern = "microbialForecast.*\\.tar\\.gz$", recursive = TRUE)
+    if (length(pkg_files) > 0) {
+      tryCatch({
+        install.packages(pkg_files[1], repos = NULL, type = "source")
+        library("microbialForecast")
+        microbial_pkg_loaded <- TRUE
+        cat("microbialForecast package installed from:", pkg_files[1], "\n")
+      }, error = function(e) {
+        cat("Failed to install from tar.gz:", e$message, "\n")
+      })
+    }
+  }
+}
 
-	# Create output directory for MCMC runs
-	model_output_dir = here("data", "model_outputs", "logit_beta_regression")
-	dir.create(model_output_dir, showWarnings = FALSE)
-	model_output_dir = here("data", "model_outputs", "logit_beta_regression", "env_cycl")
-	dir.create(model_output_dir, showWarnings = FALSE)
-	model_output_dir = here("data", "model_outputs", "logit_beta_regression", "cycl_only")
-	dir.create(model_output_dir, showWarnings = FALSE)
+if (!microbial_pkg_loaded) {
+  warning("microbialForecast package could not be loaded. Some functions may not be available.")
+}
 
-	model_output_dir = here("data", "model_outputs", "logit_beta_regression", "env_cov")
-	dir.create(model_output_dir, showWarnings = FALSE)
+# ====================
+# Load Required Packages
+# ====================
+cat("Loading required packages...\n")
 
-	model_summary_dir = here("data", "summary")
-	dir.create(model_summary_dir, showWarnings = FALSE)
+# Core packages
+suppressPackageStartupMessages({
+  library(tidyverse, warn.conflicts = FALSE)
+})
 
+# Load additional packages with error handling
+required_packages <- c(
+  "nimble", "coda", "lubridate", "here",
+  "doParallel", "data.table", "Rfast", "moments",
+  "scoringRules", "Metrics", "ggpubr", "ggallin"
+)
 
-	# New facet label names for supp variable
-	model.labs <- c("Environmental\npredictors", "Seasonality", "Environmental predictors\n& seasonality")
-	names(model.labs) <- c("env_cov", "cycl_only","env_cycl")
+# Check if devtools is available for local package installation
+if ("devtools" %in% required_packages && !requireNamespace("devtools", quietly = TRUE)) {
+  required_packages <- c(required_packages, "devtools")
+}
 
+tryCatch({
+  pacman::p_load(char = required_packages, character.only = TRUE)
+  cat("All required packages loaded successfully\n")
+}, error = function(e) {
+  cat("Warning: Some packages could not be loaded:", e$message, "\n")
+  cat("Continuing with available packages...\n")
+})
 
-	
-	metric.labs <- c("Relative forecast error (nRMSE)", "Absolute forecast error (CRPS)")
-	names(metric.labs) <- c("RMSE.norm", "mean_crps")
+# ====================
+# Create Directory Structure
+# ====================
+cat("Setting up directory structure...\n")
+
+# Define directory structure
+dirs_to_create <- c(
+  here("data", "model_outputs"),
+  here("data", "model_outputs", "logit_beta_regression"),
+  here("data", "model_outputs", "logit_beta_regression", "env_cycl"),
+  here("data", "model_outputs", "logit_beta_regression", "cycl_only"),
+  here("data", "model_outputs", "logit_beta_regression", "env_cov"),
+  here("data", "model_outputs", "functional_groups"),
+  here("data", "model_outputs", "diversity"),
+  here("data", "summary"),
+  here("figures")
+)
+
+# Create directories
+for (dir_path in dirs_to_create) {
+  if (!dir.exists(dir_path)) {
+    dir.create(dir_path, recursive = TRUE, showWarnings = FALSE)
+    cat("Created directory:", dir_path, "\n")
+  }
+}
+
+# ====================
+# Define Analysis Parameters and Labels
+# ====================
+
+# Model type labels for plotting
+model.labs <- c(
+  "Environmental\npredictors", 
+  "Seasonality", 
+  "Environmental predictors\n& seasonality"
+)
+names(model.labs) <- c("env_cov", "cycl_only", "env_cycl")
+
+# Metric labels for plotting
+metric.labs <- c(
+  "Relative forecast error (nRMSE)", 
+  "Absolute forecast error (CRPS)"
+)
+names(metric.labs) <- c("RMSE.norm", "mean_crps")
+
+# ====================
+# Define Utility Functions
+# ====================
 	
 	# Convert sin and cos effect sizes to a seasonal amplitude parameter
 	sin_cos_to_seasonality <- function(sin, cos){
@@ -297,3 +416,13 @@ tag_facet <- function(p, open = "(", close = ")", tag_pool = letters, x = -Inf, 
 	p + geom_text(data = tags, aes_string(x = "x", y = "y", label = "label"), ..., hjust = hjust,
 								vjust = vjust, fontface = fontface, family = family, inherit.aes = FALSE)
 }
+
+# ====================
+# Environment Setup Complete
+# ====================
+cat(paste0("\n", paste(rep("=", 50), collapse=""), "\n"))
+cat("Microbial Forecasts Environment Setup Complete!\n")
+cat("Project root:", project_root, "\n")
+cat("Package status:", ifelse(microbial_pkg_loaded, "microbialForecast loaded", "microbialForecast not available"), "\n")
+cat("Ready for analysis.\n")
+cat(paste0(paste(rep("=", 50), collapse=""), "\n"))

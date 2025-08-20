@@ -1,4 +1,4 @@
-#' @title run_spatial_model
+#' @title run_MCMC_spatial
 #' @description run_spatial_model
 #' @export
 #
@@ -27,7 +27,7 @@
 # rank.name = s = species = "nitrification"
 # model_id = NULL
 
-run_MCMC_bychain <- function(rank.name = "phylum_bac",
+run_MCMC_spatial <- function(rank.name = "phylum_bac",
 														 s = "acidobacteriota",
 														 temporalDriverUncertainty = TRUE,
 														 spatialDriverUncertainty = TRUE,

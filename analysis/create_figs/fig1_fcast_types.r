@@ -1,10 +1,10 @@
 # Comparing functional groups vs taxonomy
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("source.R")
 #p_load(multcomp)
 library(ggallin)
 library(emmeans)
 
-scores_list = readRDS(here("data", "summary/scoring_metrics_cv.rds"))
+scores_list = readRDS(here("data", "summary/scoring_metrics_plsr2.rds"))
 converged = scores_list$converged_list
 
 #converged =  scores_list$converged_strict_list
@@ -84,14 +84,15 @@ for (group in c("Fungi", "Bacteria")){
 			#group_by(beta) %>%
 			aov(effSize~fcast_type,.) %>%
 			emmeans::emmeans(object = ., pairwise ~ "fcast_type", adjust = "tukey") %>% .$emmeans %>%
-			multcomp::cld(object = ., Letters = letters) %>% as.data.frame() %>% rename(Letters_Tukey = `.group`) %>%
+			multcomp::cld(object = ., Letters = letters) %>% as.data.frame() %>%
+		#	rename(Letters_Tukey = `.group`) %>%
 			#rownames_to_column("beta") %>%
-			mutate(pretty_group = !!group, beta = !!beta)
+			mutate(pretty_group = !!group, beta = !!beta, Letters_Tukey=`.group`)
 		beta_tukey[[beta]] = out
 	}
 	beta_tukey_group[[group]] = do.call(rbind, beta_tukey)
 }
-tukey_cal_beta = do.call(rbind, beta_tukey_group)
+tukey_cal_beta = do.call(rbind.data.frame, beta_tukey_group)
 tukey_cal_beta$tot = tukey_cal_beta$upper.CL + .1
 
 # Subset to only predictors that have a difference between types
@@ -137,7 +138,7 @@ fcast_type_beta_plot <- c +
 fcast_type_beta_plot
 
 
-# Test for differences in effect sizes between fcast types
+# Test for differences in hindcast accuracy between fcast types
 score_tukey_group = list()
 for (group in c("Fungi", "Bacteria")){
 		df_group=hindcast_rsq %>% filter(pretty_group==!!group)
@@ -254,7 +255,7 @@ a <- ggplot(skill_scores,
 				axis.title=element_text(size=16))  +
 	guides(color=guide_legend(title="Domain"),
 				 shape=guide_legend(title="Forecast type")) +
-	#facet_grid(cols=vars(pretty_group)) +
+	facet_grid(cols=vars(pretty_group)) +
 	scale_y_continuous(trans = pseudolog10_trans)
 
 aov1.1=aov(skill_score~pretty_group+fcast_type,skill_scores)
@@ -318,5 +319,9 @@ library(ggpubr)
 ggarrange(fcast_type_beta_plot, fcast_type_crps_plot, skill_score_plot, common.legend = T, nrow=1)
 
 # Including C from seasonalEffSize script
-ggarrange(fcast_type_beta_plot, fcast_type_crps_plot, skill_score_plot, amplitude_plot,
-					common.legend = T, labels = c("A","B","C","D"))
+# NOTE: amplitude_plot object not defined - commenting out for now
+# ggarrange(fcast_type_beta_plot, fcast_type_crps_plot, skill_score_plot, amplitude_plot,
+# 					common.legend = T, labels = c("A","B","C","D"))
+
+# Use the working composite instead:
+ggarrange(fcast_type_beta_plot, fcast_type_crps_plot, skill_score_plot, common.legend = T, nrow=1)

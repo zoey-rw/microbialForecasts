@@ -1,13 +1,13 @@
 # Create example figure with one hindcast from each type
 library(tidyverse)
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("source.R")
 
-tax_hindcast <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/hindcast_tax.rds")
+tax_hindcast <- readRDS(here("data/summary/hindcast_tax.rds"))
 tax_hindcast$dates <- fixDate(tax_hindcast$dateID)
-div_hindcast <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/hindcast_div.rds")
-fg_hindcast <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/hindcast_fg.rds")
+div_hindcast <- readRDS(here("data/summary/hindcast_div.rds"))
+fg_hindcast <- readRDS(here("data/summary/hindcast_fg.rds"))
 
-summaries_all <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/all_fcast_effects.rds")
+summaries_all <- readRDS(here("data/summary/all_fcast_effects.rds"))
 summaries_examples <- summaries_all %>% filter(fcast_type == "Taxonomic" & taxon == "actinobacteriota" |
 																							 	fcast_type == "Diversity" &	scenario == "full_uncertainty_16S" |
 																							 	fcast_type == "Functional group" & taxon == "plant_pathogen") %>%
