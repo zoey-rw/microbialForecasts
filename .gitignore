@@ -1,35 +1,179 @@
-# ignore any log/Rproject files
-*.log
-/log/*
-/tmp/*
+# ====================
+# R Project Files
+# ====================
+source_local.R
+DESIGN_DOC.md
 .Rhistory
+.Rdata
+.RData
+.Ruserdata
+.rdb
+.rds
+.RDS
+*.Rproj
 .Rproj.user/
 */.Rproj.user/
-*/microbialForecast/.Rproj.user/
-microbialForecast/.Rproj.user/
 
-# ignore any "old" directories
+# R Session Data files
+.RDataTmp*
+
+# ====================
+# Operating System Files
+# ====================
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Icon?
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# ====================
+# IDE Files
+# ====================
+# RStudio
+.Rproj.user/
+
+# VS Code
+.vscode/
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# ====================
+# Log Files and Temporary Files
+# ====================
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+/log/*
+/tmp/*
+/temp/*
+
+# ====================
+# Development and Testing
+# ====================
+# Development directories
+development/
+*/development/
+old/
 */old/
-/old/*
-old
 old_*
+test_*
+debug_*
 
-# ignore qsub files for batch jobs
+# Batch job files (for HPC clusters)
 q_*
 qsub*
+*.qsub
+*.slurm
+*.out
+*.err
 
-# ignore development scripts
-development/*
-/development/
-development
+# ====================
+# Data Files
+# ====================
+# Raw and processed data (too large for git)
+data/summary/
+data/raw/
+data/clean/
+data/processed/
+data/model_outputs/
+data/cache/
+*.rds
+*.RDS
+*.csv
+*.tsv
+*.xlsx
+*.xls
+analysis/old/
+archive/
+# Exception: keep example/reference data files
+!data/reference/
+!data/example/
+!data_construction/misc/field-sites.csv
 
-# ignore raw data
-data/clean/*
-data/clean
-data/*
+# ====================
+# Output Files
+# ====================
+# Figures and plots
+figures/
+plots/
+output/
+results/
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+*.eps
 
-# ignore figures
-figures/*
+# Exception: keep key figures for documentation
+!figures/README/
+!figures/docs/
 
-# ignore functions because they should be in R package
-functions/*
+# Model outputs
+model_outputs/
+models/
+fitted_models/
+
+# ====================
+# Package Development
+# ====================
+# Package build files
+*.tar.gz
+*.zip
+*.tgz
+src/*.o
+src/*.so
+src/*.dll
+inst/doc
+
+# Check results
+*.Rcheck/
+
+# ====================
+# Documentation
+# ====================
+# Rendered documentation
+*.html
+*.pdf
+docs/
+
+# Exception: keep main documentation
+!README.html
+!README.pdf
+
+# ====================
+# Miscellaneous
+# ====================
+# Backup files
+*.bak
+*.backup
+
+# Configuration files with sensitive data
+config.R
+.env
+.environment
+
+# Cache directories
+cache/
+.cache/
+
+# Temporary R Markdown files
+*_cache/
+*_files/
