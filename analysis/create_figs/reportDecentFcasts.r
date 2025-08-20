@@ -1,13 +1,17 @@
 # Report the number of decent (RSQ > .1) forecasts
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("source.R")
 hindcast_data <- readRDS(here("data/summary/all_hindcasts.rds"))
 
 
 scores_list = readRDS(here("data/summary/scoring_metrics_cv.rds"))
 converged = scores_list$converged_list
 
+# How many groups had converged forecasts using any model? #170
 scores = scores_list$scoring_metrics %>% 
 	filter(model_id %in% converged)
+
+unique_tax = scores %>% ungroup %>%  distinct(taxon, .keep_all = T)
+table(unique_tax$fcast_type) #135 taxa, 35 functional 
 
 # How many groups had decent forecasts using any model? #120
 good_rsq = scores %>% filter(RSQ.1 > .1)

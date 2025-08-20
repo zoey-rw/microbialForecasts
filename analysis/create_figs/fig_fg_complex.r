@@ -1,8 +1,8 @@
 # read in seasonal values
 library(lubridate)
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("source.R")
 
-scores_list = readRDS(here("data/summary/scoring_metrics_cv.rds"))
+scores_list = readRDS(here("data/summary/scoring_metrics_plsr2.rds"))
 converged = scores_list$converged_list
 #converged_strict = scores_list$converged_strict_list
 
@@ -13,7 +13,7 @@ cycl_only_est = plot_estimates %>% filter(grepl("cycl_only",model_name))
 cycl_only_est$fg_category <- microbialForecast:::assign_fg_categories(cycl_only_est$taxon)
 
 
-env_cycl_est = plot_estimates %>% filter(grepl("env_cycl",model_name)) 
+env_cycl_est = plot_estimates %>% filter(grepl("env_cycl",model_name))
 env_cycl_est$fg_category <- microbialForecast:::assign_fg_categories(env_cycl_est$taxon)
 
 seas_in = readRDS(here("data/summary/seasonal_amplitude.rds"))
@@ -51,12 +51,12 @@ ggplot(fg_seasonal,
 cycl_only_est$month_date = as.Date(paste0(cycl_only_est$month, "-01-2016"), format = "%m-%d-%Y")
 
 # "pretty_names" is from globalVariables.r but isn't exporting...
-cycl_only_est$pretty_fg_names <- recode(cycl_only_est$taxon, !!!pretty_names)
+cycl_only_est$pretty_fg_names <- recode(cycl_only_est$taxon, !!!microbialForecast:::pretty_names)
 
 simple_sugars = cycl_only_est %>% filter(fg_category=="Simple substrates" & fcast_type=="Functional")
 complex_sugars = cycl_only_est %>% filter(fg_category=="Complex substrates" & fcast_type=="Functional")
 
-simple_complex = cycl_only_est %>% filter(fg_category %in% c("Simple substrates","Complex substrates") & fcast_type=="Functional") %>% 
+simple_complex = cycl_only_est %>% filter(fg_category %in% c("Simple substrates","Complex substrates") & fcast_type=="Functional") %>%
 	filter(!taxon %in% c("chitinolytic","cellulolytic","lignolytic"))
 
 
@@ -69,27 +69,25 @@ copio_oligo_est = cycl_only_est  %>%
 pheno_categories_in <- readRDS(here("data/clean/modis_greenup.rds"))
 bart_harv_pheno = pheno_categories_in[[1]] %>% filter(ID %in% c("BART","HARV") & year == "2016") %>% ungroup
 
-northern_sites <- c("ABBY", "BART", "BONA",  "DEJU", "HARV", 
-										"HEAL", "NIWO", "ONAQ", "RMNP", "STEI", "TOOL", 
+northern_sites <- c("ABBY", "BART", "BONA",  "DEJU", "HARV",
+										"HEAL", "NIWO", "ONAQ", "RMNP", "STEI", "TOOL",
 										"TREE", "UNDE", "WREF", "YELL")
 
-northern_sites <- c("BART", "BONA", "HARV", 
-										"HEAL", "STEI", "TOOL", 
+northern_sites <- c("BART", "BONA", "HARV",
+										"HEAL", "STEI", "TOOL",
 										"TREE", "UNDE", "WREF", "YELL")
 
 northern_sites <- c("HARV",
 										"BART")
 
 plant_associated = cycl_only_est  %>%
-	filter(time_period=="2015-11_2018-01")  %>% 
+	filter(time_period=="2015-11_2018-01")  %>%
 	filter(taxon %in% c("plant_pathogen","oligotroph","heat_stress","copiotroph","saprotroph"))
 
 
-
-simple_complex
 ggplot(plant_associated %>% filter(siteID %in% northern_sites) %>% filter(taxon != "heat_stress"),
 			 aes(x = month_date, color=siteID)) +
-	
+
 	geom_smooth(aes(y = `Mean`), method="loess", span=1, se=F) +
 	theme_classic()+
 	scale_fill_brewer(palette = "Paired") +
@@ -108,7 +106,7 @@ ggplot(plant_associated %>% filter(siteID %in% northern_sites) %>% filter(taxon 
 
 ggplot(simple_complex %>% filter(siteID %in% northern_sites) %>% filter(taxon != "heat_stress"),
 			 aes(x = month_date, color=siteID)) +
-	
+
 	geom_smooth(aes(y = `Mean`), method="loess", span=1, se=F) +
 	theme_classic()+
 	scale_fill_brewer(palette = "Paired") +
@@ -127,9 +125,9 @@ ggplot(simple_complex %>% filter(siteID %in% northern_sites) %>% filter(taxon !=
 
 ggplot(simple_sugars %>% filter(siteID %in% northern_sites),
 			 aes(fill=species, x = as.numeric(month))) +
-	#geom_point(aes(y = `Mean`), show.legend = F, color="red", 
+	#geom_point(aes(y = `Mean`), show.legend = F, color="red",
 	#					 alpha=.1, position=position_jitter(height=0)) +
-	#geom_point(aes(y = as.numeric(truth)), alpha = .3, position=position_jitter(height=0)) + 
+	#geom_point(aes(y = as.numeric(truth)), alpha = .3, position=position_jitter(height=0)) +
 	geom_smooth(aes(y = `Mean`), method="loess", span=1, se=F) +
 	theme_bw()+
 	scale_fill_brewer(palette = "Paired") +
@@ -140,12 +138,12 @@ ggplot(simple_sugars %>% filter(siteID %in% northern_sites),
 	facet_wrap(~taxon, scales="free")
 
 ggplot(complex_sugars %>% # filter(taxon %in% c("sucrose_complex",
-												#											 "cellulose_complex")) %>% 
+												#											 "cellulose_complex")) %>%
 			 	filter(siteID %in% northern_sites),
 			 aes(fill=species, x = as.numeric(month))) +
-	geom_point(aes(y = `Mean`), show.legend = F, color="red", 
+	geom_point(aes(y = `Mean`), show.legend = F, color="red",
 						 alpha=.1, position=position_jitter(height=0)) +
-	geom_point(aes(y = as.numeric(truth)), alpha = .5, position=position_jitter(height=0)) + 
+	geom_point(aes(y = as.numeric(truth)), alpha = .5, position=position_jitter(height=0)) +
 	geom_smooth(aes(y = `Mean`), method="loess", span=1, se=F) +
 	theme_bw()+
 	scale_fill_brewer(palette = "Paired") +
@@ -162,11 +160,11 @@ copio_oligo_env_cycl_est = env_cycl_est  %>%
 
 ggplot(copio_oligo_env_cycl_est %>% filter(siteID %in% northern_sites),
 			 aes(x = as.numeric(month))) +
-	geom_point(aes(y = `50%`, color = siteID), show.legend = F, #color="red", 
+	geom_point(aes(y = `50%`, color = siteID), show.legend = F, #color="red",
 						 alpha=.1, position=position_jitter(height=0)) +
-	geom_point(aes(y = as.numeric(truth), color = siteID), alpha = .5, 
-						 position=position_jitter(height=0)) + 
-	
+	geom_point(aes(y = as.numeric(truth), color = siteID), alpha = .5,
+						 position=position_jitter(height=0)) +
+
 	geom_smooth(aes(y = `50%`), se = F, color=1) +
 	theme_bw( base_size = 22) +
 	scale_fill_brewer(palette = "Paired") +
@@ -174,20 +172,20 @@ ggplot(copio_oligo_env_cycl_est %>% filter(siteID %in% northern_sites),
 				legend.position = "bottom",legend.title = element_text(NULL),
 				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
 	xlab(NULL) + labs(fill='') +
-	facet_wrap(fg_category~taxon, scales="free")#, ncol=1) 
+	facet_wrap(fg_category~taxon, scales="free")#, ncol=1)
 
 
-all_decomposers <- cycl_only_est %>% filter(fcast_type=="Functional") %>% 
+all_decomposers <- cycl_only_est %>% filter(fcast_type=="Functional") %>%
 	filter(fg_category %in% c("Complex substrates", "Simple substrates") | taxon %in% c("saprotroph","copiotroph","oligotroph"))
 
-ggplot(all_decomposers %>% 
+ggplot(all_decomposers %>%
 			 	filter(siteID %in% northern_sites),
 			 aes(x = as.numeric(month))) +
-	geom_point(aes(y = `50%`, color = siteID), show.legend = F, #color="red", 
+	geom_point(aes(y = `50%`, color = siteID), show.legend = F, #color="red",
 						 alpha=.1, position=position_jitter(height=0)) +
-	geom_point(aes(y = as.numeric(truth), color = siteID), alpha = .5, 
-						 position=position_jitter(height=0)) + 
-	
+	geom_point(aes(y = as.numeric(truth), color = siteID), alpha = .5,
+						 position=position_jitter(height=0)) +
+
 	geom_smooth(aes(y = `50%`), se = F, color=1) +
 	theme_bw( base_size = 22) +
 	scale_fill_brewer(palette = "Paired") +
@@ -195,20 +193,20 @@ ggplot(all_decomposers %>%
 				legend.position = "bottom",legend.title = element_text(NULL),
 				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
 	xlab(NULL) + labs(fill='') +
-	facet_wrap(fg_category~taxon, scales="free")#, ncol=1) 
+	facet_wrap(fg_category~taxon, scales="free")#, ncol=1)
 
 
-all_decomposers_env <- env_cycl_est %>% filter(fcast_type=="Functional") %>% 
+all_decomposers_env <- env_cycl_est %>% filter(fcast_type=="Functional") %>%
 	filter(fg_category %in% c("Complex substrates", "Simple substrates") | taxon %in% c("saprotroph","copiotroph","oligotroph"))
 
-ggplot(all_decomposers_env %>% 
+ggplot(all_decomposers_env %>%
 			 	filter(siteID %in% northern_sites),
 			 aes(x = as.numeric(month))) +
-	geom_point(aes(y = `50%`, color = siteID), show.legend = F, #color="red", 
+	geom_point(aes(y = `50%`, color = siteID), show.legend = F, #color="red",
 						 alpha=.1, position=position_jitter(height=0)) +
-	geom_point(aes(y = as.numeric(truth), color = siteID), alpha = .5, 
-						 position=position_jitter(height=0)) + 
-	
+	geom_point(aes(y = as.numeric(truth), color = siteID), alpha = .5,
+						 position=position_jitter(height=0)) +
+
 	geom_smooth(aes(y = `50%`), se = F, color=1) +
 	theme_bw( base_size = 22) +
 	scale_fill_brewer(palette = "Paired") +
@@ -219,13 +217,13 @@ ggplot(all_decomposers_env %>%
 	facet_wrap(fg_category~taxon, scales="free") + ggtitle("Full models, estimates plotted by month ")
 
 
-ggplot(all_decomposers_env %>% 
+ggplot(all_decomposers_env %>%
 			 	filter(siteID %in% c("HARV","BART")),
 			 aes(x = as.numeric(month))) +
-	geom_point(aes(y = `50%`, color = siteID), show.legend = F, #color="red", 
+	geom_point(aes(y = `50%`, color = siteID), show.legend = F, #color="red",
 						 alpha=.1, position=position_jitter(height=0)) +
-	geom_point(aes(y = as.numeric(truth), color = siteID), alpha = .5, 
-						 position=position_jitter(height=0)) + 
+	geom_point(aes(y = as.numeric(truth), color = siteID), alpha = .5,
+						 position=position_jitter(height=0)) +
 	geom_smooth(aes(y = `50%`), se = F, color=1) +
 	theme_bw( base_size = 22) +
 	scale_fill_brewer(palette = "Paired") +

@@ -3,24 +3,42 @@
 #' @description Score models and forecasts
 #'
 #' @export
-add_scoring_metrics = function(observed, mean_predicted, sd_predicted,
+add_scoring_metrics = function(observed,
+															 median_predicted,
+															 mean_predicted,
+															 sd_predicted,
 															 type=c("RMSE","BIAS","MAE",
 															 			 "CRPS", "RSQ", "RSQ.1",
-															 			 "RMSE.norm",  "residual_variance", "predictive_variance", "total_PL", "CRPS_truncated")){
+															 			 "RMSE.norm","RMSE.norm.orig",
+															 			 "RMSE.iqr",
+															 			 "residual_variance",
+															 			 "predictive_variance",
+															 			 "total_PL", "CRPS_truncated"),
+															 			 use_median=TRUE){
 
 	require(Metrics, scoringRules)
 
 	if(sum(is.na(observed )) > 0){stop('Error: NAs in observed vector.' )}
 	if(sum(is.na(mean_predicted)) > 0){stop('Error: NAs in predicted vector.')}
 
-	out_df <- cbind.data.frame(observed,mean_predicted,sd_predicted) %>%
+	# These CRPS stats require distributions for each forecast
+	# and cannot be calculated from median
+	out_df1 <- cbind.data.frame(observed,mean_predicted,sd_predicted) %>%
 		summarise(CRPS = mean(
 			crps_norm(observed, mean_predicted, sd_predicted)),
 			CRPS_truncated = mean(
 				crps(observed,
 						 family = "tnorm",
 						 location = mean_predicted,
-						 scale = sd_predicted, lower = 0, upper = 1)),
+						 scale = sd_predicted,
+						 lower = 0, upper = 1)))
+
+	# The rest of these metrics can use forecast median as the best estimate
+
+	if (use_median==TRUE) mean_predicted = median_predicted
+
+	out_df2 = cbind.data.frame(observed,mean_predicted,sd_predicted) %>%
+		summarise(
 			RMSE = rmse(actual = observed, predicted = mean_predicted),
 			RSQ.1 = 1 - (RMSE^2)/var(observed),
 			RSQ.1.colin = rsq_1.1(observed, mean_predicted),
@@ -29,14 +47,26 @@ add_scoring_metrics = function(observed, mean_predicted, sd_predicted,
 			MAE = mae(actual = observed, predicted = mean_predicted),
 			MAPE = mape(actual = observed, predicted = mean_predicted),
 			RSQ = summary(lm(observed ~ mean_predicted))$r.squared,
-			abundance = mean(observed, na.rm=T),
-			RMSE.norm = RMSE / abundance) %>% select(!!type)
+			mean_abundance = mean(observed, na.rm=T),
+			abundance = ifelse(mean_abundance < .005, .005, mean_abundance),
+			q1 = quantile(observed, .25),
+			q3 = quantile(observed, .75),
+			IQR = q3-q1,
+			RMSE.iqr = RMSE/IQR,
+			RMSE.norm = RMSE/abundance)
 
-	# Lower limit of RSQ 1:1 is 0
+	out_df = cbind.data.frame(out_df1, out_df2)
+
+	# Lower limit if RSQ 1:1 is 0
 	out_df$RSQ.1 = ifelse(out_df$RSQ.1 < 0, 0, out_df$RSQ.1)
 
 	# Upper limit of RMSE.normalized is 5
+	out_df$RMSE.norm.orig = out_df$RMSE.norm
 	out_df$RMSE.norm = ifelse(out_df$RMSE.norm > 5, 5, out_df$RMSE.norm)
+
+	out_df <- out_df %>%
+		select(!!type)
+
 	return(out_df)
 }
 

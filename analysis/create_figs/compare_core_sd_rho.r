@@ -1,4 +1,4 @@
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("source.R")
 library(ggallin)
 
 
@@ -11,8 +11,14 @@ rho_core_in <- readRDS(here("data", "summary/rho_core_sd_effects.rds")) %>%
 	filter(model_name != "all_covariates" & model_id %in% converged) %>%
 	select(-pretty_name)
 
+
+in_list <- readRDS(here("data/summary/fcast_horizon_input.rds"))
+fcast_horizon_null_site <-  in_list[[3]]
+rho_core_in <- merge(rho_core_in, fcast_horizon_null_site[,c("model_id","abundance")], all.x=T)
+
+
 core_sd = rho_core_in  %>%
-	filter(rowname == "core_sd")
+	filter(rowname == "core_sd") %>% mutate(adj_sd = Mean/abundance)
 rho = rho_core_in  %>%
 	filter(rowname == "rho")
 
@@ -20,36 +26,59 @@ rho$hi <- rho$Mean + rho$SD*1.96
 rho$lo <- rho$Mean - rho$SD*1.96
 rho$significant <- microbialForecast:::is_significant(rho$lo, rho$hi)
 
-
-
-ggplot(core_sd %>% filter(model_name == "cycl_only")) +
-	geom_boxplot(aes(x = only_rank,
-									 y = Mean, color = pretty_group),
-							 position=position_dodge()) +
-	geom_point(aes(x = rank_only,
-								 y = Mean, color = pretty_group),
-						 position=position_jitterdodge(), alpha=.3) +
-	facet_grid(~pretty_group) + theme_minimal(base_size = 18) + ggtitle("Variation among soil cores")
-
+rho$effSize <- abs(rho$Mean)
+rho_stats <- rho %>% filter(model_name == "cycl_only") %>% 
+	group_by(pretty_group) %>% 
+	rstatix::tukey_hsd(effSize ~ fcast_type) %>%
+	#filter(p.adj < 0.05) %>% 
+	rstatix::add_y_position()
 # Supplementary figure
 ggplot(rho %>% filter(model_name == "cycl_only"), 
-			 aes(x = only_rank,
-																											y = Mean, color = pretty_group)) +
-	geom_violin(draw_quantiles = c(.5), show.legend = F, color = 1) +
-	# geom_boxplot(show.legend = F) +
-	# 						 position=position_dodge()) +
+			 aes(x = fcast_type,
+			 		y = effSize, color = pretty_group)) +
+	#geom_violin(draw_quantiles = c(.5), show.legend = F, color = 1) +
+	geom_boxplot(show.legend = F,
+	 						 position=position_dodge(), outlier.shape = NA) +
 	geom_point(aes(shape=as.factor(significant)), #show.legend = F, 
 						 size=3,
-						 alpha=.3, position=position_jitter(height=0)) +
-	 facet_grid( ~ pretty_group,  scales="free") +
+						 alpha=.5, position=position_jitter(height=0)) +
+	facet_grid( ~ pretty_group,  scales="free") +
 	# 					 labeller = labeller(model_name = model.labs)) + 
-						 #rows=vars(pretty_group), scales="free") + 
-	xlab("Rank") +
-	theme_minimal(base_size = 18)  +
-	ggtitle("Temporal autocorrelation effect size")  + 
+	#rows=vars(pretty_group), scales="free") + 
+	xlab("Microbial group") + 	theme_minimal(base_size = 22)  +
+	ylab("Rho parameter estimate") +
+	ggtitle("Stability over time") + 
 	scale_y_continuous(trans=ssqrt_trans) + 
 	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05))  + 
-	scale_shape_manual(values = c(21, 16), name = NULL,																																						 labels = c("Not significant","Significant")) + guides(color="none")
+	scale_shape_manual(values = c(21, 16), name = NULL,																																						 
+										 labels = c("Not significant","Significant")) + 
+	ylim(c(0,1.1)) +
+	guides(color="none") +
+	stat_pvalue_manual(rho_stats, bracket.nudge.y = .1,
+										 size=9)
+
+sd_stats <- core_sd %>% filter(model_name == "cycl_only") %>% 
+	group_by(pretty_group) %>% 
+	rstatix::tukey_hsd(adj_sd ~ fcast_type) %>%
+	#filter(p.adj < 0.05) %>% 
+	rstatix::add_y_position()
+ggplot(core_sd %>% filter(model_name == "cycl_only")) +
+	geom_boxplot(aes(x = fcast_type,
+									 y = adj_sd, color = pretty_group),
+							 position=position_dodge(), outlier.shape = NA) +
+	geom_point(aes(x = fcast_type,
+								 y = adj_sd, color = pretty_group), size=3,
+						 position=position_jitterdodge(), alpha=.3) +
+	facet_grid(~pretty_group) + theme_minimal(base_size = 20) + 
+	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
+				plot.title = element_text(size = 20))  + 
+	xlab("Microbial group") + 
+	ylab("Coefficient of variation (parameter estimate)") +
+	ggtitle("Variation within plot and timepoint") + 
+	guides(color="none") +
+	stat_pvalue_manual(sd_stats, bracket.nudge.y = .1,
+										 size=9)
+
 
 
 scores_list = readRDS(here("data/summary/scoring_metrics_cv.rds"))

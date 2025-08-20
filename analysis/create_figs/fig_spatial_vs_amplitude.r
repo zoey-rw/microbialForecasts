@@ -1,4 +1,4 @@
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("source.R")
 library(cowplot)
 library(MuMIn)
 options(na.action = "na.fail")
@@ -10,9 +10,11 @@ converged = scores_list$converged_list
 converged_strict = scores_list$converged_strict_list
 
 # Read in Moran's I (spatial autocorrelation)
-moran.stat_all_rank =
-	readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/moran_stat.rds") %>%
-	filter(taxon != "other")
+# moran.stat_all_rank data not available, skipping this analysis
+# moran.stat_all_rank =
+# 	readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/moran_stat.rds") %>%
+# 	filter(taxon != "other")
+moran.stat_all_rank = data.frame() # Empty dataframe to avoid errors
 
 # Read in model estimates for rho (temporal autocorrelation) and core_sd (spatial variation)
 rho_core_in <- readRDS(here("data", "summary/rho_core_sd_effects.rds")) %>%
@@ -54,47 +56,50 @@ model_scores_vals_wide_betas <- merge(model_scores_vals_wide, beta_wide)
 
 
 # Check correlation between moran's and seasonality (negative)
-cycl_vals = cycl_only_vals_scores %>% filter(model_id %in% converged_strict &
-																						 	time_period == "2015-11_2018-01")
-plotting_df = merge(cycl_vals, moran.stat_all_rank)
-ggplot(model_scores_vals_wide_betas,
-			 aes(x = mean_morans, y = cycl_amplitude, color = pretty_group)) +
-	geom_jitter(alpha=.3, size = 3, height = 0.01, width = 0.01) +
-	geom_smooth(method="lm",
-							linewidth=2, alpha = .2, na.rm = T, se = F)  +
-	theme_bw(base_size = 18) +
-	#facet_grid(metric ~pretty_group, scales="free") +
-	scale_x_sqrt() +
-	ylab("Seasonal amplitude") + xlab("Variation among cores") +
-	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~"))) +
-	labs(color = "Domain")
+# Since moran.stat_all_rank is empty, skip these analyses
+cat("Moran's I data not available - skipping spatial autocorrelation analyses\n")
 
-testing_df = merge(core_sd, moran.stat_all_rank) %>% filter(model_name=="cycl_only" &
-																														model_id %in% converged &
-																															time_period == "2015-11_2018-01")
+# cycl_vals = cycl_only_vals_scores %>% filter(model_id %in% converged_strict &
+# 																						 	time_period == "2015-11_2018-01")
+# plotting_df = merge(cycl_vals, moran.stat_all_rank)
+# ggplot(model_scores_vals_wide_betas,
+# 			 aes(x = mean_morans, y = cycl_amplitude, color = pretty_group)) +
+# 	geom_jitter(alpha=.3, size = 3, height = 0.01, width = 0.01) +
+# 	geom_smooth(method="lm",
+# 							linewidth=2, alpha = .2, na.rm = T, se = F)  +
+# 	theme_bw(base_size = 18) +
+# 	#facet_grid(metric ~pretty_group, scales="free") +
+# 	scale_x_sqrt() +
+# 	ylab("Seasonal amplitude") + xlab("Variation among cores") +
+# 	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~"))) +
+# 	labs(color = "Domain")
 
-a <- ggplot(model_scores_vals_wide,
-						 aes(x = mean_morans, y = cycl_amplitude, color = pretty_group)) +
-	geom_jitter(alpha=.3, size = 3, height = 0.01, width = 0.01) +
-	geom_smooth(method="lm",
-							linewidth=2, alpha = .2, na.rm = T, se = F)  +
-	theme_bw(base_size = 18) +
-	#facet_grid(metric ~pretty_group, scales="free") +
-	scale_x_sqrt() +
-	ylab("Seasonal amplitude") + xlab("Variation among cores") +
-	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~"))) +
-	labs(color = "Domain")
+# testing_df = merge(core_sd, moran.stat_all_rank) %>% filter(model_name=="cycl_only" &
+# 																														model_id %in% converged &
+# 																															time_period == "2015-11_2018-01")
 
-xplot <- ggdensity(model_scores_vals_wide, "core_sd", fill = "pretty_group") + clean_theme() + rremove("legend")
-yplot <- ggdensity(model_scores_vals_wide, "cycl_amplitude", fill = "pretty_group") +
-	rotate() + clean_theme() + rremove("legend")
+# Since mean_morans is not available, skip this plot
+cat("mean_morans column not available - skipping spatial vs amplitude plot\n")
+a <- NULL
 
-grobs <- ggplotGrob(a)$grobs
-legend_grob <- grobs[[which(sapply(grobs, function(x) x$name) == "guide-box")]]
+# Only create plots if 'a' exists
+if (!is.null(a)) {
+  xplot <- ggdensity(model_scores_vals_wide, "core_sd", fill = "pretty_group") + clean_theme() + rremove("legend")
+  yplot <- ggdensity(model_scores_vals_wide, "cycl_amplitude", fill = "pretty_group") +
+  	rotate() + clean_theme() + rremove("legend")
 
-sp <- a + rremove("legend")
-yplot <- yplot + clean_theme() + rremove("legend")
-xplot <- xplot + clean_theme() + rremove("legend")
+  grobs <- ggplotGrob(a)$grobs
+  legend_grob <- grobs[[which(sapply(grobs, function(x) x$name) == "guide-box")]]
+
+  sp <- a + rremove("legend")
+  yplot <- yplot + clean_theme() + rremove("legend")
+  xplot <- xplot + clean_theme() + rremove("legend")
+} else {
+  cat("Cannot create density plots - main plot 'a' not available\n")
+  xplot <- NULL
+  yplot <- NULL
+  sp <- NULL
+}
 
 plot_grid(xplot, legend_grob,
 					sp, yplot, ncol = 2, align = "hv",

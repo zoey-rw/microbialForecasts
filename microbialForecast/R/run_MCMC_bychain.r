@@ -48,7 +48,7 @@ run_MCMC_bychain <- function(rank.name = "phylum_bac",
 														 iter_per_chunk = 5000,
 														 min_eff_size_perchain = 5,
 														 max_loops=100,
-														 max_save_size = 40000,
+														 max_save_size = 60000,
 														 ...) {
 	if (is.null(model_id)){
 		model_id <- paste(model_name, s, min.date, max.date, sep = "_")
@@ -361,26 +361,28 @@ run_MCMC_bychain <- function(rank.name = "phylum_bac",
 
 	message("Completed model data for ", rank.name, ", group: ", s)
 
-	constants <- model.dat[c("plotID",  "timepoint","plot_site",
+	# Get all available constants from prepBetaRegData
+	all_constants <- model.dat[c("plotID",  "timepoint","plot_site",
 													 "site_start", "plot_start", "plot_index",
 													 "plot_num", "plot_site_num",
 													 "N.plot", "N.spp", "N.core", "N.site", "N.date",
 													 "mois", "mois_sd", "temp", "temp_sd", "pH", "pH_sd",
 													 "pC", "pC_sd", "LAI", "relEM", "sin_mo", "cos_mo")]
 
-
 	if (model_name == "cycl_only"){
+		# CRITICAL FIX: Only use constants that the cycl_only model actually needs
+		constants <- all_constants[c("timepoint", "plot_start", "plot_index",
+																	"plot_num", "plot_site_num",
+																	"N.plot", "N.core", "N.site", "N.date",
+																	"sin_mo", "cos_mo")]
 		constants$N.beta = 2
 		Nimble_model = modelCode_cycl_only
-		# constants <- constants[c("plotID",  "timepoint","plot_site",
-		# 												 "site_start", "plot_start", "plot_index",
-		# 												 "plot_num", "plot_site_num",
-		# 												 "N.plot", "N.spp", "N.core", "N.site",
-		# 												 "N.date", "N.beta","sin_mo", "cos_mo")]
 	} else if(model_name == "env_cov"){
+		constants <- all_constants  # env_cov needs all constants
 		constants$N.beta = 6
 		Nimble_model = modelCode_env_covariates
 	} else if(model_name == "env_cycl"){
+		constants <- all_constants  # env_cycl needs all constants
 		constants$N.beta = 8
 		Nimble_model = modelCode_env_cycl
 	} else message("Missing specification of Nimble model.")
@@ -402,7 +404,10 @@ run_MCMC_bychain <- function(rank.name = "phylum_bac",
 									 "model_data" = model.dat$truth.plot.long,
 									 "sample_values" = model.dat$sample_values)
 
-	inits <- createInits(constants)
+	# Create initial values AFTER N.beta is set
+	inits_all <- createInits(constants)
+	# Remove y from initial values since it's observed data
+	inits <- inits_all[!names(inits_all) %in% c("y")]
 
 	## Configure & compile model
 	Rmodel <- nimbleModel(code = Nimble_model,
@@ -467,6 +472,12 @@ run_MCMC_bychain <- function(rank.name = "phylum_bac",
 		}
 	}
 
-	return("ok")
+	# Return the actual MCMC results instead of just "ok"
+	return(list(
+		samples = out.run,
+		samples2 = out.run2,
+		metadata = metadata,
+		status = "SUCCESS"
+	))
 }
 

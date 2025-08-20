@@ -1,6 +1,6 @@
 # Combine & separately save model parameter and effect size estimates (beta covariates) from all models
 
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("../../source.R")
 pacman::p_load(stringr, forestplot, gridExtra)
 
 # Read in summaries and combine into fewer dfs for parameter effects
@@ -52,63 +52,70 @@ saveRDS(rho_effects, here("data", "summary/rho_core_sd_effects.rds"))
 
 # Seasonality (cos/sin) effects
 seas_params <- df %>% filter(beta %in% c("sin","cos") & !grepl("other", taxon))
-seas_vals <- seas_params %>% pivot_wider(id_cols = c("model_id","taxon","model_name","fcast_type","time_period",
+if (nrow(seas_params) > 0) {
+  seas_vals <- seas_params %>% pivot_wider(id_cols = c("model_id","taxon","model_name","fcast_type","time_period",
 																												#"pretty_name","
 																										 "pretty_group","rank","rank_only"),
 																						names_from = beta,
-																						values_from = "Mean")
-
-# Convert to amplitude and max
-# Didn't vectorize this function, oops
-out <- list()
-for (i in 1:nrow(seas_vals)) {
-	out[[i]] <- sin_cos_to_seasonality(seas_vals$sin[[i]], seas_vals$cos[[i]])
+																						values_from = c("Mean","significant")) %>% rename(sin="Mean_sin", cos = "Mean_cos")
+} else {
+  cat("No seasonal parameters found - creating empty seasonal data\n")
+  seas_vals <- data.frame()  # Empty dataframe for seasonal values
 }
-out <- rbindlist(out)
-seas_vals <- cbind.data.frame(seas_vals, out)
 
+if (nrow(seas_vals) > 0) {
+  # Convert to amplitude and max
+  # Didn't vectorize this function, oops
+  out <- list()
+  for (i in 1:nrow(seas_vals)) {
+    out[[i]] <- sin_cos_to_seasonality(seas_vals$sin[[i]], seas_vals$cos[[i]])
+  }
+  out <- rbindlist(out)
+  seas_vals <- cbind.data.frame(seas_vals, out)
 
-cycl_vals <- seas_vals %>% filter(time_period == "2015-11_2018-01" &
-																		model_name == "cycl_only")
-all_cov_vals <- seas_vals %>% filter(time_period == "2015-11_2018-01" &
-																		 	model_name == "all_covariates|env_cov")
+  cycl_vals <- seas_vals %>% filter(time_period == "2015-11_2018-01" &
+                                    model_name == "cycl_only")
+  all_cov_vals <- seas_vals %>% filter(time_period == "2015-11_2018-01" &
+                                       model_name == "all_covariates|env_cov")
 
-cycl_vals_refit <- seas_vals %>% filter(time_period == "2015-11_2020-01" &
-																					model_name == "cycl_only")
-all_cov_vals_refit <- seas_vals %>% filter(time_period == "2015-11_2020-01" &
-																					 	model_name == "all_covariates|env_cov")
+  cycl_vals_refit <- seas_vals %>% filter(time_period == "2015-11_2020-01" &
+                                          model_name == "cycl_only")
+  all_cov_vals_refit <- seas_vals %>% filter(time_period == "2015-11_2020-01" &
+                                             model_name == "all_covariates|env_cov")
 
+  input_dateID = c("201401","201402","201403","201404","201405","201406","201407","201408","201409","201410","201412")
+  dates = fixDate(input_dateID)
+  input_date_df = data.frame(x = lubridate::month(dates),
+                             dates = dates)
+  out_seas_vals =list()
 
+  seas_vals_only = seas_vals %>% filter(grepl("cycl",model_name))
+  for (row in 1:nrow(seas_vals_only)){
+    alpha = seas_vals_only[row,]$sin
+    beta = seas_vals_only[row,]$cos
+    df = input_date_df
+    y_cycl = alpha * sin(2*pi*input_date_df$x/12) + beta * cos(2*pi*input_date_df$x/12)
+    names(y_cycl) = input_date_df$dates
+    out_seas_vals[[row]] <- data.frame(y_cycl) %>% t %>% as.data.frame()
+  }
+  seas_vals_to_plot = rbindlist(out_seas_vals, fill=T)
+  seas_vals_to_plot <- cbind.data.frame(seas_vals_only, seas_vals_to_plot)
+  seas_vals_long = seas_vals_to_plot %>% 
+    pivot_longer(cols = c(16:26), names_to = "dates", values_to = "y_cycl") %>%
+    mutate(dates = as.Date(dates))
 
+  max_vals =	seas_vals_long %>% group_by(model_name, taxon, time_period, model_id) %>%
+    filter(y_cycl == max(y_cycl, na.rm=T)) %>%
+    mutate(max_y_date = dates) %>% select(-c(dates, y_cycl))
+  seas_vals_long <- merge(seas_vals_long, max_vals, all=T)
 
-input_dateID = c("201401","201402","201403","201404","201405","201406","201407","201408","201409","201410","201412")
-dates = fixDate(input_dateID)
-input_date_df = data.frame(x = lubridate::month(dates),
-													 dates = dates)
-out_seas_vals =list()
-
-seas_vals_only = seas_vals %>% filter(grepl("cycl",model_name))
-for (row in 1:nrow(seas_vals_only)){
-
-	alpha = seas_vals_only[row,]$sin
-	beta = seas_vals_only[row,]$cos
-	df = input_date_df
-	y_cycl = alpha * sin(2*pi*input_date_df$x/12) + beta * cos(2*pi*input_date_df$x/12)
-	names(y_cycl) = input_date_df$dates
-	out_seas_vals[[row]] <- data.frame(y_cycl) %>% t %>% as.data.frame()
+  saveRDS(list(seas_vals_long, all_cov_vals, cycl_vals, all_cov_vals_refit, cycl_vals_refit, seas_vals), here("data/summary/seasonal_amplitude.rds"))
+} else {
+  cat("No seasonal data to process - creating empty seasonal amplitude file\n")
+  # Create empty seasonal amplitude data for compatibility
+  saveRDS(list(data.frame(), data.frame(), data.frame(), data.frame(), data.frame(), data.frame()), 
+          here("data/summary/seasonal_amplitude.rds"))
 }
-seas_vals_to_plot = rbindlist(out_seas_vals, fill=T)
-seas_vals_to_plot <- cbind.data.frame(seas_vals_only, seas_vals_to_plot)
-seas_vals_long = seas_vals_to_plot %>% 
-	pivot_longer(cols = c(14:24), names_to = "dates", values_to = "y_cycl") %>%
-		mutate(dates = as.Date(dates))
-
-max_vals =	seas_vals_long %>% group_by(model_name, taxon, time_period, model_id) %>%
-		filter(y_cycl == max(y_cycl, na.rm=T)) %>%
-	mutate(max_y_date = dates) %>% select(-c(dates, y_cycl))
-seas_vals_long <- merge(seas_vals_long, max_vals, all=T)
-
-saveRDS(list(seas_vals_long, all_cov_vals, cycl_vals, all_cov_vals_refit, cycl_vals_refit, seas_vals), here("data/summary/seasonal_amplitude.rds"))
 
 #
 # ggplot(rho_effects %>% filter(model_name=="all_covariates"),
@@ -159,4 +166,5 @@ saveRDS(list(seas_vals_long, all_cov_vals, cycl_vals, all_cov_vals_refit, cycl_v
 # 		theme_minimal(base_size = 18) +
 # 		ggtitle("Overestimating plot means") +
 # 		geom_abline(slope=1, intercept = 0) + facet_wrap(~taxon)
+
 
