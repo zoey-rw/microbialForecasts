@@ -1,4 +1,4 @@
-# Microbial Forecasts: Spatio-temporal Prediction of Soil Microbiomes
+## Microbial Forecasts: Spatio-temporal Prediction of Soil Microbiomes
 
 [![R](https://img.shields.io/badge/R-4.0%2B-blue.svg)](https://www.r-project.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -9,7 +9,7 @@ This project uses state-space hierarchical Bayesian models to explore spatio-tem
 
 - Relative abundance forecasting for taxonomic groups
 - Relative abundance forecasting for functional groups  
-- Three different linear model structures for comprehensive analysis
+- Three different linear model structures
 - Separate models for fungi (ITS sequences) and bacteria (16S sequences)
 - Plot-level analysis (20m × 20m) with soil core replicates
 - ~2000 soil cores from 18 NEON sites across the United States
@@ -18,21 +18,14 @@ This project uses state-space hierarchical Bayesian models to explore spatio-tem
 ## Table of Contents
 
 - [Installation](#installation)
-- [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
 - [Data Sources](#data-sources)
 - [Model Types](#model-types)
 - [Usage Examples](#usage-examples)
-- [Contributing](#contributing)
 - [Citation](#citation)
 - [License](#license)
 
 ## Installation
-
-### Prerequisites
-
-- R (≥ 4.0.0)
-- RStudio (recommended)
 
 ### Required R Packages
 
@@ -67,15 +60,13 @@ install.packages(c(
    source("source.R")
    ```
 
-## Quick Start
-
 ### Basic Setup
 
 ```r
 # Load the environment and packages
 source("source.R")
 
-# The package uses 'here' for relative file paths
+# Use 'here' for relative file paths
 library(here)
 ```
 
@@ -88,7 +79,6 @@ rank_data <- quick_get_rank_df(k = 1,
                                max.date = "20200101")
 
 # Fit a model (example)
-# See analysis/workflows/ for complete workflows
 ```
 
 ## Project Structure
@@ -96,14 +86,8 @@ rank_data <- quick_get_rank_df(k = 1,
 ```
 microbialForecasts/
 ├── analysis/                    # Main analysis scripts
-│   ├── model_analysis/         # Model fitting and analysis (scripts 0-10)
+│   ├── model_analysis/         # Model fitting and analysis (scripts 0-11)
 │   ├── create_figs/           # Figure generation scripts
-│   └── workflows/             # Organized analysis workflows
-│       ├── a_taxonomy/        # Taxonomic model workflows
-│       ├── b_functional_groups/ # Functional group workflows
-│       ├── c_diversity/       # Diversity model workflows
-│       ├── d_taxonomy_dirichlet/ # Dirichlet taxonomic models
-│       └── e_taxonomy_beta/   # Beta regression taxonomic models
 ├── data_construction/          # Data preparation scripts
 │   ├── covariate_prep/        # Environmental covariate processing
 │   └── microbe/               # Microbial data processing
@@ -146,10 +130,6 @@ microbialForecasts/
 - **Categories**: Based on literature review, genomic pathways, and experimental enrichment
 - **Kingdoms**: Separate bacterial and fungal functional classifications
 
-### 3. Diversity Models
-- **Target**: Alpha diversity metrics (Shannon diversity)
-- **Approach**: Continuous response models with environmental predictors
-
 ### Model Structures
 - **Environmental predictors**: Soil conditions, plant diversity, climate
 - **Seasonality**: Cyclical temporal components  
@@ -169,7 +149,6 @@ model_data <- prepTaxonomicData(rank.df = your_data,
                                 min.date = "2015-11-01",
                                 max.date = "2020-01-01")
 
-# Fit model (see analysis/workflows/e_taxonomy_beta/ for complete examples)
 ```
 
 ### Creating Forecasts
@@ -208,9 +187,9 @@ model_data <- prepTaxonomicData(rank.df = your_data,
    - Analyze model performance
    - Explore spatio-temporal patterns
 
-## Key Functions
+## Functions
 
-The `microbialForecast` package provides:
+The `microbialForecast` package includes:
 
 - `prepTaxonomicData()`: Prepare taxonomic abundance data for modeling
 - `prepFunctionalData()`: Prepare functional group data
@@ -224,22 +203,7 @@ The `microbialForecast` package provides:
 - **Memory**: 8GB+ RAM recommended for full model fitting
 - **Storage**: ~50GB for complete data and model outputs
 - **Compute**: Models designed for HPC clusters but can run locally
-- **Time**: Individual model fits: hours to days depending on complexity
-
-## Reproducibility
-
-- Uses `here` package for portable file paths
-- Version-controlled R package for consistent functions
-- Documented workflows for each analysis type
-- Environment setup via `source.R`
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- **Time**: Individual model fits: ~15 minutes to hours depending on complexity
 
 ## Citation
 
