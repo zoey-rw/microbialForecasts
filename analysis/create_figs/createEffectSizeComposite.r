@@ -1,5 +1,5 @@
 # Visualize effect size estimates (beta covariates) from all model
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("source.R")
 pacman::p_load(stringr, forestplot, gridExtra, ggpubr)
 
 sum.all <- readRDS(here("data/summary/predictor_effects.rds"))
@@ -85,7 +85,7 @@ ggarrange(a,b)
 b_vs_f_fcast_type_plot <- ggplot(data=df_cal_fg_tax,
 																 aes(x = pretty_group,
 																 		color = pretty_group, y = effSize)) +
-	
+
 	geom_violin(draw_quantiles = c(.5), show.legend = F, color = 1) +
 	geom_jitter(aes(#shape = as.factor(significant),
 		color = pretty_group), size = 5, height = 0, width=.2, alpha = .2,
@@ -172,7 +172,7 @@ ranks_beta_plot <- ggplot(df_cal_fg_tax %>% filter(!beta %in% c("sin","cos")),
 													aes(x = only_rank,y = effSize,
 															color = pretty_group)) +
 	geom_jitter(aes(shape=as.factor(significant)),
-					
+
 							width=.3, height = 0, size=2, alpha = .5) +
 	labs(title = "Absolute effect size") +
 	geom_violin(draw_quantiles = c(.5), show.legend = F) +
@@ -184,7 +184,7 @@ ranks_beta_plot <- ggplot(df_cal_fg_tax %>% filter(!beta %in% c("sin","cos")),
 		text = element_text(size = 16),
 		axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
 			angle = 320, vjust=1, hjust = -0.05)
-	)  + 
+	)  +
 	scale_shape_manual(values = c(21, 16), name = NULL,																																						 labels = c("Not significant","Significant")) + guides(color="none")
 
 
@@ -195,7 +195,7 @@ beta_names <- c(#"sin", "cos",
 for(b in beta_names) {
 	x = "only_rank"
 	y = "effSize"
-	df <- df_refit_fg_tax[which(df_refit_fg_tax$beta == b),] %>% filter(significant==1)
+	df <- df_refit_fg_tax[which(df_refit_fg_tax$beta == b),] #%>% filter(significant==1)
 	new.df <- cbind.data.frame(x = df$only_rank, y = df$effSize)
 	abs_max <- max(new.df[,"y"], na.rm = T)
 	maxs <- new.df %>% group_by(x) %>%
@@ -219,6 +219,11 @@ ranks_beta_plot <- ranks_beta_plot + geom_text(data = tukey_list_tax_fg,
 																label = Letters_Tukey), show.legend = F, color = 1, size =5)
 ######
 ranks_beta_plot
+
+
+tukey_eff_rank = df_refit_fg_tax %>% filter(!is.na(rank_only)) %>%
+	group_by(rank_only, beta, .drop=T) %>%
+	summarize(tukey(x = rank_only, y = effSize))
 
 
 # View actual taxa and effects

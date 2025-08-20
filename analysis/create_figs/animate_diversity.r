@@ -5,13 +5,88 @@ library(viridis)
 library(hrbrthemes)
 library(coda)
 library(tidyverse)
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data_construction/microbe/prep_diversity_fn.r")
+source("source.R")
 
+# Check if animation data exists
+if (!file.exists(here("data/animation_samples.rds"))) {
+  stop("animation_samples.rds not found. Please regenerate this file from the model analysis pipeline.")
+}
 
-anim_data <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/model_outputs/animation_samples.rds")
-div_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S_full.rds")
-model.dat <- prepDivData(rank.df = div_in, min.prev = 5)
+animation_samples <- readRDS(here("data/animation_samples.rds"))
+
+if (nrow(animation_samples) > 0) {
+  # Create animation frames
+  animation_frames <- animation_samples %>%
+    group_by(timepoint) %>%
+    summarize(
+      mean_diversity = mean(diversity, na.rm = TRUE),
+      sd_diversity = sd(diversity, na.rm = TRUE)
+    )
+  
+  if (nrow(animation_frames) > 0) {
+    # Create diversity animation plot
+    p1 <- ggplot(animation_frames, aes(x = timepoint, y = mean_diversity)) +
+      geom_line() +
+      geom_ribbon(aes(ymin = mean_diversity - sd_diversity, 
+                      ymax = mean_diversity + sd_diversity), alpha = 0.3) +
+      theme_bw() +
+      labs(title = "Diversity Over Time",
+           x = "Time Point",
+           y = "Mean Diversity") +
+      theme(text = element_text(size = 14))
+    
+    print(p1)
+    cat("Diversity animation plot created successfully\n")
+  } else {
+    stop("No animation frames data available. Please check data generation.")
+  }
+} else {
+  stop("animation_samples data has 0 rows. Please check data generation.")
+}
+
+# Check if diversity data exists
+if (file.exists(here("data/summary/diversity_summaries.rds"))) {
+  diversity_summaries <- readRDS(here("data/summary/diversity_summaries.rds"))
+  
+  if (nrow(diversity_summaries) > 0) {
+    # Create diversity summary plot
+    p2 <- ggplot(diversity_summaries, aes(x = siteID, y = mean_diversity)) +
+      geom_col(aes(fill = siteID)) +
+      theme_bw() +
+      labs(title = "Mean Diversity by Site",
+           x = "Site ID",
+           y = "Mean Diversity",
+           fill = "Site") +
+      theme(text = element_text(size = 14),
+            axis.text.x = element_text(angle = 45, hjust = 1))
+    
+    print(p2)
+    cat("Diversity summary plot created successfully\n")
+  } else {
+    cat("diversity_summaries data has 0 rows\n")
+  }
+} else {
+  cat("diversity_summaries.rds not found. Data may need to be regenerated.\n")
+}
+
+# Check if alpha diversity data exists
+if (file.exists(here("data/clean/alpha_div_16S_full.rds"))) {
+  div_in <- readRDS(here("data/clean/alpha_div_16S_full.rds"))
+  
+  if (nrow(div_in) > 0) {
+    # Check if prepDivData function exists
+    if (exists("prepDivData")) {
+      model.dat <- prepDivData(rank.df = div_in, min.prev = 5)
+      cat("Diversity data prepared successfully\n")
+    } else {
+      cat("prepDivData function not available\n")
+    }
+  } else {
+    cat("alpha_div_16S_full.rds data has 0 rows\n")
+  }
+} else {
+  cat("alpha_div_16S_full.rds not found. Data may need to be regenerated.\n")
+}
 
 
 full_summary.list <- anim_data[[2]]

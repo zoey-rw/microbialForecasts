@@ -1,13 +1,14 @@
 # View predictability by beta effects
 library(cowplot)
 
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("source.R")
 library(ggrepel)
 
 scores_list <- readRDS(here("data/summary/scoring_metrics_cv.rds"))
 cv_metric_scaled <- scores_list$cv_metric_scaled
 
-unconverged = scores_list$unconverged_list %>% filter(median_gbr > 3)
+# unconverged = scores_list$unconverged_list %>% filter(median_gbr > 3)  # This was causing an error - unconverged_list is a character vector
+unconverged = scores_list$unconverged_list  # This is already a character vector of unconverged model IDs
 
 scores_list$unconverged_list
 tax_scores <- scores_list$scoring_metrics_cv %>%
@@ -172,3 +173,80 @@ patch1 <- q1_inset / q4_inset
 patch2 <- q2_inset / q3_inset
 plot_out <- patch1 | master_plot | patch2
 plot_out
+
+# Check if forecast effects data exists
+if (!file.exists(here("data/summary/all_fcast_effects.rds"))) {
+  stop("all_fcast_effects.rds not found. Please regenerate this file from the model analysis pipeline.")
+}
+
+df_orig <- readRDS(here("data/summary/all_fcast_effects.rds"))
+
+# Filter for cyclical effects
+df <- df_orig %>%
+  filter(beta %in% c("cos", "sin") &
+         time_period == "2015-11_2018-01") %>%
+  group_by(taxon, time_period, model_name) %>%
+  mutate(cyc_significant = ifelse(any(significant==1), 1, 0))
+
+# Get cyclical values
+vals <- df %>% filter(cyc_significant == 1) %>%
+  pivot_wider(id_cols = c("taxon","model_name","fcast_type","pretty_group"),
+              values_from = "Mean", names_from = "beta")
+
+# Calculate amplitude and peak timing
+if (nrow(vals) > 0) {
+  vals$amplitude <- sqrt(vals$sin^2 + vals$cos^2)
+  vals$max <- getMaxMin(vals$sin, vals$cos)
+  vals$max <- unlist(vals$max)
+  
+  # Create predictability quadrants plot
+  p1 <- ggplot(vals, aes(x = amplitude, y = max)) +
+    geom_point(aes(color = pretty_group)) +
+    geom_hline(yintercept = 6, linetype = "dashed") +
+    geom_vline(xintercept = median(vals$amplitude, na.rm = TRUE), linetype = "dashed") +
+    theme_bw() +
+    labs(title = "Phylum Predictability Quadrants",
+         x = "Seasonal Amplitude",
+         y = "Peak Month",
+         color = "Group") +
+    scale_y_continuous(breaks = 1:12, labels = month.abb) +
+    theme(text = element_text(size = 14))
+  
+  print(p1)
+  cat("Phylum predictability quadrants plot created successfully\n")
+} else {
+  stop("No significant cyclical data available. Please check data generation.")
+}
+
+# Check if scoring metrics exist
+if (file.exists(here("data/summary/scoring_metrics_cv.rds"))) {
+  scoring_metrics_cv <- readRDS(here("data/summary/scoring_metrics_cv.rds"))
+  
+  if ("scoring_metrics" %in% names(scoring_metrics_cv)) {
+    # Get phylum scores
+    phy_scores <- scoring_metrics_cv$scoring_metrics %>% 
+      filter(model_name == "all_covariates" &
+             pretty_name %in% c("Phylum","Functional group"))
+    
+    if (nrow(phy_scores) > 0) {
+      # Create predictability vs performance plot
+      p2 <- ggplot(phy_scores, aes(x = RSQ, y = CRPS)) +
+        geom_point(aes(color = pretty_name)) +
+        theme_bw() +
+        labs(title = "Predictability vs Performance",
+             x = "R-squared",
+             y = "CRPS",
+             color = "Group") +
+        theme(text = element_text(size = 14))
+      
+      print(p2)
+      cat("Predictability vs performance plot created successfully\n")
+    } else {
+      cat("No phylum scores data available for plotting\n")
+    }
+  } else {
+    cat("scoring_metrics element not found in scoring_metrics_cv\n")
+  }
+} else {
+  cat("scoring_metrics_cv.rds not found. Data may need to be regenerated.\n")
+}

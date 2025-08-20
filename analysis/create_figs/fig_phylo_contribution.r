@@ -1,4 +1,4 @@
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("source.R")
 options(scipen=999)
 
 library(treeio)
@@ -8,7 +8,9 @@ library(phylocomr)
 library(scales)
 library(ggrepel)
 
-results_to_save = readRDS(here("data/summary/phylo_analysis_results.rds"))
+results_to_save = readRDS(here("data/summary/phylo_analysis_results_env_cov.rds"))
+# results_to_save = readRDS(here("data/summary/phylo_analysis_results.rds"))
+
 phylogenetic_results = results_to_save$phylogenetic_results
 sig_for_plot = results_to_save$sig_for_plot
 aot_results = results_to_save$aot_results
@@ -37,6 +39,10 @@ tukey_phylo_rank$rank = tukey_phylo_rank$x %>%
 	ordered(levels = rev(c("genus","family","order","class","phylum")))
 
 tukey_phylo_rank <- merge(tukey_phylo_rank, phylo_res_means %>% select(upper_limit, rank, trait.name))
+trait.names <- c(CRPS = "CRPS", Ecto = "Ectomycorrhizal\ntrees", LAI = "LAI", Moisture = "Moisture",
+								 RSQ = "Overall\npredictability", RSQ.1 = "RSQ.1", Temperature = "Temperature", pC = "pC",
+								 pH = "pH")
+phylo_res_means$trait.name = factor(phylo_res_means$trait.name, levels = c("CRPS","RSQ.1","Temperature","Ecto", "LAI", "pC","pH","Moisture","RSQ"))
 phylo_ci <- ggplot(phylo_res_means %>% filter(!is.na(rank) &
 																			 	!trait.name %in% c("RSQ.1","CRPS")),
 			 aes(x = as.numeric(rank),
@@ -47,17 +53,23 @@ phylo_ci <- ggplot(phylo_res_means %>% filter(!is.na(rank) &
 	geom_pointrange(aes(as.numeric(rank),
 											ymax = upper_limit, ymin = lower_limit, color= trait.name),
 									fatten = 3, linewidth=2, alpha=.5, show.legend = F) +
-	facet_grid(rows=vars(trait.name), scales = "free") +
-	theme_bw(base_size = 18) + scale_x_continuous(breaks=seq(1,5,1),
+	theme_classic(base_size = 18) +
+	facet_wrap(~trait.name,  scales = "free_y",
+						 labeller = labeller(trait.name = trait.names), drop = T) +
+	#facet_grid(rows=vars(trait.name), scales = "free_y",labeller = labeller(trait.name = trait.names)) +
+	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05)) + scale_x_continuous(breaks=seq(1,5,1),
 																								labels=c("phylum", "class", "order", "family",
-																											 "genus")) +xlab("Taxonomic rank") +
-	ylab("Mean phylogenetic contribution of rank")+ labs(color="Trait name") +
+																											 "genus")) +
+	xlab("Taxonomic rank") +
+	ylab("Mean phylogenetic contribution of rank")+
+	labs(color="Trait name") +
 	geom_text(data = tukey_phylo_rank,
 						aes(x = as.numeric(rank), y = upper_limit+.01, label = Letters_Tukey),
 						show.legend = F, color = 1, size =5, inherit.aes = F)
 phylo_ci
+ggpubr::annotate_figure(phylo_ci)
 
-png(here("figures","phylo_ci.png"), width = 600, height=1000)
+png(here("figures","phylo_ci.png"), width = 600, height=1200)
 print(phylo_ci)
 
 dev.off()
@@ -66,12 +78,12 @@ dev.off()
 
 
 
-to_keep = merged_fort_beta %>% unnest(cols = c(Temperature, Moisture, pH, pC, `Ectomycorrhizal\ntrees`, LAI,
+to_keep = trait_data %>% unnest(cols = c(Temperature, Moisture, pH, pC, `Ectomycorrhizal\ntrees`, LAI,
 																							 sin, cos)) %>%
 	filter(isTip & !is.na(label) & rank_only=="genus") %>% group_by(label) %>% dplyr::slice(1) %>% ungroup
 #to_keep = y_genus %>% filter(rank=="ASV" & !is.na(genus_label)) %>% group_by(genus_label) %>% dplyr::slice(1)
 species<-to_keep$label %>% unlist() %>% unique
-genus_treedata <- merged_fort_beta %>% unnest(cols = c(Temperature, Moisture, pH, pC, `Ectomycorrhizal\ntrees`, LAI,
+genus_treedata <- trait_data %>% unnest(cols = c(Temperature, Moisture, pH, pC, `Ectomycorrhizal\ntrees`, LAI,
 																											 sin, cos))  %>% filter(!isTip | label %in% species)
 genus_treedata$rank = tax_long[match(genus_treedata$label, tax_long$label),]$rank
 genus_treedata$rank <- factor(genus_treedata$rank, levels = c(NA, "phylum", "class", "order", "family", "genus", "ASV"), ordered =T)

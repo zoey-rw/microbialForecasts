@@ -1,7 +1,7 @@
 pacman::p_load(scoringRules,reshape2, parallel, lubridate) 
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source("source.R")
 
-crps_in <- readRDS("./data/summary/CRPS_hindcasts.rds")
+crps_in <- readRDS(here("data/summary/CRPS_hindcasts.rds"))
 
 #crps_all <- crps_all %>% filter(!taxon_name %in% c("litter_saprotroph","soil_saprotroph","wood_saprotroph"))
 

@@ -1,6 +1,6 @@
 # Create dataframe listing models to run and their parameters.
 
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("source.R")
 
 # Get taxon/species names
 functional_groups = data.frame(rank.name = microbialForecast:::keep_fg_names,
