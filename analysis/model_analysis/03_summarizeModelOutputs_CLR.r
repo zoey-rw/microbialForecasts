@@ -4,10 +4,13 @@
 source("source.R")
 
 
-file.list = intersect(list.files(here("data/model_outputs/CLR_regression/"),recursive = T,
-																 pattern = "20130601_20151101|20151101_20180101|20151101_20200101", full.names = T),
-											list.files(here("data/model_outputs/CLR_regression/"), recursive = T,
-																 pattern = "samples", full.names = T))
+file.list = intersect(list.files(here("data/model_outputs/CLR_regression_expanded/"),recursive = T,
+																 pattern = "20130601_20151101|20151101_20180101|20151101_20200101|20130601_20200101|20130601_20180101", full.names = T),
+											list.files(here("data/model_outputs/CLR_regression_expanded/"), recursive = T,
+																 pattern = "samples_CLR_expanded_.*\\.rds$", full.names = T))
+
+# Filter out individual chain files, keep only combined samples files
+file.list = file.list[!grepl("_chain[0-9]+", file.list)]
 
 # Remove any files with only one chain
 file.list = file.list[!grepl("chain", file.list)]
@@ -33,7 +36,7 @@ file_summaries = foreach(f=file.list, .errorhandling = "pass") %dopar% {
 stopCluster(cl)
 
 
-summary_file_list = list.files(here("data/model_outputs/CLR_regression/"), recursive = T,
+summary_file_list = list.files(here("data/model_outputs/CLR_regression_expanded/"), recursive = T,
 															 pattern = "summary", full.names = T)
 
 # Subset to newest output files

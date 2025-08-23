@@ -3,9 +3,9 @@
 
 source("../../source.R")
 
-
-file.list = intersect(list.files(here("data/model_outputs/logit_beta_regression/"),recursive = T,
-																 pattern = "20130601_20151101|20151101_20180101|20151101_20200101", full.names = T),
+# Get all available logit beta regression models with legacy effects
+# Look for models from 2013-2018 and 2013-2020 time periods
+file.list = intersect(list.files(here("data/model_outputs/logit_beta_regression/"),recursive = T,pattern = "20130601_20151101|20151101_20180101|20130601_20180101|20130601_20200101", full.names = T),
 											list.files(here("data/model_outputs/logit_beta_regression/"), recursive = T,
 																 pattern = "samples", full.names = T))
 
@@ -77,7 +77,7 @@ model_median = by_rank %>% select(c("rank.name", "is_major_param", "rank", "taxo
 model_median = model_median %>% pivot_wider(values_from = c("mean_gbr","median_gbr","quant_95","min_es","median_es","max_gbr"),names_from = is_major_param)
 
 
-# ggplot(model_median) + geom_jitter(aes(x = niteration, y = median_gbr_TRUE, color = group)) + ylim(c(0,5)) + geom_hline(yintercept = 1)
+ggplot(model_median) + geom_jitter(aes(x = time_period, y = median_gbr_TRUE, color = group)) + ylim(c(0,5)) + geom_hline(yintercept = 1)
 
 
 
@@ -132,7 +132,10 @@ saveRDS(list(summary_df = summary_df,
 
 
 
-# Combine summary files for all models/time-periods
+# Handle phenology models separately (2013-2015 data)
+cat("Processing phenology models separately...\n")
+
+# Combine summary files for phenology models (2013-2015 data)
 pheno_summary_file_list = intersect(list.files(here("data/model_outputs/logit_beta_regression/"),recursive = T,
 																	pattern = "20130601_20151101", full.names = T),
 											 list.files(here("data/model_outputs/logit_beta_regression/"), recursive = T,
@@ -219,11 +222,46 @@ if(length(summary_files) > 0) {
     })
   }
   
-  # Combine all data
+  # Combine all data with better error handling
   if(length(all_summary_df) > 0) {
-    combined_summary_df <- do.call(rbind, all_summary_df)
-    combined_plot_est <- do.call(rbind, all_plot_est)
-    combined_gelman_summary <- do.call(rbind, all_gelman_summary)
+    # Try to combine summary_df with rbind.fill for different column structures
+    tryCatch({
+      combined_summary_df <- do.call(rbind, all_summary_df)
+    }, error = function(e) {
+      cat("Error combining summary_df with rbind, trying rbind.fill...\n")
+      if(require(plyr, quietly = TRUE)) {
+        combined_summary_df <<- do.call(plyr::rbind.fill, all_summary_df)
+      } else {
+        cat("plyr not available, skipping summary_df combination\n")
+        combined_summary_df <<- data.frame()
+      }
+    })
+    
+    # Try to combine plot_est with rbind.fill for different column structures
+    tryCatch({
+      combined_plot_est <- do.call(rbind, all_plot_est)
+    }, error = function(e) {
+      cat("Error combining plot_est with rbind, trying rbind.fill...\n")
+      if(require(plyr, quietly = TRUE)) {
+        combined_plot_est <<- do.call(plyr::rbind.fill, all_plot_est)
+      } else {
+        cat("plyr not available, skipping plot_est combination\n")
+        combined_plot_est <<- data.frame()
+      }
+    })
+    
+    # Try to combine gelman_summary with rbind.fill for different column structures
+    tryCatch({
+      combined_gelman_summary <- do.call(rbind, all_gelman_summary)
+    }, error = function(e) {
+      cat("Error combining gelman_summary with rbind, trying rbind.fill...\n")
+      if(require(plyr, quietly = TRUE)) {
+        combined_gelman_summary <<- do.call(plyr::rbind.fill, all_gelman_summary)
+      } else {
+        cat("plyr not available, skipping gelman_summary combination\n")
+        combined_gelman_summary <<- data.frame()
+      }
+    })
     
     # Create the main summaries object
     main_summaries <- list(
@@ -235,8 +273,9 @@ if(length(summary_files) > 0) {
       rerun_list = character(0)
     )
     
-    # Save the main summaries
-    saveRDS(main_summaries, here("data/summary/logit_beta_regression_summaries.rds"))
+    # Save the main summaries using absolute path
+    save_path <- file.path(here::here(), "data", "summary", "logit_beta_regression_summaries.rds")
+    saveRDS(main_summaries, save_path)
     cat("Successfully created logit_beta_regression_summaries.rds\n")
   } else {
     cat("No valid summary data found to combine\n")
@@ -246,7 +285,7 @@ if(length(summary_files) > 0) {
 }
 
 # Functional groups (phenology data)
-sum.in <- readRDS(here("data", paste0("summary/pheno_summaries.rds")))
+sum.in <- readRDS(here::here("data", "summary", "pheno_summaries.rds"))
 if (nrow(sum.in$summary_df) > 0) {
   sum.all <- sum.in$summary_df  %>% filter(model_name != "all_covariates") %>% 
     mutate(tax_rank = rank,
@@ -274,7 +313,7 @@ beta_effects$beta <- ordered(beta_effects$beta, levels = c("sin", "cos",
 																													 "Temperature",
 																													 "Moisture","rho"))
 levels(beta_effects$beta)[levels(beta_effects$beta)=="Ectomycorrhizal trees"] <- "Ectomycorrhizal\ntrees"
-saveRDS(beta_effects, here("data", "summary/pheno_predictor_effects.rds"))
+saveRDS(beta_effects, here::here("data", "summary", "pheno_predictor_effects.rds"))
 
 # Site effects
 site_effects <- df %>% filter(grepl("site", rowname))
@@ -326,11 +365,11 @@ max_vals =	seas_vals_long %>% group_by(model_name, taxon, time_period, model_id)
 	mutate(max_y_date = dates) %>% select(-c(dates, y_cycl))
 seas_vals_long <- merge(seas_vals_long, max_vals, all=T)
 
-  saveRDS(list(seas_vals_long, seas_vals), here("data/summary/pheno_seasonal_amplitude.rds"))
+  saveRDS(list(seas_vals_long, seas_vals), here::here("data", "summary", "pheno_seasonal_amplitude.rds"))
 } else {
   cat("Skipping all phenology processing due to empty data\n")
   # Create empty files for downstream compatibility
-  saveRDS(data.frame(), here("data", "summary/pheno_predictor_effects.rds"))
-  saveRDS(list(data.frame(), data.frame()), here("data/summary/pheno_seasonal_amplitude.rds"))
+  saveRDS(data.frame(), here::here("data", "summary", "pheno_predictor_effects.rds"))
+  saveRDS(list(data.frame(), data.frame()), here::here("data", "summary", "pheno_seasonal_amplitude.rds"))
 }
 

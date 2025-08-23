@@ -1,7 +1,7 @@
 # Combine hindcasts from all workflows
 # This script must be run before other analysis scripts
 
-source("../../source.R")
+source("source.R")
 
 # Load required packages for memory efficiency
 if (!require(arrow, quietly = TRUE)) {
@@ -27,8 +27,15 @@ if (file.exists(parquet_file)) {
 }
 hindcast_data <- all_rank_hindcasts %>%
 	mutate(dates=fixDate(dateID),
-				 fcast_period = ifelse(dates <= "2018-01-01" & (newsite == FALSE|is.na(newsite)),
-				 											"calibration", "hindcast"))
+				 fcast_period = case_when(
+				   # For 2013-2018 models, all dates are calibration (training period)
+				   time_period == "20130601_20180101" ~ "calibration",
+				   # For 2015-2018 models, dates <= 2018-01-01 are calibration, > 2018-01-01 are hindcast
+				   time_period == "20151101_20180101" & dates <= "2018-01-01" & (newsite == FALSE|is.na(newsite)) ~ "calibration",
+				   time_period == "20151101_20180101" & dates > "2018-01-01" ~ "hindcast",
+				   # Default case
+				   TRUE ~ "hindcast"
+				 ))
 
 # hindcasts$group <- ifelse(grepl("_bac", hindcasts$rank_name, fixed = T), "16S", "ITS")
 # hindcasts$rank = hindcasts$rank_name
@@ -69,11 +76,12 @@ hindcast_data$pretty_name <- ordered(hindcast_data$rank_only, levels = c("genus"
 
 hindcast_data = hindcast_data %>%
 	filter(!grepl("other", taxon)) %>%
-	mutate(site_prediction = ifelse(predicted_site_effect==TRUE & new_site==TRUE,
-																	"New time x site (modeled effect)",
-																	ifelse(predicted_site_effect==FALSE & new_site==TRUE,
-																				 "New time x site (random effect)",
-																				 "New time (observed site)"))) %>% mutate(timepoint=date_num)
+	mutate(site_prediction = case_when(
+		predicted_site_effect == TRUE & new_site == TRUE ~ "New time x site (modeled effect)",
+		predicted_site_effect == FALSE & new_site == TRUE ~ "New time x site (random effect)",
+		is.na(new_site) | new_site == FALSE ~ "New time (observed site)",
+		TRUE ~ "New time (observed site)"  # Default case
+	)) %>% mutate(timepoint=date_num)
 
 hindcast_only = hindcast_data %>% filter(fcast_period=="hindcast")
 calibration_only = hindcast_data %>% filter(fcast_period=="calibration") %>%
