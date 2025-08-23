@@ -1,10 +1,10 @@
 #### Create forecasts for individual taxonomic groups - SIMPLE OPTIMIZED VERSION
 
-testing=F
+testing=TRUE
 #### Reading in files ####
 
-source("../../source.R")
-source("../../microbialForecast/R/run_hindcast.r")
+source("source.R")
+source("microbialForecast/R/run_hindcast.r")
 
 # Load data.table for optimization
 if (!require(data.table, quietly = TRUE)) {
@@ -38,13 +38,16 @@ min.date = "20151101"
 # Pre-allocate output list for better memory management
 tax_output_list = vector("list", length(model_id_list))
 
-# Add progress bar
-cat("🚀 Starting hindcast generation for", length(model_id_list), "models...\n")
-pb <- txtProgressBar(min = 0, max = length(model_id_list), style = 3)
-
 # for testing - run sequentially instead of in parallel
-for(k in 1:length(model_id_list)){
-	source("../../microbialForecast/R/run_hindcast.r")
+# Limit to first 3 models for quick testing
+model_limit <- if(testing) 3 else length(model_id_list)
+
+# Add progress bar
+cat("🚀 Starting hindcast generation for", if(testing) paste0(model_limit, " models (TESTING MODE)") else paste0(length(model_id_list), " models"), "...\n")
+pb <- txtProgressBar(min = 0, max = model_limit, style = 3)
+
+for(k in 1:model_limit){
+	source("microbialForecast/R/run_hindcast.r")
 
 	model_id=model_id_list[k]
 	# Update progress bar instead of verbose message
