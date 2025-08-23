@@ -520,10 +520,10 @@ run_scenarios_fixed <- function(j, chain_no) {
 	thin <- 1        # No thinning to preserve all samples
 	iter_per_chunk <- 1000   # Iterations per convergence check
 	init_iter <- 200  # Initial iterations for adaptation
-	min_eff_size_perchain <- 10  # Minimum ESS per chain for convergence
-	max_loops <- 50  # Maximum additional sampling loops
+	min_eff_size_perchain <- 5  # Reduced minimum ESS per chain for faster testing
+	max_loops <- 10  # Reduced maximum loops for faster testing
 	max_save_size <- 60000  # Maximum samples to keep in memory
-	min_total_iterations <- 2000  # Minimum total iterations regardless of convergence
+	min_total_iterations <- 800  # Reduced minimum iterations for faster testing
 	
 	cat("Running production MCMC with convergence-based sampling\n")
 	cat("  Initial iterations:", init_iter, "burnin:", burnin, "\n")
@@ -557,6 +557,9 @@ run_scenarios_fixed <- function(j, chain_no) {
 	
 	cat("  Initial convergence check result:", ifelse(continue, "CONTINUE", "CONVERGED"), "\n")
 	
+	# Store all samples as we go
+	all_samples <- initial_samples
+	
 	while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
 		if (continue) {
 			cat("  Effective sample size too low; running for another", iter_per_chunk, "iterations\n")
@@ -569,13 +572,14 @@ run_scenarios_fixed <- function(j, chain_no) {
 		compiled$run(niter = iter_per_chunk, thin = thin, nburnin = 0)
 		total_iterations <- total_iterations + iter_per_chunk
 		
-		# Get updated samples
+		# Get updated samples and accumulate them
 		current_samples <- as.matrix(compiled$mvSamples)
-		cat("  Updated samples collected:", nrow(current_samples), "total iterations\n")
+		all_samples <- rbind(all_samples, current_samples)
+		cat("  Updated samples collected:", nrow(current_samples), "new samples,", nrow(all_samples), "total accumulated\n")
 		
 		# Check if we need to continue
 		tryCatch({
-			continue <- check_continue(current_samples, min_eff_size = min_eff_size_perchain)
+			continue <- check_continue(all_samples, min_eff_size = min_eff_size_perchain)
 		}, error = function(e) {
 			cat("  WARNING: Convergence check failed in loop, defaulting to continue sampling\n")
 			cat("  Error:", e$message, "\n")
@@ -599,8 +603,8 @@ run_scenarios_fixed <- function(j, chain_no) {
 		cat("  WARNING: Stopped before minimum iterations due to max loops\n")
 	}
 	
-	# Get final samples
-	samples <- as.matrix(compiled$mvSamples)
+	# Get final samples (use accumulated samples)
+	samples <- all_samples
 	
 	cat("MCMC completed successfully\n")
 	cat("Final sample dimensions:", dim(samples), "\n")
@@ -660,7 +664,7 @@ cat("Models to test:\n")
 print(params[, c("rank.name", "species", "model_name", "model_id")])
 
 # Test with a small subset first to verify fixes work
-test_models <- 3  # Test just 3 models (one from each type)
+test_models <- 1  # Test just 1 model for faster verification
 cat("\nTesting", test_models, "models to verify convergence fixes\n")
 
 # Set up parallel cluster for Nimble

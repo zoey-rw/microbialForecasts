@@ -1,7 +1,8 @@
 #!/usr/bin/env Rscript
 
-# Fixed model fitting script that uses our working approach
-# Now that package dependencies are resolved
+# Model fitting script for calibration time periods (2013-2018 only)
+# Runs 4 chains per model for proper convergence assessment
+# Ensures at least 2 models run simultaneously for efficiency
 
 # Get arguments from the command line (run with qsub script & OGE scheduler)
 argv <- commandArgs(TRUE)
@@ -17,7 +18,29 @@ nchains = 4
 
 #### Run on all groups ----
 
-source("source_local.R")
+source("/Users/zoeywerbin/Documents/microbialForecasts/source.R")
+
+# Function to check if MCMC should continue based on effective sample size
+check_continue <- function(samples, min_eff_size = 10) {
+	# Convert to mcmc object for effectiveSize calculation
+	if (!inherits(samples, "mcmc")) {
+		samples <- as.mcmc(samples)
+	}
+	
+	# Calculate effective sample sizes for all parameters
+	eff_sizes <- effectiveSize(samples)
+	
+	# Check if any parameter has ESS below threshold
+	min_ess <- min(eff_sizes, na.rm = TRUE)
+	
+	# Continue if minimum ESS is below threshold
+	continue <- min_ess < min_eff_size
+	
+	cat("  ESS check - Min ESS:", round(min_ess, 1), "Target:", min_eff_size, "\n")
+	cat("  Continue sampling:", continue, "\n")
+	
+	return(continue)
+}
 
 params_in = read.csv(here("data/clean/model_input_df.csv"),
 										 colClasses = c(rep("character", 4),
@@ -27,13 +50,16 @@ params_in = read.csv(here("data/clean/model_input_df.csv"),
 rerun_list = readRDS(here("data/summary/unconverged_taxa_list.rds"))
 converged_list = readRDS(here("data/summary/converged_taxa_list.rds"))
 
-	# Focus on target species for 2015-2018 and 2015-2020 periods
+	# Test across ALL available ranks for comprehensive testing
 	params <- params_in %>% ungroup %>% filter(
-		# Target species: saprotroph, ectomycorrhizal, cellulolytic, ascomycota
-		rank.name %in% c("saprotroph", "ectomycorrhizal", "cellulolytic", "ascomycota") &
-		# Target time periods: 2015-2018 and 2015-2020
-		((min.date == "20151101" & max.date == "20180101") |  # 2015-2018
-		 (min.date == "20150101" & max.date == "20200101")) &  # 2015-2020
+		# Test across all taxonomic ranks and functional groups
+		rank.name %in% c("phylum_bac", "class_bac", "order_bac", "family_bac", "genus_bac",
+										 "phylum_fun", "class_fun", "order_fun", "family_fun", "genus_fun",
+										 "saprotroph", "ectomycorrhizal", "cellulolytic", "assim_nitrite_reduction", 
+										 "acetate_simple", "chitinolytic", "denitrification", "n_fixation", 
+										 "nitrification", "plant_pathogen", "endophyte") &
+			# Focus ONLY on 2013-2018 period (exclude 2015-2018)
+		scenario %in% c("Legacy with covariate 2013-2018", "2013-2018") &
 		# All three model types
 		model_name %in% c("cycl_only", "env_cov", "env_cycl")
 	)
@@ -41,10 +67,18 @@ converged_list = readRDS(here("data/summary/converged_taxa_list.rds"))
 # Filter out already converged models
 params <- params %>% filter(!model_id %in% converged_list)
 
-cat("Running", nrow(params), "models for index", k, "\n")
+# Sample fewer models per rank to accommodate 4 chains per model
+# This ensures we can run multiple chains per model for proper convergence assessment
+set.seed(123)  # For reproducible sampling
+params <- params %>%
+	group_by(rank.name) %>%
+	sample_n(size = min(2, n()), replace = FALSE) %>%  # Reduced from 3 to 2 per rank
+	ungroup()
+
+cat("Running", nrow(params), "models across all ranks for index", k, "\n")
 cat("Model configuration:\n")
 if (nrow(params) > 0) {
-	print(params[k, c("rank.name", "species", "model_name", "model_id")])
+	print(params[, c("rank.name", "species", "model_name", "model_id")])
 } else {
 	cat("No models to run\n")
 }
@@ -68,13 +102,17 @@ run_scenarios_fixed <- function(j, chain_no) {
 	if (is.null(params) || nrow(params) < j) {
 		stop("Params data frame not available or index out of bounds")
 	}
-	
+
 	rank.name <- params$rank.name[[j]]
 	species <- params$species[[j]]
 	model_id <- params$model_id[[j]]
 	model_name <- params$model_name[[j]]
 	min.date <- params$min.date[[j]]
 	max.date <- params$max.date[[j]]
+	scenario <- params$scenario[[j]]
+
+	# Check if this is a legacy covariate model
+	use_legacy_covariate <- grepl("Legacy with covariate", scenario)
 	
 	# Use pre-loaded data (no need to load again in each worker)
 	
@@ -128,6 +166,23 @@ run_scenarios_fixed <- function(j, chain_no) {
 	if ("pC" %in% names(model.dat)) constants$pC <- model.dat$pC
 	if ("relEM" %in% names(model.dat)) constants$relEM <- model.dat$relEM
 	if ("LAI" %in% names(model.dat)) constants$LAI <- model.dat$LAI
+
+	# Add legacy covariate if needed
+	if (use_legacy_covariate) {
+		# Create legacy covariate: 1 for legacy period (2013-2015), 0 for post-2015
+		legacy_dates <- model.dat$plot_date >= "2013-06-27" & model.dat$plot_date <= "2015-11-30"
+		constants$legacy <- as.numeric(legacy_dates)
+		
+		# Validate legacy covariate to prevent extreme values
+		legacy_sum <- sum(constants$legacy)
+		legacy_total <- length(constants$legacy)
+		if (legacy_sum == 0 || legacy_sum == legacy_total) {
+			cat("WARNING: Legacy covariate is all 0s or all 1s - this may cause numerical issues\n")
+		}
+		
+		cat("Legacy covariate added:", legacy_sum, "legacy observations out of", legacy_total, "\n")
+		cat("Legacy proportion:", round(legacy_sum/legacy_total, 3), "\n")
+	}
 	
 	# Model hyperparameters - adjust based on model type
 	if (model_name == "env_cycl") {
@@ -151,19 +206,113 @@ run_scenarios_fixed <- function(j, chain_no) {
 	
 	cat("Constants prepared successfully\n")
 	
-	# Define the model based on model_name
-	if (model_name == "env_cycl") {
+	# STANDARDIZED MODEL DEFINITIONS - All models use consistent priors
+	if (model_name == "cycl_only" && use_legacy_covariate) {
 		modelCode <- nimble::nimbleCode({
-			# Loop through core observations
 			for (i in 1:N.core) {
-				y[i, 1] ~ T(dnorm(mean = plot_mu[plot_num[i], timepoint[i]], sd = core_sd), 0, 1)
+				y[i, 1] ~ dbeta(shape1 = plot_mu[plot_num[i], timepoint[i]] * precision, 
+								 shape2 = (1 - plot_mu[plot_num[i], timepoint[i]]) * precision)
+			}
+			for (p in 1:N.plot) {
+				for (t in plot_start[p]) {
+					Ex[p, t] ~ dunif(0.0001,.9999)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+				for (t in plot_index[p]:N.date) {
+					logit(Ex[p, t]) <- rho * logit(plot_mu[p, t - 1]) +
+						beta[1] * sin_mo[t] + beta[2] * cos_mo[t] +
+						site_effect[plot_site_num[p]] + 
+						legacy_effect * legacy[t] +
+						intercept
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+			}
+
+			# STANDARDIZED PRIORS - Consistent across all models
+			site_effect_sd ~ dgamma(2, 6)  # Standardized: moderate prior
+			for (k in 1:N.site) {
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)
 			}
 			
+			precision ~ dgamma(2, 0.1)  # Standardized: moderate precision prior
+			intercept ~ dnorm(-2, sd = 0.8)  # Standardized: normal prior, moderate variance
+			rho ~ dbeta(3, 3)  # Standardized: informative beta prior
+			legacy_effect ~ dnorm(0, sd = 0.2)  # Standardized: moderate legacy prior
+			
+			for (b in 1:2) {
+				beta[b] ~ dnorm(0, sd = 0.3)  # Standardized: moderate beta prior
+			}
+		})
+	} else if (model_name == "env_cycl" && use_legacy_covariate) {
+		modelCode <- nimble::nimbleCode({
+			# Loop through core observations - CONVERTED TO BETA REGRESSION
+			for (i in 1:N.core) {
+				y[i, 1] ~ dbeta(shape1 = plot_mu[plot_num[i], timepoint[i]] * precision, 
+								 shape2 = (1 - plot_mu[plot_num[i], timepoint[i]]) * precision)
+			}
+
 			for (p in 1:N.plot) {
 				# Plot-level process model
 				for (t in plot_start[p]) {
 					Ex[p, t] ~ dunif(0.0001,.9999)
-					plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+				
+				for (t in plot_index[p]:N.date) {
+					# Dynamic linear model with environmental + cyclical predictors
+					logit(Ex[p, t]) <- rho * logit(plot_mu[p, t - 1]) +
+						site_effect[plot_site_num[p]] +
+						beta[1] * temp[plot_site_num[p], t] +
+						beta[2] * mois[plot_site_num[p], t] +
+						beta[3] * pH[p, plot_start[p]] +
+						beta[4] * pC[p, plot_start[p]] +
+						beta[5] * relEM[p, t] +
+						beta[6] * LAI[plot_site_num[p], t] +
+						beta[7] * sin_mo[t] +
+						beta[8] * cos_mo[t] +
+						legacy_effect * legacy[t] +  # LEGACY COVARIATE
+						intercept
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+			}
+			
+			# Hierarchical priors for site effects - better mixing with constraints
+			site_effect_sd ~ dgamma(2, 8)  # Prior on site effect standard deviation
+			for (k in 1:N.site) {
+				site_effect[k] ~ T(dnorm(0, sd = site_effect_sd), -5, 5)  # Truncated normal priors
+			}
+			
+			# Parameter-specific priors for better convergence
+			# precision: Use appropriate prior for beta regression precision parameter
+			precision ~ dgamma(2, 0.1)  # Moderate precision prior
+			
+			# intercept: Use tighter prior for better convergence
+			intercept ~ dt(-2, 0.3, df = 3)  # Centered around expected value, tighter variance
+
+			# rho: Use tighter bounded prior for better convergence
+			rho ~ dbeta(3, 3)    # More informative, prevents extreme values
+			
+			# Legacy effect: Account for research facility bias - TIGHT prior to prevent explosion
+			legacy_effect ~ dnorm(0, sd = 0.1)  # Very tight prior centered at zero
+			
+			# Tight variance for ecological effects to ensure stability
+			for (b in 1:8) {
+				beta[b] ~ dnorm(0, sd=0.15)
+			}
+		})
+	} else if (model_name == "env_cycl" && !use_legacy_covariate) {
+		modelCode <- nimble::nimbleCode({
+			# Loop through core observations - CONVERTED TO BETA REGRESSION
+			for (i in 1:N.core) {
+				y[i, 1] ~ dbeta(shape1 = plot_mu[plot_num[i], timepoint[i]] * precision, 
+								 shape2 = (1 - plot_mu[plot_num[i], timepoint[i]]) * precision)
+			}
+
+			for (p in 1:N.plot) {
+				# Plot-level process model
+				for (t in plot_start[p]) {
+					Ex[p, t] ~ dunif(0.0001,.9999)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
 				}
 				
 				for (t in plot_index[p]:N.date) {
@@ -179,52 +328,85 @@ run_scenarios_fixed <- function(j, chain_no) {
 						beta[7] * sin_mo[t] +
 						beta[8] * cos_mo[t] +
 						intercept
-					plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
 				}
 			}
 			
-			# Hierarchical priors for site effects - better mixing
-			site_effect_sd ~ dgamma(2, 4)  # Prior on site effect standard deviation
+			# STANDARDIZED PRIORS - Consistent across all models
+			site_effect_sd ~ dgamma(2, 6)  # Standardized: moderate prior
 			for (k in 1:N.site) {
-				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Hierarchical normal priors
+				site_effect[k] ~ T(dnorm(0, sd = site_effect_sd), -5, 5)  # Truncated normal priors
 			}
 			
-			# Parameter-specific priors for better convergence
-			# core_sd: Use more appropriate prior for scale parameter
-			core_sd ~ dgamma(1, 10)  # Less informative, allows more exploration
+			precision ~ dgamma(2, 0.1)  # Standardized: moderate precision prior
+			intercept ~ dnorm(-2, sd = 0.8)  # Standardized: normal prior, moderate variance
+			rho ~ dbeta(3, 3)  # Standardized: informative beta prior
 			
-			# sigma: Process noise - moderate prior
-			sigma ~ dgamma(2, 15)    # Tighter gamma prior
-			
-			# sig: Site effect scale - moderate prior  
-			sig ~ dgamma(2, 8)       # Tighter gamma prior
-			
-			# intercept: Use more robust prior with better centering
-			intercept ~ dt(-2, 1.0, df = 3)  # Centered around expected value, wider variance
-			
-			# rho: Use more appropriate bounded prior with better mixing
-			rho ~ dbeta(1.5, 1.5)    # Less informative, allows more exploration
-			
-			# Simple independent normal priors for beta parameters
-			# Use moderate variance for ecological effects
 			for (b in 1:8) {
-				beta[b] ~ dnorm(0, sd = 0.3)  # Independent normal priors
+				beta[b] ~ dnorm(0, sd = 0.3)  # Standardized: moderate beta prior
 			}
 		})
-	} else if (model_name == "env_cov") {
+	} else if (model_name == "env_cov" && use_legacy_covariate) {
 		modelCode <- nimble::nimbleCode({
-			# Loop through core observations
+			# Loop through core observations - CONVERTED TO BETA REGRESSION
 			for (i in 1:N.core) {
-				y[i, 1] ~ T(dnorm(mean = plot_mu[plot_num[i], timepoint[i]], sd = core_sd), 0, 1)
+				y[i, 1] ~ dbeta(shape1 = plot_mu[plot_num[i], timepoint[i]] * precision, 
+								 shape2 = (1 - plot_mu[plot_num[i], timepoint[i]]) * precision)
 			}
-			
+
 			for (p in 1:N.plot) {
 				# Plot-level process model
 				for (t in plot_start[p]) {
 					Ex[p, t] ~ dunif(0.0001,.9999)
-					plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
 				}
-				
+
+				for (t in plot_index[p]:N.date) {
+					# Dynamic linear model with environmental predictors only (no seasonal) + legacy covariate
+					logit(Ex[p, t]) <- rho * logit(plot_mu[p, t - 1]) +
+						site_effect[plot_site_num[p]] +
+						beta[1] * temp[plot_site_num[p], t] +
+						beta[2] * mois[plot_site_num[p], t] +
+						beta[3] * pH[p, plot_start[p]] +
+						beta[4] * pC[p, plot_start[p]] +
+						beta[5] * relEM[p, t] +
+						beta[6] * LAI[plot_site_num[p], t] +
+						legacy_effect * legacy[t] +  # LEGACY COVARIATE
+						intercept
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+			}
+
+			# STANDARDIZED PRIORS - Consistent across all models
+			site_effect_sd ~ dgamma(2, 6)  # Standardized: moderate prior
+			for (k in 1:N.site) {
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Hierarchical normal priors
+			}
+
+			precision ~ dgamma(2, 0.1)  # Standardized: moderate precision prior
+			intercept ~ dnorm(-2, sd = 0.8)  # Standardized: normal prior, moderate variance
+			rho ~ dbeta(3, 3)  # Standardized: informative beta prior
+			legacy_effect ~ dnorm(0, sd = 0.2)  # Standardized: moderate legacy prior
+
+			for (b in 1:6) {
+				beta[b] ~ dnorm(0, sd = 0.3)  # Standardized: moderate beta prior
+			}
+		})
+	} else if (model_name == "env_cov" && !use_legacy_covariate) {
+		modelCode <- nimble::nimbleCode({
+			# Loop through core observations - CONVERTED TO BETA REGRESSION
+			for (i in 1:N.core) {
+				y[i, 1] ~ dbeta(shape1 = plot_mu[plot_num[i], timepoint[i]] * precision, 
+								 shape2 = (1 - plot_mu[plot_num[i], timepoint[i]]) * precision)
+			}
+
+			for (p in 1:N.plot) {
+				# Plot-level process model
+				for (t in plot_start[p]) {
+					Ex[p, t] ~ dunif(0.0001,.9999)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+
 				for (t in plot_index[p]:N.date) {
 					# Dynamic linear model with environmental predictors only (no seasonal)
 					logit(Ex[p, t]) <- rho * logit(plot_mu[p, t - 1]) +
@@ -236,79 +418,56 @@ run_scenarios_fixed <- function(j, chain_no) {
 						beta[5] * relEM[p, t] +
 						beta[6] * LAI[plot_site_num[p], t] +
 						intercept
-					plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
 				}
 			}
-			
-			# Hierarchical priors for site effects - better mixing
-			site_effect_sd ~ dgamma(2, 4)  # Prior on site effect standard deviation
+
+			# STANDARDIZED PRIORS - Consistent across all models
+			site_effect_sd ~ dgamma(2, 6)  # Standardized: moderate prior
 			for (k in 1:N.site) {
 				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Hierarchical normal priors
 			}
-			
-			# Parameter-specific priors for better convergence
-			# core_sd: Use more appropriate prior for scale parameter
-			core_sd ~ dgamma(1, 10)  # Less informative, allows more exploration
-			
-			# sigma: Process noise - moderate prior
-			sigma ~ dgamma(2, 15)    # Tighter gamma prior
-			
-			# sig: Site effect scale - moderate prior  
-			sig ~ dgamma(2, 8)       # Tighter gamma prior
-			
-			# intercept: Use more robust prior with better centering
-			intercept ~ dt(-2, 1.0, df = 3)  # Centered around expected value, wider variance
-			
-			# rho: Use more appropriate bounded prior with better mixing
-			rho ~ dbeta(1.5, 1.5)    # Less informative, allows more exploration
-			# Simple independent normal priors for beta parameters
-			# Use moderate variance for ecological effects
+
+			precision ~ dgamma(2, 0.1)  # Standardized: moderate precision prior
+			intercept ~ dnorm(-2, sd = 0.8)  # Standardized: normal prior, moderate variance
+			rho ~ dbeta(3, 3)  # Standardized: informative beta prior
+
 			for (b in 1:6) {
-				beta[b] ~ dnorm(0, sd = 0.3)  # Independent normal priors
+				beta[b] ~ dnorm(0, sd = 0.3)  # Standardized: moderate beta prior
 			}
 		})
 	} else {
-		# Default to cycl_only model
+		# Default to cycl_only model without legacy
 		modelCode <- nimble::nimbleCode({
 			for (i in 1:N.core) {
-				y[i, 1] ~ T(dnorm(mean = plot_mu[plot_num[i], timepoint[i]], sd = core_sd), 0, 1)
+				y[i, 1] ~ dbeta(shape1 = plot_mu[plot_num[i], timepoint[i]] * precision, 
+								 shape2 = (1 - plot_mu[plot_num[i], timepoint[i]]) * precision)
 			}
 			for (p in 1:N.plot) {
 				for (t in plot_start[p]) {
-					Ex[p, t] ~ dunif(0.0001,.9999)
-					plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
+					Ex[p, t] ~ dunif(0.0001, 0.9999)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
 				}
 				for (t in plot_index[p]:N.date) {
 					logit(Ex[p, t]) <- rho * logit(plot_mu[p, t - 1]) +
 						beta[1] * sin_mo[t] + beta[2] * cos_mo[t] +
 						site_effect[plot_site_num[p]] + intercept
-					plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
 				}
 			}
-			# Hierarchical priors for site effects - better mixing
-			site_effect_sd ~ dgamma(2, 4)  # Prior on site effect standard deviation
+			
+			# STANDARDIZED PRIORS - Consistent across all models
+			site_effect_sd ~ dgamma(2, 6)  # Standardized: moderate prior
 			for (k in 1:N.site) { 
-				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Hierarchical normal priors
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)
 			}
-			# Parameter-specific priors for better convergence
-			# core_sd: Use more appropriate prior for scale parameter
-			core_sd ~ dgamma(1, 10)  # Less informative, allows more exploration
 			
-			# sigma: Process noise - moderate prior
-			sigma ~ dgamma(2, 15)    # Tighter gamma prior
+			precision ~ dgamma(2, 0.1)  # Standardized: moderate precision prior
+			intercept ~ dnorm(-2, sd = 0.8)  # Standardized: normal prior, moderate variance
+			rho ~ dbeta(3, 3)  # Standardized: informative beta prior
 			
-			# sig: Site effect scale - moderate prior  
-			sig ~ dgamma(2, 8)       # Tighter gamma prior
-			
-			# intercept: Use more robust prior with better centering
-			intercept ~ dt(-2, 1.0, df = 3)  # Centered around expected value, wider variance
-			
-			# rho: Use more appropriate bounded prior with better mixing
-			rho ~ dbeta(1.5, 1.5)    # Less informative, allows more exploration
-			# Simple independent normal priors for beta parameters
-			# Use moderate variance for ecological effects
 			for (b in 1:2) {
-				beta[b] ~ dnorm(0, sd = 0.3)  # Independent normal priors
+				beta[b] ~ dnorm(0, sd = 0.3)  # Standardized: moderate beta prior
 			}
 		})
 	}
@@ -321,53 +480,22 @@ run_scenarios_fixed <- function(j, chain_no) {
 	y_mean <- mean(y_data, na.rm = TRUE)
 	y_sd <- sd(y_data, na.rm = TRUE)
 	
-	# Advanced initialization strategy for better convergence
-	# Use different starting points for each chain to explore different regions
+	# Simplified initialization strategy - spread chains out properly
 	set.seed(chain_no * 1000 + j * 100)  # Different seed per chain/model
 	
-	# Balanced spectrum-based initialization exploring positive and negative regions
-	if (chain_no == 1) {
-		# Chain 1: Conservative initialization (near zero, both signs)
-		inits$beta <- rnorm(constants$N.beta, 0, 0.1)
-	} else if (chain_no == 2) {
-		# Chain 2: Positive-focused initialization
-		inits$beta <- abs(rnorm(constants$N.beta, 0.2, 0.15))  # Force positive
-	} else if (chain_no == 3) {
-		# Chain 3: Negative-focused initialization  
-		inits$beta <- -abs(rnorm(constants$N.beta, 0.2, 0.15))  # Force negative
-	} else {
-		# Chain 4: Wide exploration (both signs, larger range)
-		inits$beta <- rnorm(constants$N.beta, 0, 0.4)
-	}
+	# Initialize parameters with proper spacing between chains
+	inits$rho <- runif(1, 0.2, 0.8)  # Spread chains out more
+	inits$intercept <- rnorm(1, logit(y_mean), 0.5)
+	inits$precision <- rgamma(1, 2, 0.1)
+	inits$beta <- rnorm(constants$N.beta, 0, 0.1)
+	
 	# Initialize hierarchical parameters
-	inits$site_effect_sd <- 0.5  # Start with moderate site effect variance
+	inits$site_effect_sd <- max(0.001, min(0.3, y_sd * 0.05))
 	
-	# Initialize problematic parameters with chain-specific strategies
-	if (chain_no == 1) {
-		# Chain 1: Conservative initialization
-		inits$rho <- 0.5  # Start at middle of range
-		inits$intercept <- logit(y_mean)  # Start near observed mean
-		inits$core_sd <- y_sd * 0.02  # Start with data-informed observation error
-	} else if (chain_no == 2) {
-		# Chain 2: Higher persistence, lower intercept
-		inits$rho <- 0.7  # Start higher for temporal persistence
-		inits$intercept <- logit(y_mean) - 0.5  # Start lower
-		inits$core_sd <- y_sd * 0.03  # Start with slightly higher error
-	} else if (chain_no == 3) {
-		# Chain 3: Lower persistence, higher intercept
-		inits$rho <- 0.3  # Start lower for temporal persistence
-		inits$intercept <- logit(y_mean) + 0.5  # Start higher
-		inits$core_sd <- y_sd * 0.01  # Start with lower error
-	} else {
-		# Chain 4: Wide exploration
-		inits$rho <- 0.1  # Start very low
-		inits$intercept <- logit(y_mean) + 1.0  # Start much higher
-		inits$core_sd <- y_sd * 0.05  # Start with higher error
+	# Initialize legacy effect if using legacy covariate
+	if (use_legacy_covariate) {
+		inits$legacy_effect <- rnorm(1, 0, 0.05)  # Start close to zero
 	}
-	
-	# Initialize other parameters consistently
-	inits$sigma <- y_sd * 0.1   # Start with data-informed process error
-	inits$sig <- y_sd * 0.05    # Start with data-informed site effect variance
 	
 	cat("Model built successfully\n")
 	
@@ -387,59 +515,79 @@ run_scenarios_fixed <- function(j, chain_no) {
 	
 	cat("Model compiled successfully\n")
 	
-	# Configure MCMC with advanced settings for better mixing
-	monitors <- c("beta","sigma","site_effect","site_effect_sd","sig","intercept","rho","core_sd")
+	# Configure MCMC with proper sampler management - all models now use precision parameter
+	monitors <- c("beta","precision","site_effect","site_effect_sd","intercept","rho")
+	
+	if (use_legacy_covariate) {
+		monitors <- c(monitors, "legacy_effect")
+	}
 	mcmcConf <- configureMCMC(cModel, monitors = monitors, useConjugacy = FALSE)
 	
-	# Add advanced samplers for better parameter space exploration
-	# Use block sampling for correlated parameters
-	if (constants$N.beta > 1) {
-		# Block sample beta parameters together for better mixing
-		mcmcConf$addSampler(target = paste0("beta[1:", constants$N.beta, "]"), type = "AF_slice")
+	# Remove default samplers before adding specialized ones
+	mcmcConf$removeSamplers(c("precision", "rho", "site_effect_sd", "intercept"))
+	
+	# Remove legacy_effect if using legacy covariate
+	if (use_legacy_covariate) {
+		mcmcConf$removeSamplers("legacy_effect")
 	}
 	
-	# Specialized samplers for problematic parameters
-	# core_sd: Use slice sampler for better scale parameter exploration
-	mcmcConf$addSampler(target = "core_sd", type = "slice")
-	cat("  Added slice sampler for core_sd\n")
+	# Remove beta samplers if they exist
+	if (constants$N.beta > 1) {
+		mcmcConf$removeSamplers(paste0("beta[1:", constants$N.beta, "]"))
+	} else {
+		mcmcConf$removeSamplers("beta[1]")
+	}
 	
-	# sigma: Process noise - slice sampler
-	mcmcConf$addSampler(target = "sigma", type = "slice")
-	cat("  Added slice sampler for sigma\n")
+	# Remove site effect samplers
+	if (constants$N.site > 1) {
+		mcmcConf$removeSamplers(paste0("site_effect[1:", constants$N.site, "]"))
+	} else {
+		mcmcConf$removeSamplers("site_effect[1]")
+	}
 	
-	# sig: Site effect scale - slice sampler
-	mcmcConf$addSampler(target = "sig", type = "slice")
-	cat("  Added slice sampler for sig\n")
+	# All models use precision parameter
+	mcmcConf$addSampler(target = "precision", type = "slice")
+	cat("  Added slice sampler for precision\n")
 	
-	# intercept: Use slice sampler for better location parameter exploration
+	# site_effect_sd: Site effect scale (all models)
+	mcmcConf$addSampler(target = "site_effect_sd", type = "slice")
+	cat("  Added slice sampler for site_effect_sd\n")
+	
+	# intercept: Use slice sampler for better location parameter exploration (all models)
 	mcmcConf$addSampler(target = "intercept", type = "slice")
 	cat("  Added slice sampler for intercept\n")
 	
-	# rho: Use specialized bounded sampler for temporal persistence
+	# rho: Use specialized bounded sampler for temporal persistence (all models)
 	mcmcConf$addSampler(target = "rho", type = "slice")
 	cat("  Added slice sampler for rho\n")
 	
-	# Specialized MCMC strategies for site effects
-	# Site effects often have poor mixing due to high dimensionality and correlations
+	# legacy_effect: Use slice sampler for better mixing of legacy parameter
+	if (use_legacy_covariate) {
+		mcmcConf$addSampler(target = "legacy_effect", type = "slice")
+		cat("  Added slice sampler for legacy_effect\n")
+	}
 	
-	# Strategy 1: Block sampling for correlated site effects
+	# Use EITHER block OR individual samplers for site effects, NOT BOTH
 	if (constants$N.site > 1) {
-		# Use block sampling to handle correlations between sites
+		# Use block sampling for correlated site effects
 		mcmcConf$addSampler(target = paste0("site_effect[1:", constants$N.site, "]"), type = "AF_slice")
 		cat("  Added block sampler for site_effect[1:", constants$N.site, "]\n")
+	} else {
+		# Individual sampler for single site
+		mcmcConf$addSampler(target = "site_effect[1]", type = "slice")
+		cat("  Added slice sampler for site_effect[1]\n")
 	}
 	
-	# Strategy 2: Individual site effect samplers for better mixing
-	# Add individual slice samplers for each site effect
-	for (i in 1:constants$N.site) {
-		mcmcConf$addSampler(target = paste0("site_effect[", i, "]"), type = "slice")
-		cat("  Added slice sampler for site_effect[", i, "]\n")
+	# Use block sampler for beta parameters when multiple exist, individual for single
+	if (constants$N.beta > 1) {
+		# Use block sampler for correlated beta parameters (more efficient)
+		mcmcConf$addSampler(target = paste0("beta[1:", constants$N.beta, "]"), type = "AF_slice")
+		cat("  Added block AF_slice sampler for beta[1:", constants$N.beta, "]\n")
+	} else {
+		# Individual sampler for single beta
+		mcmcConf$addSampler(target = "beta[1]", type = "slice")
+		cat("  Added slice sampler for beta[1]\n")
 	}
-	
-	# Strategy 3: Hierarchical structure for site effects
-	# Add a global site effect variance parameter
-	mcmcConf$addSampler(target = "site_effect_sd", type = "slice")
-	cat("  Added slice sampler for site_effect_sd\n")
 	
 	# Build and compile MCMC
 	myMCMC <- buildMCMC(mcmcConf)
@@ -447,42 +595,106 @@ run_scenarios_fixed <- function(j, chain_no) {
 	
 	cat("MCMC configured successfully\n")
 	
-	# Run MCMC with production-level iterations for convergence
-	burnin <- 2000  # Substantial burnin for complex posteriors
-	thin <- 1       # No thinning to preserve all samples
-	iter_per_chunk <- 5000  # Substantial iterations for complex mixing
-	init_iter <- 500  # Substantial initial iterations for adaptation
+	# STANDARDIZED: Run MCMC with convergence-based sampling until reasonable ESS is reached
+	burnin <- 500    # Proper burnin for convergence
+	thin <- 1        # No thinning to preserve all samples
+	iter_per_chunk <- 1000   # Iterations per convergence check
+	init_iter <- 200  # Initial iterations for adaptation
+	min_eff_size_perchain <- 10  # Minimum ESS per chain for convergence
+	max_loops <- 50  # Maximum additional sampling loops
+	max_save_size <- 60000  # Maximum samples to keep in memory
+	min_total_iterations <- 2000  # Minimum total iterations regardless of convergence
 	
-	cat("Running production MCMC: burnin =", burnin, "iter_per_chunk =", iter_per_chunk, "\n")
+	cat("Running production MCMC with convergence-based sampling\n")
+	cat("  Initial iterations:", init_iter, "burnin:", burnin, "\n")
+	cat("  Iterations per chunk:", iter_per_chunk, "max loops:", max_loops, "\n")
+	cat("  Target ESS per chain:", min_eff_size_perchain, "\n")
+	cat("  Minimum total iterations:", min_total_iterations, "\n")
 	
 	# Run initial iterations with progress reporting and adaptation
 	cat("  Running initial iterations (", init_iter, " iterations) for adaptation...\n")
-	compiled$run(niter = init_iter, thin = 1, nburnin = 0)
+	compiled$run(niter = init_iter, thin = thin, nburnin = 0)
 	cat("  Initial iterations completed\n")
 	
-	# Check initial convergence and adapt if needed
+	# Get initial samples and check convergence
 	initial_samples <- as.matrix(compiled$mvSamples)
 	cat("  Initial samples collected, checking convergence...\n")
 	
-	# Run main iterations with progress reporting
-	cat("  Running main iterations (", iter_per_chunk, " iterations, thin =", thin, ")...\n")
-	compiled$run(niter = iter_per_chunk, thin = thin, nburnin = 0)
-	cat("  Main iterations completed\n")
+	# Check if we need to continue sampling for convergence
+	# Try to check convergence, with fallback if it fails
+	tryCatch({
+		continue <- check_continue(initial_samples, min_eff_size = min_eff_size_perchain)
+	}, error = function(e) {
+		cat("  WARNING: Convergence check failed, defaulting to continue sampling\n")
+		cat("  Error:", e$message, "\n")
+		continue <- TRUE  # Default to continue if check fails
+	})
+	loop_counter <- 0
+	total_iterations <- init_iter
 	
-	# Get samples
-	samples <- as.matrix(compiled$mvSamples)
+	# Store all samples as we go
+	all_samples <- initial_samples
+	
+	while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
+		if (continue) {
+			cat("  Effective sample size too low; running for another", iter_per_chunk, "iterations\n")
+		} else {
+			cat("  Minimum iterations not reached; running for another", iter_per_chunk, "iterations\n")
+		}
+		cat("  Loop", loop_counter + 1, "of", max_loops, "\n")
+		
+		# Continue sampling without resetting
+		compiled$run(niter = iter_per_chunk, thin = thin, nburnin = 0)
+		total_iterations <- total_iterations + iter_per_chunk
+		
+		# Get updated samples and accumulate them
+		current_samples <- as.matrix(compiled$mvSamples)
+		all_samples <- rbind(all_samples, current_samples)
+		cat("  Updated samples collected:", nrow(current_samples), "new samples,", nrow(all_samples), "total accumulated\n")
+		
+		# Check if we need to continue
+		tryCatch({
+			continue <- check_continue(all_samples, min_eff_size = min_eff_size_perchain)
+		}, error = function(e) {
+			cat("  WARNING: Convergence check failed in loop, defaulting to continue sampling\n")
+			cat("  Error:", e$message, "\n")
+			continue <- TRUE  # Default to continue if check fails
+		})
+		loop_counter <- loop_counter + 1
+		
+		cat("  Total iterations so far:", total_iterations, "\n")
+		cat("  Convergence check result:", ifelse(continue, "CONTINUE", "CONVERGED"), "\n")
+	}
+	
+	if (loop_counter >= max_loops) {
+		cat("  WARNING: Exceeded maximum loops (", max_loops, "). Stopping sampling.\n")
+	} else if (total_iterations >= min_total_iterations) {
+		if (continue) {
+			cat("  WARNING: Minimum iterations reached but convergence not achieved\n")
+		} else {
+			cat("  SUCCESS: Convergence reached after", total_iterations, "total iterations\n")
+		}
+	} else {
+		cat("  WARNING: Stopped before minimum iterations due to max loops\n")
+	}
+	
+	# Get final samples (use accumulated samples)
+	samples <- all_samples
 	
 	cat("MCMC completed successfully\n")
-	cat("Sample dimensions:", dim(samples), "\n")
+	cat("Final sample dimensions:", dim(samples), "\n")
+	cat("Total iterations run:", total_iterations, "\n")
+	cat("Convergence loops:", loop_counter, "\n")
 	
 	# Create output directories
 	model_output_dir <- here("data", "model_outputs", "logit_beta_regression", model_name)
 	dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
 	
-	# Create model_id for consistent naming
-	model_id <- paste(model_name, species, min.date, max.date, sep = "_")
+	# Create model_id for consistent naming with legacy covariate indicator
+	legacy_indicator <- ifelse(use_legacy_covariate, "with_legacy_covariate", "without_legacy_covariate")
+	model_id <- paste(model_name, species, min.date, max.date, legacy_indicator, sep = "_")
 	
-	# Save MCMC samples with consistent naming
+	# Save MCMC samples
 	samples_file <- file.path(model_output_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
 	
 	# Create the complete chain structure with metadata
@@ -490,11 +702,19 @@ run_scenarios_fixed <- function(j, chain_no) {
 		samples = samples,
 		metadata = list(
 			rank.name = rank.name,
-			niter = iter_per_chunk,
+			species = species,
+			model_name = model_name,
+			model_id = model_id,
+			use_legacy_covariate = use_legacy_covariate,
+			scenario = scenario,
+			min.date = min.date,
+			max.date = max.date,
+			niter = total_iterations,
 			nburnin = burnin,
 			thin = thin,
 			model_data = model.dat,
-			sample_values = data.frame()  # Empty for now, can be populated later if needed
+			nimble_code = modelCode,  # Save the actual Nimble code used
+			model_structure = "standardized_beta_regression_with_consistent_priors"  # Model structure identifier
 		)
 	)
 	
@@ -502,15 +722,11 @@ run_scenarios_fixed <- function(j, chain_no) {
 	
 	cat("Saved MCMC samples to:", samples_file, "\n")
 	cat("Sample dimensions:", dim(samples), "\n")
-	cat("=== Model fitting completed successfully ===\n")
-	cat("Improvements applied:\n")
-	cat("  - Simple independent normal priors (sd = 0.3)\n")
-	cat("  - Hierarchical site effect priors with site_effect_sd\n")
-	cat("  - Parameter-specific priors for rho, intercept, and core_sd\n")
-	cat("  - Advanced MCMC samplers (AF_slice, slice, block sampling)\n")
-	cat("  - Balanced initialization exploring positive/negative regions per chain\n")
-	cat("  - Chain-specific initialization for problematic parameters\n")
-	cat("  - Specialized site effect sampling strategies\n")
+	cat("=== Model fitting completed ===\n")
+	cat("  - Consistent priors across all 6 model types\n")
+	cat("  - Beta regression with precision parameter\n")
+	cat("  - Block samplers for efficient parameter sampling\n")
+	cat("  - CONVERGENCE-BASED: Adaptive sampling until reasonable ESS reached\n")
 	
 	return(list(status = "SUCCESS", samples = samples, file = samples_file))
 }
@@ -520,16 +736,18 @@ cat("Testing with", nrow(params), "models\n")
 cat("Models to test:\n")
 print(params[, c("rank.name", "species", "model_name", "model_id")])
 
-# Test with single ectomycorrhizal model to focus on convergence
-test_models <- 6  # Test all 6 models for comprehensive analysis
-cat("\nTesting all 6 models for comprehensive convergence analysis\n")
+# Test with all available models across all ranks
+test_models <- nrow(params)  # Test all available models across all ranks
+cat("\nTesting", test_models, "models across all ranks to verify convergence fixes\n")
 
 # Set up parallel cluster for Nimble
 library(parallel)
 library(doParallel)
 
 # Create cluster with appropriate number of cores
-ncores <- min(nchains, detectCores() - 1)  # Leave one core free
+# Ensure we have at least 2 models running simultaneously
+# Each model needs 4 chains, so we want at least 8 cores total
+ncores <- max(8, min(detectCores() - 1, test_models * nchains))  # At least 8 cores, leave one free
 cl <- makeCluster(ncores, type = "PSOCK")
 
 # Register the cluster
@@ -546,19 +764,25 @@ all_ranks = c(bacteria, fungi)
 cat("Data loaded successfully\n")
 
 # Export the function and data to workers
-clusterExport(cl, c("run_scenarios_fixed", "params", "all_ranks"))
+clusterExport(cl, c("run_scenarios_fixed", "params", "all_ranks", "check_continue"))
 
 # Run in parallel for faster execution
-cat("Starting parallel execution for model", k, "using", ncores, "cores\n")
-cat("Expected runtime: ~15-20 minutes for 6 models with 2000 samples each\n")
+	cat("Starting parallel execution for", test_models, "models with 4 chains each using", ncores, "cores\n")
+	cat("Expected runtime: Variable (convergence-based sampling)\n")
+	cat("  - Models to test:", test_models, "across", length(unique(params$rank.name)), "ranks\n")
+	cat("  - Chains per model:", nchains, "(total", test_models * nchains, "parallel tasks)\n")
+	cat("  - Initial iterations: ~", round(test_models * 8 / 6, 1), "minutes\n")
+	cat("  - Additional iterations: Variable based on convergence\n")
+	cat("  - Target: ESS >= 10 per parameter\n")
 start_time <- Sys.time()
 
-# Run ALL models and chains in parallel simultaneously
-cat("Running ALL models and chains in parallel simultaneously...\n")
+# Run ALL models with 4 chains each in parallel simultaneously
+cat("Running", test_models, "models with 4 chains each in parallel simultaneously...\n")
+cat("This ensures proper convergence assessment with multiple chains per model\n")
 
 # Create a combined task list: (model_idx, chain_no) pairs
 all_tasks <- expand.grid(model_idx = 1:test_models, chain_no = 1:nchains)
-cat("Total parallel tasks:", nrow(all_tasks), "\n")
+cat("Total parallel tasks:", nrow(all_tasks), "(", test_models, "models ×", nchains, "chains)\n")
 
 # Run everything in parallel
 cat("Starting parallel execution at:", format(Sys.time()), "\n")
@@ -642,5 +866,3 @@ for (chain_no in 1:nchains) {
     unlink(status_file)
   }
 }
-
-
