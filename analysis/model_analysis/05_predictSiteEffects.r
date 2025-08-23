@@ -15,7 +15,7 @@ df_predictors$latitude_scaled=scale(df_predictors$latitude)
 site_effects_all <- readRDS(here("data/summary/site_effects.rds")) %>% filter(nchar(siteID) > 3) #remove numeric siteIDs
 
 site_effects_calibration <- site_effects_all %>%
-	filter(time_period == "2015-11_2018-01") %>%
+	filter(time_period %in% c("2015-11_2018-01", "20130601_20180101")) %>%
 	mutate(taxon = ifelse(taxon=="other", paste0(taxon, "_", rank), taxon))
 
 # Observed site effects for explaining

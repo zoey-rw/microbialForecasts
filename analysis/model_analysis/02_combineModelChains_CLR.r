@@ -8,19 +8,16 @@ model_name <- "cycl_only"
 # params_in = read.csv(here("data/clean/model_input_df.csv"))
 # model_id_list = unique(params_in$model_id)
 
-# Use our actual CLR model IDs for 2013-2015 phenology analysis
-model_id_list = c(
-  "cycl_only_acidobacteriota_20130601_20151101",
-  "cycl_only_actinobacteriota_20130601_20151101", 
-  "cycl_only_bacteroidota_20130601_20151101",
-  "cycl_only_chloroflexi_20130601_20151101",
-  "cycl_only_cyanobacteria_20130601_20151101",
-  "cycl_only_firmicutes_20130601_20151101",
-  "cycl_only_planctomycetota_20130601_20151101",
-  "cycl_only_ascomycota_20130601_20151101",
-  "cycl_only_basidiomycota_20130601_20151101",
-  "cycl_only_mortierellomycota_20130601_20151101"
-)
+# Use our expanded CLR model IDs from CLR_regression_expanded
+# Get all model IDs from the expanded directory by looking at individual chain files
+clr_output_dir <- here("data/model_outputs/CLR_regression_expanded")
+clr_chain_files <- list.files(clr_output_dir, pattern = "samples_CLR_expanded_.*_chain[0-9]+\\.rds$", 
+                              recursive = TRUE, full.names = FALSE)
+# Extract model IDs from chain file names (remove _chain[0-9] suffix)
+model_id_list <- unique(gsub("samples_CLR_expanded_(.*)_chain[0-9]+\\.rds", "\\1", clr_chain_files))
+model_id_list <- gsub(".*/", "", model_id_list)  # Remove directory path
+
+cat("Found", length(model_id_list), "CLR models in CLR_regression_expanded\n")
 
 cat("Processing CLR phenology models for 2013-2015 data\n")
 cat("Model type:", model_name, "\n")
@@ -39,7 +36,7 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 	delete_samples_files = F
 	
 	#for (model_name in c("all_covariates", "cycl_only")) {
-	file.list <- list.files(path = here("data/model_outputs/CLR_regression_final/"),
+	file.list <- list.files(path = here("data/model_outputs/CLR_regression_expanded/"),
 													pattern = "_chain",
 													recursive = T,
 													full.names = T)
@@ -75,10 +72,63 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 		file.list[grepl(model_id, file.list, fixed = T)]
 	
 	if (length(chain_paths) == 0)
-		return(message("Skipping ", chain_paths, "; no chains"))
+		return(message("Skipping ", model_id, "; no chains"))
 	if (length(chain_paths) == 1) {
-		return(message("Skipping ", chain_paths, "; only one chain"))
-		#next()
+		cat("Single chain model, copying to combined samples file...\n")
+		# For single chain models, just copy the chain file to the samples file
+		single_chain_path <- chain_paths[[1]]
+		combined_samples_path <- gsub("_chain[1234567]", "", single_chain_path)
+		
+		if (file.exists(combined_samples_path)) {
+			cat("Combined samples file already exists, skipping...\n")
+			return(message("Skipping ", model_id, "; combined samples already exist"))
+		}
+		
+		cat("Copying single chain to combined samples file...\n")
+		chain_data <- readRDS(single_chain_path)
+		
+		# Create the same output structure as multi-chain models
+		if (is.list(chain_data) && "samples" %in% names(chain_data)) {
+			# New format with metadata
+			out <- list(
+				samples = list(mcmc(chain_data$samples, start = 1, end = nrow(chain_data$samples), thin = 1)),
+				samples2 = list(mcmc(chain_data$samples2, start = 1, end = nrow(chain_data$samples2), thin = 1)),
+				metadata = chain_data$metadata
+			)
+		} else {
+			# Old format (raw matrix)
+			out <- list(
+				samples = list(mcmc(chain_data, start = 1, end = nrow(chain_data), thin = 1)),
+				samples2 = list(mcmc(chain_data, start = 1, end = nrow(chain_data), thin = 1)),
+				metadata = list(model_id = model_id)
+			)
+		}
+		
+		# Create summaries for single chain
+		cat("Creating parameter summaries for single chain...\n")
+		param_summary <- summary(out$samples[[1]])
+		cat("Creating plot summaries for single chain...\n")
+		plot_summary <- summary(out$samples2[[1]])
+		cat("Calculating effective sample sizes...\n")
+		es <- effectiveSize(out$samples[[1]])
+		
+		# For single chain, Gelman diagnostics are not applicable
+		cat("Single chain, setting Gelman diagnostics to NA...\n")
+		gelman_out <- cbind(`Point est.` = NA, `Upper C.I.` = NA, es)
+		
+		# Combine and save output
+		out_summary <- list(
+			samples = out$samples,
+			param_summary = param_summary,
+			plot_summary = plot_summary,
+			metadata = out$metadata,
+			gelman = gelman_out
+		)
+		
+		cat("Saving combined samples file...\n")
+		saveRDS(out_summary, combined_samples_path)
+		cat("Single chain model processed successfully!\n")
+		return(message("Completed single chain model: ", model_id))
 	}
 	savepath <- gsub("_chain[1234567]", "", chain_paths[[1]])
 	
