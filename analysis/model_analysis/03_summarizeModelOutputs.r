@@ -24,7 +24,7 @@ registerDoParallel(cl)
 
 #Run summary function for multiple groups, in parallel
 file_summaries = foreach(f=file.list, .errorhandling = "pass") %dopar% {
-	source("../../source.R")
+	source("/Users/zoeywerbin/Documents/microbialForecasts/source.R")
 	# Note: summarizeBetaRegModels.r should be loaded via source.R
 	out <- summarize_beta_model(f, save_summary=T, drop_other = T, overwrite = TRUE)
 	return(out)

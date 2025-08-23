@@ -207,6 +207,29 @@ combine_chains_simple_new <- function(chain_paths,
 	message("Found metadata in first chain file, preserving it")
 	metadata <- first_chain$metadata
 	
+	# Verify that all important metadata components are preserved
+	metadata_components <- names(metadata)
+	message("Metadata components found: ", paste(metadata_components, collapse = ", "))
+	
+	# Check for critical metadata components
+	critical_components <- c("model_name", "use_legacy_covariate")
+	for (comp in critical_components) {
+		if (comp %in% metadata_components) {
+			message("✅ ", comp, " preserved: ", metadata[[comp]])
+		} else {
+			message("⚠️  ", comp, " not found in metadata")
+		}
+	}
+	
+	# Check for Nimble model code specifically
+	if ("nimble_code" %in% metadata_components) {
+		message("✅ Nimble model code preserved (length: ", length(metadata$nimble_code), ")")
+	} else if ("model_code" %in% metadata_components) {
+		message("✅ Model code preserved (length: ", length(metadata$model_code), ")")
+	} else {
+		message("⚠️  Model code component not found in metadata")
+	}
+	
 	out <- list(samples = as.mcmc.list(samples),
 							samples2 = as.mcmc.list(samples),  # Use same samples for samples2
 							metadata = metadata)
