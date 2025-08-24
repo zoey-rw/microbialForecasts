@@ -247,9 +247,23 @@ names(metric.labs) <- c("RMSE.norm", "mean_crps")
 
 
 	pivot_metrics = function(df) {
-		df %>% pivot_longer(cols = c(RMSE, BIAS, MAE, CRPS,CRPS_truncated, RSQ, RSQ.1,
+		# First pivot the metrics
+		result <- df %>% pivot_longer(cols = c(RMSE, BIAS, MAE, CRPS,CRPS_truncated, RSQ, RSQ.1,
 																 RMSE.norm, residual_variance, predictive_variance, total_PL),
 												names_to = "metric", values_to = "score")
+		
+		# Preserve mean_crps_sample and other important columns if they exist
+		preserve_cols <- c("model_id", "fcast_type", "pretty_group", "model_name", "pretty_name", "rank_name", "taxon", "site_prediction", "mean_crps_sample")
+		existing_preserve_cols <- preserve_cols[preserve_cols %in% colnames(df)]
+		
+		if(length(existing_preserve_cols) > 0) {
+			result <- result %>% left_join(
+				df %>% select(all_of(existing_preserve_cols)),
+				by = existing_preserve_cols
+			)
+		}
+		
+		return(result)
 	}
 
 

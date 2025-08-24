@@ -57,7 +57,14 @@ fcast_logit_beta <- function(plotID,
 	#Nmc_large <- 20000
 	# Remove verbose print statement
 	# print(Nmc_large)
-	row_samples <- sample.int(Nmc_large,Nmc)
+	# Handle case where we want more samples than available
+	if (Nmc > Nmc_large) {
+		# If we want more samples than available, sample with replacement
+		row_samples <- sample.int(Nmc_large, Nmc, replace = TRUE)
+	} else {
+		# If we have enough samples, sample without replacement
+		row_samples <- sample.int(Nmc_large, Nmc, replace = FALSE)
+	}
 
 	date_key <- model.inputs$truth.plot.long %>%
 		select(dateID, date_num) %>% distinct()
@@ -80,164 +87,147 @@ fcast_logit_beta <- function(plotID,
 	if (is.null(covar)) {
 		return(NULL)
 	}
+
 	plot_obs <- model.inputs$truth.plot.long %>%
 		filter(plotID==!!plotID) %>%
-		select(-c(plot_num,site_num))# %>% rename(species = name)
-
+		select(-c(plot_num,site_num))
 
 	taxon_names <- model.inputs$truth.plot.long %>% select(species) %>% distinct() %>% unlist()
+	taxon_name <- taxon_names[1]  # Use first taxon name for output
 
-		taxon_name <- taxon_names[1]
-		# Remove verbose taxon printing - only needed once per function call
-		# if (plotID == substr(plotID, 1, 4)) {
-		# 	print(paste0("Forecasting for taxon: ", taxon_name))
-		# }
+	# Check whether there's already an estimated site effect. If not, we'll sample!
+	is_new_site <- ifelse(siteID %in% truth.plot.long$siteID, FALSE, TRUE)
 
-		# Check whether there's already an estimated site effect. If not, we'll sample!
-		is_new_site <- ifelse(siteID %in% truth.plot.long$siteID, FALSE, TRUE)
-
-		if (is_new_site) {
-
-			if (!is.null(predict_site_effects)){
-				# Remove verbose site effect messages
-				# if (plotID == substr(plotID, 1, 4)) {
-				# 	message("Using predicted site effect")
-				# }
-
-				pred_site_taxon = predict_site_effects %>%
-					filter(siteID==!!siteID & model_id ==!!model_id)
-				new_site_effect <- data.frame(rnorm(Nmc, pred_site_taxon$fit, pred_site_taxon$se.fit))
-				#new_site_effect <- data.frame(runif(Nmc, pred_site_taxon$ci_lo, pred_site_taxon$ci_hi))
-				site_effect <- unlist(new_site_effect)
-
-			} else {
-				# Remove verbose site effect messages
-				# if (plotID == substr(plotID, 1, 4)) {
-				# 	message("Sampling random site effect")
-				# }
-				# Sample from site effect variance
-				site_effect_sd <- param_samples[row_samples,] %>%
-					select(grep("sig$", colnames(.))) %>% unlist() %>% mean()
-				new_site_effect <- data.frame(rnorm(Nmc, 0, site_effect_sd))
-				site_effect <- unlist(new_site_effect)
-
+	if (is_new_site) {
+		# For new sites, we need to predict site effects
+		if (!is.null(predict_site_effects)) {
+			# Use predicted site effects if available
+			site_effect <- predict_site_effects$fit
+			# Ensure we have the right number of samples
+			if (length(site_effect) == 1) {
+				site_effect <- rep(site_effect, Nmc)
+			} else if (length(site_effect) != Nmc) {
+				# Sample from the available predictions
+				site_effect <- sample(site_effect, Nmc, replace = TRUE)
 			}
-
-			# # Take initial condition & start forecast from mean observed value if possible
-			# plot_start_date <- model.inputs$plot_index[plotID]
-
-			# No! For new sites, begin forecast the timepoint before the first observation, still with random ic
-			plot_start_date <- model.inputs$plot_start[plotID] - 1
-
 		} else {
+			# Sample from site effect variance
+			site_effect_sd <- param_samples[row_samples,] %>% select(grep("site_effect_sd", colnames(.))) %>% unlist()
+			site_effect_sd <- mean(site_effect_sd, na.rm = TRUE)
+			site_effect <- rnorm(Nmc, 0, site_effect_sd)
+		}
 
-			# Remove verbose site effect messages
-			# if (plotID == substr(plotID, 1, 4)) {
-			# 	message("Using known site effect")
-			# }
+		# Take initial condition & start forecast from mean observed value if possible
+		plot_start_date <- model.inputs$plot_start[plotID]
+		if (is.na(plot_start_date)) {
+			plot_start_date <- 1  # Default to first timepoint
+		}
 
-			# Check if this site exists in the original model data
-			if (!siteID %in% truth.plot.long$siteID) {
-				# This site wasn't in the original model training data
-				# We need to treat it as a new site for site effects
-				message("Site ", siteID, " not in original model data - treating as new site for site effects")
-				
-				# Sample from site effect variance like a new site
-				site_effect_sd <- param_samples[row_samples,] %>%
-					select(grep("sig$", colnames(.))) %>% unlist() %>% mean()
-				new_site_effect <- data.frame(rnorm(Nmc, 0, site_effect_sd))
-				site_effect <- unlist(new_site_effect)
-				
-				# Set plot_start_date for new sites
-				plot_start_date <- model.inputs$plot_start[plotID] - 1
-				
+	} else {
+		site_num <- unique(truth.plot.long[truth.plot.long$siteID==siteID,]$site_num)
+		site_param <- paste0("site_effect[", site_num, "]")
+		site_effect <- 	param_samples[row_samples,] %>% select(!!site_param) %>% unlist()
+
+		# add model estimates if possible
+		plot_est <- plot_summary %>%
+			filter(plotID == !!plotID) %>%
+			select(-c(plot_num, site_num, dateID, dates, truth, rank))
+		plot_obs <- left_join(plot_obs, plot_est, by = intersect(colnames(plot_obs), colnames(plot_est)))
+
+		# Take initial condition & start forecast from last observed value if possible
+		last_obs <- plot_est %>% filter(timepoint==max(timepoint))
+		plot_start_date <- last_obs$timepoint
+		ic <- last_obs$`50%`
+	}
+
+	if (length(site_effect)==0) {
+		message("No site effect found!")
+		return(NULL)  # Skip this plot entirely
+	}
+	
+	# Check for valid site effect values
+	if (any(is.na(site_effect))) {
+		message("Warning: NA values in site effects for plot ", plotID, " - skipping")
+		return(NULL)
+	}
+
+	### Get other parameter estimates
+	### Rho
+	rho <- param_samples[row_samples,] %>% select(grep("rho", colnames(.))) %>% unlist()
+	### Betas
+	betas <- param_samples[row_samples,] %>% select(grep("beta", colnames(.)))
+	### Intercept
+	intercept <- param_samples[row_samples,] %>% select(grep("intercept", colnames(.))) %>% unlist()
+	### Process error (precision parameter)
+	precision <- param_samples[row_samples,] %>% select(grep("precision", colnames(.))) %>% unlist()
+	### Legacy effect (if using legacy covariate)
+	legacy_effect <- param_samples[row_samples,] %>% select(grep("legacy_effect", colnames(.))) %>% unlist()
+	# If no legacy effect parameter found, set to 0
+	if (length(legacy_effect) == 0) {
+		legacy_effect <- rep(0, Nmc)
+	}
+#	precision <- lapply(precision_samp, function(x) lapply(x, prec_to_sd)) %>% unlist()
+
+	# Validate that we have all required parameters
+	if (length(rho) == 0 || length(betas) == 0 || length(intercept) == 0 || length(precision) == 0) {
+		message("Warning: Missing required parameters for plot ", plotID, " - skipping")
+		return(NULL)
+	}
+	
+	# Check for valid parameter values
+	if (any(is.na(rho)) || any(is.na(betas)) || any(is.na(intercept)) || any(is.na(precision))) {
+		message("Warning: NA values in parameters for plot ", plotID, " - skipping")
+		return(NULL)
+	}
+
+	# Parse model_id to determine model type and legacy covariate usage
+	model_info <- tryCatch({
+		parse_model_id(model_id)
+	}, error = function(e) {
+		message("Warning: Error parsing model_id '", model_id, "': ", e$message)
+		# Fallback parsing
+		info <- strsplit(model_id, "_")[[1]]
+		if (length(info) >= 2) {
+			if (info[1] == "cycl" && info[2] == "only") {
+				model_name <- "cycl_only"
+			} else if (info[1] == "env" && info[2] == "cov") {
+				model_name <- "env_cov"
+			} else if (info[1] == "env" && info[2] == "cycl") {
+				model_name <- "env_cycl"
 			} else {
-				# Site exists in original model data - use estimated site effect
-				site_num <- unique(truth.plot.long[truth.plot.long$siteID==siteID,]$site_num)
-				site_param <- paste0("site_effect[", site_num, "]")
-				site_effect <- 	param_samples[row_samples,] %>% select(!!site_param) %>% unlist()
-				
-				# add model estimates if possible
-				plot_est <- plot_summary %>%
-					filter(plotID == !!plotID) %>%
-					select(-c(plot_num, site_num, dateID, dates, truth, rank)) %>%
-					dplyr::rename(lo = `2.5%`,
-								 hi = `97.5%`,
-								 lo_25 = `25%`,
-								 hi_75 = `75%`,
-								 med = `50%`)
-				plot_obs <- left_join(plot_obs, plot_est,
-															by = intersect(colnames(plot_obs), colnames(plot_est))) %>% select(-taxon)
-
-				# Take initial condition & start forecast from last observed value if possible
-				last_obs <- plot_est %>% filter(timepoint==max(timepoint))
-				plot_start_date <- last_obs$timepoint
-				# Remove verbose print statement
-				# print(last_obs)
-				
-				# Check if we have valid initial condition data
-				if (is.na(last_obs$med) || length(last_obs$med) == 0) {
-					# Remove verbose warning - just return NULL silently
-					# message("Warning: No valid initial condition found for plot ", plotID, " - skipping")
-					return(NULL)  # Skip this plot entirely
-				}
-				
-				ic <- rep(last_obs$med, Nmc)
-				plot_obs <- plot_obs  %>% select(-c(timepoint,date_num))
-				if (length(ic)==0) {
-					# Remove verbose warning - just return NULL silently
-					# message("No initial condition found!")
-					return(NULL)  # Skip this plot entirely
-				} else {
-					# Remove verbose initial condition messages
-					# if (plotID == substr(plotID, 1, 4)) {
-					# 	message("Using initial condition: ", round(ic[[1]], 4))
-					# }
-				}
+				model_name <- info[1]
 			}
-
+		} else {
+			model_name <- "unknown"
 		}
-
-		if (length(site_effect)==0) {
-			message("No site effect found!")
-			return(NULL)  # Skip this plot entirely
-		}
-		
-		# Check for valid site effect values
-		if (any(is.na(site_effect))) {
-			message("Warning: NA values in site effects for plot ", plotID, " - skipping")
-			return(NULL)
-		}
-
-		### Get other parameter estimates
-		### Rho
-		rho <- param_samples[row_samples,] %>% select(grep("rho", colnames(.))) %>% unlist()
-		### Betas
-		betas <- param_samples[row_samples,] %>% select(grep("beta", colnames(.)))
-		### Intercept
-		intercept <- param_samples[row_samples,] %>% select(grep("intercept", colnames(.))) %>% unlist()
-		### Process error
-		sigma <- param_samples[row_samples,] %>% select(grep("sigma", colnames(.))) %>% unlist()
-	#	sigma <- lapply(sigma_samp, function(x) lapply(x, prec_to_sd)) %>% unlist()
-
-		# Validate that we have all required parameters
-		if (length(rho) == 0 || length(betas) == 0 || length(intercept) == 0 || length(sigma) == 0) {
-			message("Warning: Missing required parameters for plot ", plotID, " - skipping")
-			return(NULL)
-		}
-		
-		# Check for valid parameter values
-		if (any(is.na(rho)) || any(is.na(betas)) || any(is.na(intercept)) || any(is.na(sigma))) {
-			message("Warning: NA values in parameters for plot ", plotID, " - skipping")
-			return(NULL)
-		}
-
-		# If the model only had sin/cosine, remove the other covariate data
-		if (model_name=="cycl_only"){
-			covar <- covar[,c(7,8),]
-		} else if (model_name=="env_cov"){
-			covar <- covar[,c(1:6),]
-		}
+		list(model_name = model_name)
+	})
+	
+	# Extract model name safely
+	if (is.list(model_info) && length(model_info) >= 6) {
+		model_name <- model_info[[6]]
+	} else if (is.list(model_info) && "model_name" %in% names(model_info)) {
+		model_name <- model_info$model_name
+	} else {
+		model_name <- "unknown"
+	}
+	
+	use_legacy_covariate <- grepl("with_legacy_covariate", model_id)
+	
+	# Handle covariate selection based on model type
+	if (model_name == "cycl_only") {
+		# Cyclical only: just sin/cosine terms (indices 7,8)
+		covar <- covar[,c(7,8),]
+	} else if (model_name == "env_cov") {
+		# Environmental covariates only: temp, mois, pH, pC, relEM, LAI (indices 1:6)
+		covar <- covar[,c(1:6),]
+	} else if (model_name == "env_cycl") {
+		# Environmental + cyclical: all 8 covariates (indices 1:8)
+		covar <- covar[,c(1:8),]
+	} else {
+		# Default fallback: assume all covariates
+		message("Warning: Unknown model type '", model_name, "', using all covariates")
+	}
 
 	all_tax_abs <- matrix(NA, Nmc, NT)
 	# Initialize first timepoint with initial condition
@@ -261,8 +251,25 @@ fcast_logit_beta <- function(plotID,
 		
 		Z  <- covar[, ,time]
 		Ex <- rho * logit(x) + apply(Z * betas, 1, sum) + site_effect + intercept
+		
+		# Add legacy effect if using legacy covariate
+		if (use_legacy_covariate) {
+			# Create legacy covariate using the same logic as model fitting
+			# Get the date for this timepoint
+			date_key_row <- date_key %>% filter(date_num == time)
+			if (nrow(date_key_row) > 0) {
+				date_val <- date_key_row$dateID
+				# Convert to date and check if it's in legacy period (2013-06-27 to 2015-11-30)
+				date_obj <- as.Date(date_val, format = "%Y%m%d")
+				legacy_start <- as.Date("2013-06-27")
+				legacy_end <- as.Date("2015-11-30")
+				legacy_indicator <- as.numeric(date_obj >= legacy_start & date_obj <= legacy_end)
+				Ex <- Ex + legacy_effect * legacy_indicator
+			}
+		}
+		
 		# norm_sample <- function(x, y) truncnorm::rtruncnorm((1, x, y)
-		# x <- unlist(Map(norm_sample, mu, sigma))
+		# x <- unlist(Map(norm_sample, mu, precision))
 
 		mu = invlogit(Ex)
 
@@ -277,8 +284,8 @@ fcast_logit_beta <- function(plotID,
 
 		mu = transformed_mu[,1]
 		# Add process error using logit beta
-		alpha = mu * ((mu * (1 - mu))/sigma^2 - 1)
-		beta = (1 - mu) * ((mu * (1 - mu))/sigma^2 - 1)
+		alpha = mu * ((mu * (1 - mu))/precision^2 - 1)
+		beta = (1 - mu) * ((mu * (1 - mu))/precision^2 - 1)
 
 		# logit_mu = rLogitBeta(1, alpha, beta)
 		# x = invlogit(logit_mu)
@@ -293,9 +300,9 @@ fcast_logit_beta <- function(plotID,
 
 
 	# Create output dataframe
-		predict <- all_tax_abs
-		ci <- as.data.frame(t(apply(predict, 2, quantile, c(0.025,.25,0.5,.75,0.975), na.rm=T))) %>%
-			mutate(mean = apply(predict, 2, mean, na.rm=T),
+	predict <- all_tax_abs
+	ci <- as.data.frame(t(apply(predict, 2, quantile, c(0.025,.25,0.5,.75,0.975), na.rm=T))) %>%
+		mutate(mean = apply(predict, 2, mean, na.rm=T),
 												sd = apply(predict, 2, sd, na.rm=T),
 												date_num = as.numeric(1:NT),
 												plotID = plotID,
@@ -306,74 +313,38 @@ fcast_logit_beta <- function(plotID,
 												taxon = taxon_name,
 												taxon_name = taxon_name,
 												new_site = ifelse(is_new_site, T, F))
-		colnames(ci)[1:5] <- c("lo","lo_25","med","hi_75","hi")
+	colnames(ci)[1:5] <- c("lo","lo_25","med","hi_75","hi")
 
+	ci <- left_join(ci, date_key, by=c("date_num"))
+	ci$dates <- fixDate(ci$dateID)
+	ci <- ci %>% filter(!is.na(med))
 
+	coalesce_by_column <- function(df) {
+		return(coalesce(df[1], df[2]))
+	}
 
-		ci <- left_join(ci, date_key, by=c("date_num"))
-		ci$dates <- fixDate(ci$dateID)
-		ci <- ci %>% filter(!is.na(med))
-
-
-		coalesce_by_column <- function(df) {
-			return(coalesce(df[1], df[2]))
-		}
-
-		# Add on truth values and/or model estimates
-		if (!is_new_site){
-			plot_obs_simple = plot_obs %>%
-				select(siteID,plotID, dateID,species,
+	# Add on truth values and/or model estimates
+	if (!is_new_site){
+		plot_obs_simple = plot_obs %>%
+			select(siteID,plotID, dateID,species,
 							 truth,lo,lo_25,med,hi_75,hi,
 							 mean = Mean, sd = SD) %>% mutate(truth=as.numeric(truth))
-			ci <- full_join(ci, plot_obs_simple, by = intersect(colnames(ci), colnames(plot_obs_simple)))
-			ci = ci %>%
-				group_by(dateID) %>%
-				summarise_all(coalesce_by_column)
-		} else {
-			plot_obs_simple = plot_obs %>%
-				select(siteID,plotID, dateID,species,
-							 truth) %>% mutate(truth=as.numeric(truth))
-			ci <- full_join(ci, plot_obs_simple, by = intersect(colnames(ci), colnames(plot_obs_simple)))
-			#ci <- merge(ci, plot_obs, by = c("plotID", "siteID", "species", "dateID" ))
-			ci = ci %>%
-				group_by(dateID) %>%
-				summarise_all(coalesce_by_column)
-		}
+		ci <- full_join(ci, plot_obs_simple, by = intersect(colnames(ci), colnames(plot_obs_simple)))
+		ci = ci %>%
+			group_by(dateID) %>%
+			summarise_all(coalesce_by_column)
+	} else {
+		# For new sites, we don't have truth values, so just return the CI
+	}
 
-		ci$date_num <- coalesce(ci$date_num, date_key$date_num)
+	# Add model metadata
+	ci <- ci %>% mutate(
+		model_id = model_id,
+		model_name = model_name,
+		use_legacy_covariate = use_legacy_covariate,
+		legacy_effect_mean = mean(legacy_effect, na.rm = TRUE)
+	)
 
-		obs_date_num = ci[which(!is.na(ci$truth) & !is.na(ci$date_num)),]$date_num
-		obs_date_num = obs_date_num[which(obs_date_num > plot_start_date)]
-		if (length(obs_date_num) > 0){
-		crps_df = data.frame()
-		for (i in obs_date_num){
-			obs = ci[which(ci$date_num==i),]$truth
-			# Ensure obs is numeric for CRPS calculation
-			obs = as.numeric(obs)
-			# mu = ci[which(ci$date_num==i),]$mean
-			# sd = ci[which(ci$date_num==i),]$sd
-			X = predict[,i]
-			X = X[complete.cases(X)]
-
-			# Skip CRPS calculation if no valid forecast samples
-			if (length(X) == 0) {
-				message("Warning: No valid forecast samples for timepoint ", i, " - skipping CRPS calculation")
-				next
-			}
-
-			crps_val = cbind(crps = crps_sample(obs, X), date_num = i)
-			crps_df = rbind(crps_df, crps_val)
-		}
-
-		# Only join CRPS data if there are results to join
-		if (nrow(crps_df) > 0) {
-			ci <- left_join(ci, crps_df, by="date_num")
-		}
-
-		return(ci)
-	} # End of if (length(obs_date_num) > 0) block
-	
-	# If no valid observations, return the CI without CRPS
 	return(ci)
 }
 
