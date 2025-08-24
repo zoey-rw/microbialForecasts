@@ -557,8 +557,26 @@ run_scenarios_fixed <- function(j, chain_no) {
 	
 	cat("  Initial convergence check result:", ifelse(continue, "CONTINUE", "CONVERGED"), "\n")
 	
-	# Store all samples as we go
+	# Create output directories for checkpoints
+	model_output_dir <- file.path(getwd(), "data", "model_outputs", "CLR_regression", model_name)
+	dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
+	
+	# Create model_id for consistent naming with legacy covariate indicator
+	legacy_indicator <- ifelse(use_legacy_covariate, "with_legacy_covariate", "without_legacy_covariate")
+	model_id <- paste(model_name, species, min.date, max.date, legacy_indicator, sep = "_")
+	
+	# Store all samples as we go - FIXED: Use initial samples as starting point
 	all_samples <- initial_samples
+	cat("  Starting iterative accumulation with", nrow(all_samples), "initial samples\n")
+	
+	# Save initial samples as checkpoint
+	checkpoint_file <- file.path(model_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_initial.rds"))
+	tryCatch({
+		saveRDS(list(samples = all_samples, iterations = total_iterations, loop = 0), checkpoint_file)
+		cat("  ✓ Checkpoint saved: Initial samples (", nrow(all_samples), " iterations)\n")
+	}, error = function(e) {
+		cat("  ✗ Failed to save initial checkpoint:", e$message, "\n")
+	})
 	
 	while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
 		if (continue) {
@@ -572,10 +590,29 @@ run_scenarios_fixed <- function(j, chain_no) {
 		compiled$run(niter = iter_per_chunk, thin = thin, nburnin = 0)
 		total_iterations <- total_iterations + iter_per_chunk
 		
-		# Get updated samples and accumulate them
+		# Get updated samples and accumulate them - FIXED: Get only new samples
 		current_samples <- as.matrix(compiled$mvSamples)
-		all_samples <- rbind(all_samples, current_samples)
-		cat("  Updated samples collected:", nrow(current_samples), "new samples,", nrow(all_samples), "total accumulated\n")
+		cat("  Current total samples in compiled object:", nrow(current_samples), "\n")
+		cat("  Previous accumulated samples:", nrow(all_samples), "\n")
+		
+		# Only take the new samples (skip the initial ones we already have)
+		if (nrow(current_samples) > nrow(initial_samples)) {
+			new_samples <- current_samples[(nrow(initial_samples) + 1):nrow(current_samples), , drop = FALSE]
+			all_samples <- rbind(all_samples, new_samples)
+			cat("  Updated samples collected:", nrow(new_samples), "new samples,", nrow(all_samples), "total accumulated\n")
+		} else {
+			cat("  WARNING: No new samples detected, using current samples\n")
+			all_samples <- current_samples
+		}
+		
+		# Save checkpoint after each loop
+		checkpoint_file <- file.path(model_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter + 1, ".rds"))
+		tryCatch({
+			saveRDS(list(samples = all_samples, iterations = total_iterations, loop = loop_counter + 1), checkpoint_file)
+			cat("  ✓ Checkpoint saved: Loop", loop_counter + 1, "(", nrow(all_samples), " iterations)\n")
+		}, error = function(e) {
+			cat("  ✗ Failed to save checkpoint for loop", loop_counter + 1, ":", e$message, "\n")
+		})
 		
 		# Check if we need to continue
 		tryCatch({
@@ -589,6 +626,8 @@ run_scenarios_fixed <- function(j, chain_no) {
 		
 		cat("  Total iterations so far:", total_iterations, "\n")
 		cat("  Convergence check result:", ifelse(continue, "CONTINUE", "CONVERGED"), "\n")
+		cat("  Current accumulated sample size:", nrow(all_samples), "\n")
+		cat("  Progress: ", round(loop_counter/max_loops * 100, 1), "% of max loops completed\n")
 	}
 	
 	if (loop_counter >= max_loops) {
@@ -610,16 +649,26 @@ run_scenarios_fixed <- function(j, chain_no) {
 	cat("Final sample dimensions:", dim(samples), "\n")
 	cat("Total iterations run:", total_iterations, "\n")
 	cat("Convergence loops:", loop_counter, "\n")
+	cat("Final ESS check:\n")
 	
-	# Create output directories
-	model_output_dir <- here("data", "model_outputs", "CLR_regression", model_name)
-	dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
+	# Final convergence check
+	tryCatch({
+		final_ess <- effectiveSize(as.mcmc(samples))
+		min_final_ess <- min(final_ess, na.rm = TRUE)
+		cat("  Final minimum ESS:", round(min_final_ess, 1), "\n")
+		cat("  Convergence achieved:", min_final_ess >= min_eff_size_perchain, "\n")
+	}, error = function(e) {
+		cat("  Final ESS check failed:", e$message, "\n")
+	})
 	
-	# Create model_id for consistent naming with legacy covariate indicator
-	legacy_indicator <- ifelse(use_legacy_covariate, "with_legacy_covariate", "without_legacy_covariate")
-	model_id <- paste(model_name, species, min.date, max.date, legacy_indicator, sep = "_")
+	cat("=== ITERATIVE SAVING SUMMARY ===\n")
+	cat("  Initial samples:", nrow(initial_samples), "iterations\n")
+	cat("  Additional loops:", loop_counter, "\n")
+	cat("  Total accumulated samples:", nrow(all_samples), "iterations\n")
+	cat("  Checkpoints saved:", loop_counter + 1, "files\n")
+	cat("  Final sample size:", nrow(samples), "iterations\n")
 	
-	# Save MCMC samples
+	# Save MCMC samples with absolute path
 	samples_file <- file.path(model_output_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
 	
 	# Create the complete chain structure with enhanced metadata
@@ -643,7 +692,23 @@ run_scenarios_fixed <- function(j, chain_no) {
 		)
 	)
 	
-	saveRDS(chain_output, samples_file)
+	# Save with error handling
+	tryCatch({
+		saveRDS(chain_output, samples_file)
+		cat("✓ SUCCESS: Saved MCMC samples to:", samples_file, "\n")
+	}, error = function(e) {
+		cat("✗ ERROR: Failed to save samples to", samples_file, "\n")
+		cat("  Error:", e$message, "\n")
+		# Try to save to current directory as fallback
+		fallback_file <- paste0("samples_", model_id, "_chain", chain_no, "_FALLBACK.rds")
+		tryCatch({
+			saveRDS(chain_output, fallback_file)
+			cat("✓ FALLBACK: Saved to current directory:", fallback_file, "\n")
+		}, error = function(e2) {
+			cat("✗ CRITICAL: Failed to save even to fallback location\n")
+			cat("  Fallback error:", e2$message, "\n")
+		})
+	})
 	
 	cat("Saved MCMC samples to:", samples_file, "\n")
 	cat("Sample dimensions:", dim(samples), "\n")
@@ -655,7 +720,29 @@ run_scenarios_fixed <- function(j, chain_no) {
 	cat("  - CONVERGENCE-BASED: Adaptive sampling until reasonable ESS reached\n")
 	cat("  - Production-ready: No wasted iterations, no premature stopping\n")
 	
-	return(list(status = "SUCCESS", samples = samples, file = samples_file))
+	return(list(
+		status = "SUCCESS", 
+		samples = samples, 
+		file = samples_file,
+		model_data = model.dat,  # Include model_data for parallel execution
+		nimble_code = modelCode,  # Include nimble code for parallel execution
+		metadata = list(
+			rank.name = rank.name,
+			species = species,
+			model_name = model_name,
+			model_id = model_id,
+			use_legacy_covariate = use_legacy_covariate,
+			scenario = scenario,
+			min.date = min.date,
+			max.date = max.date,
+			niter = total_iterations,
+			nburnin = burnin,
+			thin = thin,
+			model_data = model.dat,
+			nimble_code = modelCode,
+			model_structure = "standardized_CLR_regression_with_consistent_priors"
+		)
+	))
 }
 
 # Run multiple models for testing
@@ -663,8 +750,8 @@ cat("Testing with", nrow(params), "models\n")
 cat("Models to test:\n")
 print(params[, c("rank.name", "species", "model_name", "model_id")])
 
-# Test with a small subset first to verify fixes work
-test_models <- 1  # Test just 1 model for faster verification
+# Test with a few models to verify fixes work
+test_models <- 3  # Test 3 models for verification
 cat("\nTesting", test_models, "models to verify convergence fixes\n")
 
 # Set up parallel cluster for Nimble
@@ -706,26 +793,262 @@ cat("Running ALL models and chains in parallel simultaneously...\n")
 all_tasks <- expand.grid(model_idx = 1:test_models, chain_no = 1:nchains)
 cat("Total parallel tasks:", nrow(all_tasks), "\n")
 
+# Function to monitor progress in real-time
+monitor_progress <- function() {
+  cat("\n=== REAL-TIME PROGRESS MONITORING ===\n")
+  cat("Press Ctrl+C to stop monitoring\n")
+  
+  while(TRUE) {
+    Sys.sleep(30)  # Check every 30 seconds
+    
+    completed <- 0
+    errors <- 0
+    for (model_idx in 1:test_models) {
+      for (chain_no in 1:nchains) {
+        status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
+        error_file <- paste0("chain_", model_idx, "_", chain_no, "_ERROR.txt")
+        
+        if (file.exists(status_file)) completed <- completed + 1
+        if (file.exists(error_file)) errors <- errors + 1
+      }
+    }
+    
+    total <- test_models * nchains
+    cat(format(Sys.time()), "- Progress:", completed, "/", total, "completed,", 
+        errors, "failed,", total - completed - errors, "running\n")
+  }
+}
+
+# Start progress monitoring in background (optional)
+cat("To monitor progress in real-time, run: monitor_progress()\n")
+cat("Or check status files manually:\n")
+cat("  - chain_[model]_[chain]_status.txt for completed chains\n")
+cat("  - chain_[model]_[chain]_ERROR.txt for failed chains\n")
+
+# Create a function that saves results as they complete
+runAndSave_task <- function(task_idx) {
+  # Initialize error tracking
+  error_details <- list()
+  start_time <- Sys.time()
+  
+  tryCatch({
+    # Get task details
+    task <- all_tasks[task_idx, ]
+    model_idx <- task$model_idx
+    chain_no <- task$chain_no
+    
+    cat("Worker: Model", model_idx, "Chain", chain_no, "starting at", format(start_time), "\n")
+    
+    # Log system information for debugging
+    cat("Worker: System info - R version:", R.version.string, "\n")
+    cat("Worker: Working directory:", getwd(), "\n")
+    cat("Worker: Available packages:", paste(installed.packages()[,"Package"], collapse=", "), "\n")
+    
+    # Check if required packages are loaded
+    required_packages <- c("nimble", "microbialForecast", "here", "tidyverse", "coda")
+    missing_packages <- required_packages[!required_packages %in% installed.packages()[,"Package"]]
+    if (length(missing_packages) > 0) {
+      stop("Missing required packages: ", paste(missing_packages, collapse=", "))
+    }
+    
+    # Check if data is available
+    if (!exists("all_ranks") || is.null(all_ranks)) {
+      stop("Data 'all_ranks' not available in worker environment")
+    }
+    
+    # Check if params is available
+    if (!exists("params") || is.null(params) || nrow(params) == 0) {
+      stop("Parameters 'params' not available or empty in worker environment")
+    }
+    
+    # Validate model index
+    if (model_idx > nrow(params)) {
+      stop("Model index ", model_idx, " exceeds available models (", nrow(params), ")")
+    }
+    
+    cat("Worker: All checks passed, calling run_scenarios_fixed...\n")
+    
+    # Run the model with detailed error context
+    result <- run_scenarios_fixed(j = model_idx, chain_no = chain_no)
+    
+    # Validate result structure
+    if (!is.list(result) || !("status" %in% names(result))) {
+      stop("Invalid result structure from run_scenarios_fixed")
+    }
+    
+    # Save result immediately if successful
+    if (result$status == "SUCCESS") {
+      # Create output directory
+      model_output_dir <- here("data", "model_outputs", "CLR_regression", 
+                              params$model_name[model_idx])
+      dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
+      
+      # Create model_id for consistent naming
+      legacy_indicator <- ifelse(grepl("Legacy with covariate", params$scenario[model_idx]), 
+                                "with_legacy_covariate", "without_legacy_covariate")
+      model_id <- paste(params$model_name[model_idx], params$species[model_idx], 
+                       params$min.date[model_idx], params$max.date[model_idx], 
+                       legacy_indicator, sep = "_")
+      
+      # Save MCMC samples immediately
+      samples_file <- file.path(model_output_dir, 
+                               paste0("samples_", model_id, "_chain", chain_no, ".rds"))
+      
+      # Create the complete chain structure with metadata
+      # Use the metadata from the result if available, otherwise create it
+      if ("metadata" %in% names(result) && !is.null(result$metadata)) {
+        # Use the complete metadata from the result
+        metadata <- result$metadata
+        # Add parallel execution specific fields
+        metadata$task_idx <- task_idx
+        metadata$completed_at <- Sys.time()
+      } else {
+        # Fallback: create metadata if not available in result
+        metadata <- list(
+          rank.name = params$rank.name[model_idx],
+          species = params$species[model_idx],
+          model_name = params$model_name[model_idx],
+          model_id = model_id,
+          use_legacy_covariate = grepl("Legacy with covariate", params$scenario[model_idx]),
+          scenario = params$scenario[model_idx],
+          min.date = params$min.date[model_idx],
+          max.date = params$max.date[model_idx],
+          niter = nrow(result$samples),
+          nburnin = 500,  # Default burnin
+          thin = 1,       # Default thin
+          task_idx = task_idx,
+          completed_at = Sys.time(),
+          model_data = result$model_data,  # Include model_data from result
+          nimble_code = result$nimble_code,  # Include nimble_code if available
+          model_structure = "standardized_CLR_regression_with_consistent_priors"  # Model structure identifier
+        )
+      }
+      
+      chain_output <- list(
+        samples = result$samples,
+        metadata = metadata
+      )
+      
+      saveRDS(chain_output, samples_file)
+      cat("SAVED: Chain", chain_no, "for model", model_idx, "to", samples_file, "\n")
+      
+      # Also save a simple status file to track progress
+      status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
+      writeLines(paste("SUCCESS", Sys.time(), sep = "\t"), status_file)
+    }
+    
+    cat("Worker: Model", model_idx, "Chain", chain_no, "completed at", format(Sys.time()), "\n")
+    return(list(model_idx = model_idx, chain_no = chain_no, result = result))
+    
+  }, error = function(e) {
+    # Capture comprehensive error information
+    error_time <- Sys.time()
+    error_details <- list(
+      timestamp = error_time,
+      task_idx = task_idx,
+      model_idx = if(exists("model_idx")) model_idx else NA,
+      chain_no = if(exists("chain_no")) chain_no else NA,
+      error_message = if(!is.null(e$message) && e$message != "") e$message else "No error message available",
+      error_call = if(!is.null(e$call)) paste(deparse(e$call), collapse=" ") else "No call information",
+      error_class = class(e)[1],
+      system_info = list(
+        r_version = R.version.string,
+        working_dir = getwd(),
+        available_packages = installed.packages()[,"Package"],
+        memory_usage = if(exists("gc")) gc() else "GC not available"
+      ),
+      runtime = if(exists("start_time")) difftime(error_time, start_time, units="secs") else NA
+    )
+    
+    # Create detailed error file
+    task <- all_tasks[task_idx, ]
+    error_file <- paste0("chain_", task$model_idx, "_", task$chain_no, "_ERROR.txt")
+    
+    # Write comprehensive error report
+    error_report <- c(
+      paste("ERROR DETAILED REPORT -", format(error_time)),
+      paste("Task Index:", error_details$task_idx),
+      paste("Model Index:", error_details$model_idx),
+      paste("Chain Number:", error_details$chain_no),
+      paste("Error Message:", error_details$error_message),
+      paste("Error Call:", error_details$error_call),
+      paste("Error Class:", error_details$error_class),
+      paste("Runtime (seconds):", round(error_details$runtime, 2)),
+      paste("R Version:", error_details$system_info$r_version),
+      paste("Working Directory:", error_details$system_info$working_dir),
+      paste("Available Packages:", paste(error_details$system_info$available_packages, collapse=", ")),
+      "",
+      "FULL ERROR OBJECT:",
+      capture.output(str(e))
+    )
+    
+    writeLines(error_report, error_file)
+    
+    # Also log to console with detailed information
+    cat("ERROR in Model", error_details$model_idx, "Chain", error_details$chain_no, ":\n")
+    cat("  Message:", error_details$error_message, "\n")
+    cat("  Call:", error_details$error_details$error_call, "\n")
+    cat("  Class:", error_details$error_details$error_class, "\n")
+    cat("  Runtime:", round(error_details$error_details$runtime, 2), "seconds\n")
+    cat("  Detailed error saved to:", error_file, "\n")
+    
+    # Return detailed error information
+    return(list(
+      model_idx = error_details$model_idx, 
+      chain_no = error_details$chain_no, 
+      result = list(
+        status = "ERROR", 
+        error = error_details$error_message,
+        error_details = error_details,
+        error_file = error_file
+      )
+    ))
+  })
+}
+
+# Export the function to workers
+clusterExport(cl, c("runAndSave_task", "params", "all_tasks"))
+
+# Run everything in parallel with incremental saving
+cat("Starting parallel execution with incremental saving at:", format(Sys.time()), "\n")
+
 # Run everything in parallel
 cat("Starting parallel execution at:", format(Sys.time()), "\n")
 all_results_parallel = foreach(task_idx = 1:nrow(all_tasks), 
                              .packages = c("nimble", "microbialForecast", "here", "tidyverse", "coda"),
-                             .export = c("run_scenarios_fixed", "params", "all_tasks")) %dopar% {
-  # Get model and chain info
-  model_idx <- all_tasks$model_idx[task_idx]
-  chain_no <- all_tasks$chain_no[task_idx]
-  
-  tryCatch({
-    cat("Worker: Model", model_idx, "Chain", chain_no, "starting at", format(Sys.time()), "\n")
-    result <- run_scenarios_fixed(j = model_idx, chain_no = chain_no)
-    cat("Worker: Model", model_idx, "Chain", chain_no, "completed at", format(Sys.time()), "\n")
-    return(list(model_idx = model_idx, chain_no = chain_no, result = result))
-  }, error = function(e) {
-    return(list(model_idx = model_idx, chain_no = chain_no, 
-                result = list(status = "ERROR", error = e$message)))
-  })
+                             .export = c("runAndSave_task", "params", "all_tasks")) %dopar% {
+  runAndSave_task(task_idx)
 }
 cat("Parallel execution completed at:", format(Sys.time()), "\n")
+
+# Show progress summary
+cat("\n=== PROGRESS SUMMARY ===\n")
+cat("Checking which chains have been completed...\n")
+
+# Count completed chains
+completed_chains <- 0
+error_chains <- 0
+for (model_idx in 1:test_models) {
+  for (chain_no in 1:nchains) {
+    status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
+    error_file <- paste0("chain_", model_idx, "_", chain_no, "_ERROR.txt")
+    
+    if (file.exists(status_file)) {
+      completed_chains <- completed_chains + 1
+      cat("✓ Model", model_idx, "Chain", chain_no, "completed\n")
+    } else if (file.exists(error_file)) {
+      error_chains <- error_chains + 1
+      cat("✗ Model", model_idx, "Chain", chain_no, "failed\n")
+    } else {
+      cat("? Model", model_idx, "Chain", chain_no, "status unknown\n")
+    }
+  }
+}
+
+cat("\nProgress Summary:\n")
+cat("  Completed chains:", completed_chains, "/", test_models * nchains, "\n")
+cat("  Failed chains:", error_chains, "/", test_models * nchains, "\n")
+cat("  Success rate:", round(completed_chains / (test_models * nchains) * 100, 1), "%\n")
 
 # Reorganize results by model
 all_results <- list()
@@ -781,10 +1104,4 @@ for (model_idx in 1:test_models) {
   }
 }
 
-# Clean up status files
-for (chain_no in 1:nchains) {
-  status_file <- paste0("chain_", chain_no, "_status.txt")
-  if (file.exists(status_file)) {
-    unlink(status_file)
-  }
-}
+
