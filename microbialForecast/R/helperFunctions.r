@@ -591,34 +591,85 @@ pacman::p_load(tidyverse, anytime)
 create_covariate_samples <- function(model.inputs, plotID = NULL, siteID,
 																		 Nmc_large, Nmc,
 																		 N.beta = 8, prev_samples = NULL, ...) {
-if (!is.null(prev_samples)){
-
-
-}
-	else {
+	
+	# Simple version to test
 	start_date <- model.inputs$site_start[siteID]
-	NT = model.inputs$N.date
+	NT <- model.inputs$N.date
+	
+	# Create output array
 	covar_full <- array(NA, dim = c(Nmc_large, N.beta, NT))
-
-	set.seed(1)
-
+	
+	# Check if plot exists in plot-level arrays
+	plot_exists_in_pH <- plotID %in% rownames(model.inputs$pH)
+	plot_exists_in_pC <- plotID %in% rownames(model.inputs$pC)
+	plot_exists_in_relEM <- plotID %in% rownames(model.inputs$relEM)
+	
+	# Loop through timepoints
 	for (time in start_date:NT) {
-	covar_full[,,time] <- c(Rfast::Rnorm(Nmc_large, model.inputs$temp[siteID, time],
-																			 model.inputs$temp_sd[siteID, time]),
-													Rfast::Rnorm(Nmc_large, model.inputs$mois[siteID, time],
-																			 model.inputs$mois_sd[siteID, time]),
-													Rfast::Rnorm(Nmc_large, model.inputs$pH[plotID,start_date],
-																			 model.inputs$pH_sd[plotID,start_date]),
-													Rfast::Rnorm(Nmc_large, model.inputs$pC[plotID,start_date],
-																			 model.inputs$pC_sd[plotID,start_date]),
-													rep(model.inputs$relEM[plotID, time], Nmc_large),
-													rep(model.inputs$LAI[siteID, time], Nmc_large),
-													rep(model.inputs$sin_mo[time], Nmc_large),
-													rep(model.inputs$cos_mo[time], Nmc_large))
-}
-covar <- covar_full[sample.int(Nmc_large,Nmc),,]
-return(covar)
-}
+		
+		# Get values with fallbacks for missing plots
+		pH_value <- if (plot_exists_in_pH) {
+			model.inputs$pH[plotID, start_date]
+		} else {
+			mean(model.inputs$pH[, start_date], na.rm = TRUE)
+		}
+		
+		pC_value <- if (plot_exists_in_pC) {
+			model.inputs$pC[plotID, start_date]
+		} else {
+			mean(model.inputs$pC[, start_date], na.rm = TRUE)
+		}
+		
+		relEM_value <- if (plot_exists_in_relEM) {
+			model.inputs$relEM[plotID, time]
+		} else {
+			mean(model.inputs$relEM[, time], na.rm = TRUE)
+		}
+		
+		# Get standard deviations with fallbacks
+		pH_sd_value <- if (plot_exists_in_pH) {
+			model.inputs$pH_sd[plotID, start_date]
+		} else {
+			mean(model.inputs$pH_sd[, start_date], na.rm = TRUE)
+		}
+		
+		pC_sd_value <- if (plot_exists_in_pC) {
+			model.inputs$pC_sd[plotID, start_date]
+		} else {
+			mean(model.inputs$pC_sd[, start_date], na.rm = TRUE)
+		}
+		
+		# Generate samples
+		temp_samples <- rnorm(Nmc_large, model.inputs$temp[siteID, time], model.inputs$temp_sd[siteID, time])
+		mois_samples <- rnorm(Nmc_large, model.inputs$mois[siteID, time], model.inputs$mois_sd[siteID, time])
+		pH_samples <- rnorm(Nmc_large, pH_value, pH_sd_value)
+		pC_samples <- rnorm(Nmc_large, pC_value, pC_sd_value)
+		relEM_samples <- rep(relEM_value, Nmc_large)
+		LAI_samples <- rep(model.inputs$LAI[siteID, time], Nmc_large)
+		sin_mo_samples <- rep(model.inputs$sin_mo[time], Nmc_large)
+		cos_mo_samples <- rep(model.inputs$cos_mo[time], Nmc_large)
+		
+		# Assign to array
+		covar_full[, 1, time] <- temp_samples
+		covar_full[, 2, time] <- mois_samples
+		covar_full[, 3, time] <- pH_samples
+		covar_full[, 4, time] <- pC_samples
+		covar_full[, 5, time] <- relEM_samples
+		covar_full[, 6, time] <- LAI_samples
+		covar_full[, 7, time] <- sin_mo_samples
+		covar_full[, 8, time] <- cos_mo_samples
+	}
+	
+	# Sample and return
+	# Handle case where we want more samples than available
+	if (Nmc > Nmc_large) {
+		# If we want more samples than available, sample with replacement
+		covar <- covar_full[sample.int(Nmc_large, Nmc, replace = TRUE), , ]
+	} else {
+		# If we have enough samples, sample without replacement
+		covar <- covar_full[sample.int(Nmc_large, Nmc, replace = FALSE), , ]
+	}
+	return(covar)
 }
 
 
@@ -777,7 +828,7 @@ convert_beta_params = function(mu, sd){
 
 
 #' @title parse_model_id
-#' @description  parse_model_id
+#' @description Parse model ID to extract components including enhanced metadata structure
 #'
 #' @export
 #'
@@ -785,15 +836,68 @@ parse_model_id = function(model_id){
 
 	info <- model_id %>% str_split("_") %>% unlist()
 
-	# Extract "time_period"
+	# Handle enhanced metadata structure with legacy covariate indicators
+	# Check if this is a legacy covariate model by looking for "with" followed by "legacy"
+	is_legacy_covariate <- FALSE
+	with_index <- which(info == "with")[1]
+	if (!is.na(with_index) && with_index < length(info) && info[with_index + 1] == "legacy") {
+		is_legacy_covariate <- TRUE
+	}
+	
+	if (is_legacy_covariate) {
+		# Enhanced metadata format: model_name_species_startdate_enddate_with_legacy_covariate
+		
+		# Find the position where "with" starts (indicating the legacy covariate part)
+		# with_index is already found above
+		
+		if (!is.na(with_index) && with_index > 3) {
+			# Extract time period (two elements before "with")
+			time_period <- paste(info[(with_index-2):(with_index-1)], collapse = "_")
+			
+			# Extract model_name and species (everything before the dates)
+			before_dates <- info[1:(with_index-3)]
+			
+			# Known model names that might have underscores
+			known_models <- c("cycl_only", "env_cov", "env_cycl")
+			
+			# Try to match known model names
+			model_found <- FALSE
+			for (known_model in known_models) {
+				known_model_parts <- str_split(known_model, "_")[[1]]
+				if (length(before_dates) >= length(known_model_parts)) {
+					if (all(before_dates[1:length(known_model_parts)] == known_model_parts)) {
+						model_name <- known_model
+						rank.name.eval <- before_dates[-(1:length(known_model_parts))] %>% paste0(collapse = "_")
+						model_found <- TRUE
+						break
+					}
+				}
+			}
+			
+			# If no known model found, fall back to first element
+			if (!model_found) {
+				model_name <- before_dates[1]
+				rank.name.eval <- before_dates[-1] %>% paste0(collapse = "_")
+			}
+		} else {
+			# Fallback parsing
+			model_name <- info[1]
+			rank.name.eval <- info[2]
+			time_period <- paste(info[3:4], collapse = "_")
+		}
+		
+	} else {
+		# Original format: model_name_species_startdate_enddate
+		# Extract "time_period"
 		time_period <- tail(info, 2) %>% paste0(collapse = "_") %>% str_replace(".rds", "")
 		info <- info[-c((length(info)-1):length(info))]
 
-	# Extract "model_name"
+		# Extract "model_name"
 		model_name <- info[c(1:2)]  %>% paste0(collapse = "_")
 		info <- info[-c(1:2)]
 
-	rank.name.eval <- info %>% paste0(collapse = "_")
+		rank.name.eval <- info %>% paste0(collapse = "_")
+	}
 
 	if (rank.name.eval %in% microbialForecast:::fg_names) {
 		summary_type="functional"
@@ -818,7 +922,8 @@ parse_model_id = function(model_id){
 		rank_only <-  rank.name  %>% str_split("_") %>% unlist() %>% head(1)
 		group <-  rank.name  %>% str_split("_") %>% unlist() %>% tail(1)
 	}
-return(list(rank.name, time_period, rank_only, species, group, model_name, model_id, summary_type))
+	
+	return(list(rank.name, time_period, rank_only, species, group, model_name, model_id, summary_type))
 }
 
 # ## ################################################

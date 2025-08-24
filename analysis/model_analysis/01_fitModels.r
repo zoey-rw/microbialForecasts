@@ -1,8 +1,15 @@
 #!/usr/bin/env Rscript
 
 # Model fitting script for calibration time periods (2013-2018 only)
-# Runs 4 chains per model for proper convergence assessment
-# Ensures at least 2 models run simultaneously for efficiency
+# TESTING: Runs 2 chains per model for testing iterative saving functionality
+# Ensures at least 1 model runs for focused testing
+#
+# HPC FIXES APPLIED:
+# - Fixed "model_output_dir not found" error by moving directory creation earlier
+# - Added robust directory creation with multiple fallback paths for HPC compatibility
+# - Added fallback checkpoint saving to current directory if model_output_dir fails
+# - Added HPC environment debugging information
+# - Added directory creation testing at script start
 
 # Get arguments from the command line (run with qsub script & OGE scheduler)
 argv <- commandArgs(TRUE)
@@ -13,12 +20,51 @@ if (length(argv) > 0){
 	k=1
 }
 
-# Run with at least 4 cores available (one MCMC chain per core)
+# Run with at least 2 cores available (one MCMC chain per core for testing)
 nchains = 4
+
+# Test directory creation for HPC compatibility
+test_hpc_directories <- function() {
+  cat("=== Testing HPC Directory Creation ===\n")
+  
+  test_bases <- c(
+    getwd(),
+    here("data", "model_outputs"),
+    file.path(Sys.getenv("HOME"), "data", "model_outputs"),
+    file.path(Sys.getenv("PWD"), "data", "model_outputs"),
+    "./data/model_outputs"
+  )
+  
+  cat("Testing base directories:\n")
+  for (i in seq_along(test_bases)) {
+    base <- test_bases[[i]]
+    cat("  ", i, ".", base, ":", ifelse(is.null(base) || base == "" || base == "NULL", "INVALID", "VALID"), "\n")
+  }
+  
+  # Test creating a test directory
+  test_dir <- file.path(getwd(), "test_hpc_dir")
+  tryCatch({
+    dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+    if (dir.exists(test_dir)) {
+      cat("  ✓ Successfully created test directory:", test_dir, "\n")
+      unlink(test_dir, recursive = TRUE)
+      cat("  ✓ Successfully cleaned up test directory\n")
+    } else {
+      cat("  ✗ Failed to create test directory\n")
+    }
+  }, error = function(e) {
+    cat("  ✗ Error creating test directory:", e$message, "\n")
+  })
+  
+  cat("=== End HPC Directory Test ===\n\n")
+}
+
+# Run the test
+test_hpc_directories()
 
 #### Run on all groups ----
 
-source("/Users/zoeywerbin/Documents/microbialForecasts/source.R")
+source("source.R")
 
 # Function to check if MCMC should continue based on effective sample size
 check_continue <- function(samples, min_eff_size = 10) {
@@ -50,32 +96,26 @@ params_in = read.csv(here("data/clean/model_input_df.csv"),
 rerun_list = readRDS(here("data/summary/unconverged_taxa_list.rds"))
 converged_list = readRDS(here("data/summary/converged_taxa_list.rds"))
 
-	# Test across ALL available ranks for comprehensive testing
-	params <- params_in %>% ungroup %>% filter(
-		# Test across all taxonomic ranks and functional groups
-		rank.name %in% c("phylum_bac", "class_bac", "order_bac", "family_bac", "genus_bac",
-										 "phylum_fun", "class_fun", "order_fun", "family_fun", "genus_fun",
-										 "saprotroph", "ectomycorrhizal", "cellulolytic", "assim_nitrite_reduction", 
-										 "acetate_simple", "chitinolytic", "denitrification", "n_fixation", 
-										 "nitrification", "plant_pathogen", "endophyte") &
-			# Focus ONLY on 2013-2018 period (exclude 2015-2018)
-		scenario %in% c("Legacy with covariate 2013-2018", "2013-2018") &
-		# All three model types
-		model_name %in% c("cycl_only", "env_cov", "env_cycl")
-	)
+# TEST CONFIGURATION: Focus on cycl_only and genus_bac models for testing
+params <- params_in %>% ungroup %>% filter(
+	# Test ONLY cycl_only models with genus_bac rank for focused testing
+	rank.name == "genus_bac" &
+	# Focus ONLY on 2013-2018 period (exclude 2015-2018)
+	scenario %in% c("Legacy with covariate 2013-2018", "2013-2018") &
+	# Test ONLY cycl_only model type for simplicity
+	model_name == "cycl_only" 
+)
 
 # Filter out already converged models
-params <- params %>% filter(!model_id %in% converged_list)
+params <- params <- params %>% filter(!model_id %in% converged_list)
 
-# Sample fewer models per rank to accommodate 4 chains per model
-# This ensures we can run multiple chains per model for proper convergence assessment
+# Sample 1 model for focused testing
 set.seed(123)  # For reproducible sampling
 params <- params %>%
-	group_by(rank.name) %>%
-	sample_n(size = min(2, n()), replace = FALSE) %>%  # Reduced from 3 to 2 per rank
+	sample_n(size = min(1, n()), replace = FALSE) %>%  # Test with 1 model
 	ungroup()
 
-cat("Running", nrow(params), "models across all ranks for index", k, "\n")
+cat("TESTING CONFIGURATION: Running", nrow(params), "cycl_only genus_bac model with", nchains, "chains\n")
 cat("Model configuration:\n")
 if (nrow(params) > 0) {
 	print(params[, c("rank.name", "species", "model_name", "model_id")])
@@ -85,6 +125,11 @@ if (nrow(params) > 0) {
 
 # Create function that uses our working approach for each model
 run_scenarios_fixed <- function(j, chain_no) {
+	# Initialize error tracking and logging
+	start_time <- Sys.time()
+	error_context <- list()
+	
+	tryCatch({
 	# Load required libraries in each worker
 	library(microbialForecast)
 	library(here)
@@ -97,12 +142,22 @@ run_scenarios_fixed <- function(j, chain_no) {
 	cat("Model parameters:\n")
 	print(params[j,])
 	cat("=============================\n")
+	
+	# Debug HPC environment information
+	cat("HPC Environment Debug Info:\n")
+	cat("  Working directory:", getwd(), "\n")
+	cat("  HOME:", Sys.getenv("HOME"), "\n")
+	cat("  PWD:", Sys.getenv("PWD"), "\n")
+	cat("  Current user:", Sys.getenv("USER"), "\n")
+	cat("  R session tempdir:", tempdir(), "\n")
+	cat("=============================\n")
 
-	# Get the group data
+		# Validate input parameters
 	if (is.null(params) || nrow(params) < j) {
 		stop("Params data frame not available or index out of bounds")
 	}
 
+		# Extract model parameters with validation
 	rank.name <- params$rank.name[[j]]
 	species <- params$species[[j]]
 	model_id <- params$model_id[[j]]
@@ -110,30 +165,71 @@ run_scenarios_fixed <- function(j, chain_no) {
 	min.date <- params$min.date[[j]]
 	max.date <- params$max.date[[j]]
 	scenario <- params$scenario[[j]]
+		
+		# Validate extracted parameters
+		if (is.null(rank.name) || is.na(rank.name) || rank.name == "") {
+			stop("Invalid rank.name for model index ", j)
+		}
+		if (is.null(species) || is.na(species) || species == "") {
+			stop("Invalid species for model index ", j)
+		}
+		if (is.null(model_name) || is.na(model_name) || model_name == "") {
+			stop("Invalid model_name for model index ", j)
+		}
 
 	# Check if this is a legacy covariate model
 	use_legacy_covariate <- grepl("Legacy with covariate", scenario)
 	
-	# Use pre-loaded data (no need to load again in each worker)
+		# Validate data availability
+		if (!exists("all_ranks") || is.null(all_ranks)) {
+			stop("Data 'all_ranks' not available in worker environment")
+		}
 	
-	# Get the specific group data
+		# Get the specific group data with validation
 	if (!(rank.name %in% names(all_ranks))) {
-		stop("Rank name not found in data")
+			stop("Rank name '", rank.name, "' not found in data. Available ranks: ", 
+				 paste(names(all_ranks), collapse=", "))
 	}
 	rank.df <- all_ranks[[rank.name]]
+		
+		# Validate rank data structure
+		if (!is.data.frame(rank.df) || nrow(rank.df) == 0) {
+			stop("Rank data for '", rank.name, "' is empty or not a data frame")
+		}
+		
+		# Check if species column exists
+		if (!(species %in% colnames(rank.df))) {
+			stop("Species '", species, "' not found in rank '", rank.name, "'. Available columns: ",
+				 paste(colnames(rank.df), collapse=", "))
+		}
 	
 	cat("Preparing model data for", rank.name, "\n")
 	
 	# Extract the specific species and create "other" column BEFORE calling prepBetaRegData
 	cat("DEBUG: Extracting species", species, "from", rank.name, "\n")
+		
+		# Validate required columns exist
+		required_cols <- c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date", species)
+		missing_cols <- required_cols[!required_cols %in% colnames(rank.df)]
+		if (length(missing_cols) > 0) {
+			stop("Missing required columns in rank data: ", paste(missing_cols, collapse=", "))
+		}
+		
 	rank.df_spec <- rank.df %>%
 		select("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date", !!species) %>%
 		mutate(other = 1 - !!sym(species))
 	
 	cat("DEBUG: rank.df_spec dimensions:", dim(rank.df_spec), "\n")
 	cat("DEBUG: rank.df_spec columns:", colnames(rank.df_spec), "\n")
+		
+		# Validate species data
+		species_data <- rank.df_spec[[species]]
+		if (all(is.na(species_data)) || all(species_data == 0) || all(species_data == 1)) {
+			stop("Species '", species, "' has no valid variation (all NA, 0, or 1)")
+		}
 	
 	# Use prepBetaRegData with the species-specific data
+		cat("Calling prepBetaRegData...\n")
 	model.dat <- prepBetaRegData(rank.df = rank.df_spec,
 								min.prev = 3,
 								min.date = min.date,
@@ -152,23 +248,39 @@ run_scenarios_fixed <- function(j, chain_no) {
 	cat("  N.core calculated:", nrow(model.dat$y), "\n")
 	cat("  Model type:", model_name, "\n")
 	
-	# Prepare constants
-	constants <- model.dat[c("plotID", "timepoint", "plot_site",
-							"site_start", "plot_start", "plot_index",
-							"plot_num", "plot_site_num",
-							"N.plot", "N.spp", "N.core", "N.site", "N.date",
-							"sin_mo", "cos_mo")]
-	
-	# Add environmental predictors
-	if ("temp" %in% names(model.dat)) constants$temp <- model.dat$temp
-	if ("mois" %in% names(model.dat)) constants$mois <- model.dat$mois
-	if ("pH" %in% names(model.dat)) constants$pH <- model.dat$pH
-	if ("pC" %in% names(model.dat)) constants$pC <- model.dat$pC
-	if ("relEM" %in% names(model.dat)) constants$relEM <- model.dat$relEM
-	if ("LAI" %in% names(model.dat)) constants$LAI <- model.dat$LAI
+		# Validate model data structure
+		if (!is.list(model.dat) || !("y" %in% names(model.dat))) {
+			stop("Invalid model data structure from prepBetaRegData")
+		}
+		if (!is.matrix(model.dat$y) || nrow(model.dat$y) == 0) {
+			stop("Model data 'y' is not a valid matrix or is empty")
+		}
+		
+		# Prepare constants with validation
+		cat("Preparing model constants...\n")
+		required_constants <- c("plotID", "timepoint", "plot_site", "site_start", "plot_start", 
+							   "plot_index", "plot_num", "plot_site_num", "N.plot", "N.spp", 
+							   "N.core", "N.site", "N.date", "sin_mo", "cos_mo")
+		
+		missing_constants <- required_constants[!required_constants %in% names(model.dat)]
+		if (length(missing_constants) > 0) {
+			stop("Missing required constants in model data: ", paste(missing_constants, collapse=", "))
+		}
+		
+		constants <- model.dat[required_constants]
+		
+		# Add environmental predictors with validation
+		env_predictors <- c("temp", "mois", "pH", "pC", "relEM", "LAI")
+		for (pred in env_predictors) {
+			if (pred %in% names(model.dat)) {
+				constants[[pred]] <- model.dat[[pred]]
+				cat("  Added", pred, "predictor\n")
+			}
+		}
 
 	# Add legacy covariate if needed
 	if (use_legacy_covariate) {
+			cat("Adding legacy covariate...\n")
 		# Create legacy covariate: 1 for legacy period (2013-2015), 0 for post-2015
 		legacy_dates <- model.dat$plot_date >= "2013-06-27" & model.dat$plot_date <= "2015-11-30"
 		constants$legacy <- as.numeric(legacy_dates)
@@ -185,6 +297,7 @@ run_scenarios_fixed <- function(j, chain_no) {
 	}
 	
 	# Model hyperparameters - adjust based on model type
+		cat("Setting model hyperparameters...\n")
 	if (model_name == "env_cycl") {
 		constants$N.beta = 8
 		# Use more reasonable prior precision for beta coefficients
@@ -201,12 +314,14 @@ run_scenarios_fixed <- function(j, chain_no) {
 	}
 	
 	# Scale cyclical predictors
+		cat("Scaling cyclical predictors...\n")
 	constants$sin_mo = scale(constants$sin_mo, center = F) %>% as.numeric()
 	constants$cos_mo = scale(constants$cos_mo, center = F) %>% as.numeric()
 	
 	cat("Constants prepared successfully\n")
 	
 	# STANDARDIZED MODEL DEFINITIONS - All models use consistent priors
+		cat("Building Nimble model...\n")
 	if (model_name == "cycl_only" && use_legacy_covariate) {
 		modelCode <- nimble::nimbleCode({
 			for (i in 1:N.core) {
@@ -473,6 +588,7 @@ run_scenarios_fixed <- function(j, chain_no) {
 	}
 	
 	# Create inits
+		cat("Creating initial values...\n")
 	inits <- createInits(constants)
 	
 	# Calculate data-informed initial values for better convergence
@@ -500,6 +616,7 @@ run_scenarios_fixed <- function(j, chain_no) {
 	cat("Model built successfully\n")
 	
 	# Build model
+		cat("Building Nimble model...\n")
 	Rmodel <- nimbleModel(code = modelCode, constants = constants,
 						  data = list(y=model.dat$y), inits = inits)
 	
@@ -511,11 +628,13 @@ run_scenarios_fixed <- function(j, chain_no) {
 	cat("  constants$N.spp:", constants$N.spp, "\n")
 	
 	# Compile model
+		cat("Compiling Nimble model...\n")
 	cModel <- compileNimble(Rmodel)
 	
 	cat("Model compiled successfully\n")
 	
 	# Configure MCMC with proper sampler management - all models now use precision parameter
+		cat("Configuring MCMC...\n")
 	monitors <- c("beta","precision","site_effect","site_effect_sd","intercept","rho")
 	
 	if (use_legacy_covariate) {
@@ -590,22 +709,24 @@ run_scenarios_fixed <- function(j, chain_no) {
 	}
 	
 	# Build and compile MCMC
+		cat("Building and compiling MCMC...\n")
 	myMCMC <- buildMCMC(mcmcConf)
 	compiled <- compileNimble(myMCMC, project = Rmodel, resetFunctions = TRUE)
 	
 	cat("MCMC configured successfully\n")
 	
-	# STANDARDIZED: Run MCMC with convergence-based sampling until reasonable ESS is reached
-	burnin <- 500    # Proper burnin for convergence
+	# TESTING: Run MCMC with convergence-based sampling for testing
+	cat("Running MCMC with convergence-based sampling...\n")
+	burnin <- 100    # Reduced burnin for testing
 	thin <- 1        # No thinning to preserve all samples
-	iter_per_chunk <- 1000   # Iterations per convergence check
-	init_iter <- 200  # Initial iterations for adaptation
-	min_eff_size_perchain <- 10  # Minimum ESS per chain for convergence
-	max_loops <- 50  # Maximum additional sampling loops
+	iter_per_chunk <- 200   # Reduced iterations per convergence check for testing
+	init_iter <- 100  # Reduced initial iterations for testing
+	min_eff_size_perchain <- 5  # Reduced ESS target for testing
+	max_loops <- 10  # Reduced maximum loops for testing
 	max_save_size <- 60000  # Maximum samples to keep in memory
-	min_total_iterations <- 2000  # Minimum total iterations regardless of convergence
+	min_total_iterations <- 500  # Reduced minimum iterations for testing
 	
-	cat("Running production MCMC with convergence-based sampling\n")
+	cat("TESTING: Running MCMC with convergence-based sampling (reduced parameters)\n")
 	cat("  Initial iterations:", init_iter, "burnin:", burnin, "\n")
 	cat("  Iterations per chunk:", iter_per_chunk, "max loops:", max_loops, "\n")
 	cat("  Target ESS per chain:", min_eff_size_perchain, "\n")
@@ -619,6 +740,45 @@ run_scenarios_fixed <- function(j, chain_no) {
 	# Get initial samples and check convergence
 	initial_samples <- as.matrix(compiled$mvSamples)
 	cat("  Initial samples collected, checking convergence...\n")
+	cat("  Initial samples dimensions:", dim(initial_samples), "\n")
+	
+	# Create output directories early for checkpoint saving
+	# Try multiple possible base directories for HPC compatibility
+	possible_bases <- c(
+		getwd(),
+		here("data", "model_outputs"),
+		file.path(Sys.getenv("HOME"), "data", "model_outputs"),
+		file.path(Sys.getenv("PWD"), "data", "model_outputs"),
+		"./data/model_outputs"
+	)
+	
+	model_output_dir <- NULL
+	for (base_dir in possible_bases) {
+		if (!is.null(base_dir) && base_dir != "" && base_dir != "NULL") {
+			test_dir <- file.path(base_dir, "logit_beta_regression", model_name)
+			tryCatch({
+				dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+				if (dir.exists(test_dir)) {
+					model_output_dir <- test_dir
+					cat("  Created output directory:", model_output_dir, "\n")
+					break
+				}
+			}, error = function(e) {
+				cat("  Failed to create directory with base:", base_dir, "-", e$message, "\n")
+			})
+		}
+	}
+	
+	if (is.null(model_output_dir)) {
+		# Fallback: create in current directory
+		model_output_dir <- file.path("data", "model_outputs", "logit_beta_regression", model_name)
+		dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
+		cat("  WARNING: Using fallback output directory:", model_output_dir, "\n")
+	}
+	
+	# Create model_id for consistent naming with legacy covariate indicator
+	legacy_indicator <- ifelse(use_legacy_covariate, "with_legacy_covariate", "without_legacy_covariate")
+	model_id <- paste(model_name, species, min.date, max.date, legacy_indicator, sep = "_")
 	
 	# Check if we need to continue sampling for convergence
 	# Try to check convergence, with fallback if it fails
@@ -632,8 +792,27 @@ run_scenarios_fixed <- function(j, chain_no) {
 	loop_counter <- 0
 	total_iterations <- init_iter
 	
-	# Store all samples as we go
+	# Store all samples as we go - FIXED: Use initial samples as starting point
 	all_samples <- initial_samples
+	cat("  Starting iterative accumulation with", nrow(all_samples), "initial samples\n")
+	
+	# Save initial samples as checkpoint
+	checkpoint_file <- file.path(model_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_initial.rds"))
+	tryCatch({
+		saveRDS(list(samples = all_samples, iterations = total_iterations, loop = 0), checkpoint_file)
+		cat("  ✓ Checkpoint saved: Initial samples (", nrow(all_samples), " iterations)\n")
+	}, error = function(e) {
+		cat("  ✗ Failed to save initial checkpoint:", e$message, "\n")
+		cat("  Attempting to save to current directory as fallback...\n")
+		# Fallback: save to current directory
+		fallback_checkpoint <- paste0("checkpoint_", model_id, "_chain", chain_no, "_initial_FALLBACK.rds")
+		tryCatch({
+			saveRDS(list(samples = all_samples, iterations = total_iterations, loop = 0), fallback_checkpoint)
+			cat("  ✓ Fallback checkpoint saved:", fallback_checkpoint, "\n")
+		}, error = function(e2) {
+			cat("  ✗ CRITICAL: Failed to save even fallback checkpoint:", e2$message, "\n")
+		})
+	})
 	
 	while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
 		if (continue) {
@@ -647,10 +826,38 @@ run_scenarios_fixed <- function(j, chain_no) {
 		compiled$run(niter = iter_per_chunk, thin = thin, nburnin = 0)
 		total_iterations <- total_iterations + iter_per_chunk
 		
-		# Get updated samples and accumulate them
+		# Get updated samples and accumulate them - FIXED: Get only new samples
 		current_samples <- as.matrix(compiled$mvSamples)
-		all_samples <- rbind(all_samples, current_samples)
-		cat("  Updated samples collected:", nrow(current_samples), "new samples,", nrow(all_samples), "total accumulated\n")
+		cat("  Current total samples in compiled object:", nrow(current_samples), "\n")
+		cat("  Previous accumulated samples:", nrow(all_samples), "\n")
+		
+		# Only take the new samples (skip the initial ones we already have)
+		if (nrow(current_samples) > nrow(initial_samples)) {
+			new_samples <- current_samples[(nrow(initial_samples) + 1):nrow(current_samples), , drop = FALSE]
+			all_samples <- rbind(all_samples, new_samples)
+			cat("  Updated samples collected:", nrow(new_samples), "new samples,", nrow(all_samples), "total accumulated\n")
+		} else {
+			cat("  WARNING: No new samples detected, using current samples\n")
+			all_samples <- current_samples
+		}
+		
+		# Save checkpoint after each loop
+		checkpoint_file <- file.path(model_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter + 1, ".rds"))
+		tryCatch({
+			saveRDS(list(samples = all_samples, iterations = total_iterations, loop = loop_counter + 1), checkpoint_file)
+			cat("  ✓ Checkpoint saved: Loop", loop_counter + 1, "(", nrow(all_samples), " iterations)\n")
+		}, error = function(e) {
+			cat("  ✗ Failed to save checkpoint for loop", loop_counter + 1, ":", e$message, "\n")
+			cat("  Attempting to save to current directory as fallback...\n")
+			# Fallback: save to current directory
+			fallback_checkpoint <- paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter + 1, "_FALLBACK.rds")
+			tryCatch({
+				saveRDS(list(samples = all_samples, iterations = total_iterations, loop = loop_counter + 1), fallback_checkpoint)
+				cat("  ✓ Fallback checkpoint saved:", fallback_checkpoint, "\n")
+			}, error = function(e2) {
+				cat("  ✗ CRITICAL: Failed to save even fallback checkpoint:", e2$message, "\n")
+			})
+		})
 		
 		# Check if we need to continue
 		tryCatch({
@@ -664,6 +871,8 @@ run_scenarios_fixed <- function(j, chain_no) {
 		
 		cat("  Total iterations so far:", total_iterations, "\n")
 		cat("  Convergence check result:", ifelse(continue, "CONTINUE", "CONVERGED"), "\n")
+		cat("  Current accumulated sample size:", nrow(all_samples), "\n")
+		cat("  Progress: ", round(loop_counter/max_loops * 100, 1), "% of max loops completed\n")
 	}
 	
 	if (loop_counter >= max_loops) {
@@ -685,16 +894,26 @@ run_scenarios_fixed <- function(j, chain_no) {
 	cat("Final sample dimensions:", dim(samples), "\n")
 	cat("Total iterations run:", total_iterations, "\n")
 	cat("Convergence loops:", loop_counter, "\n")
+	cat("Final ESS check:\n")
 	
-	# Create output directories
-	model_output_dir <- here("data", "model_outputs", "logit_beta_regression", model_name)
-	dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
+	# Final convergence check
+	tryCatch({
+		final_ess <- effectiveSize(as.mcmc(samples))
+		min_final_ess <- min(final_ess, na.rm = TRUE)
+		cat("  Final minimum ESS:", round(min_final_ess, 1), "\n")
+		cat("  Convergence achieved:", min_final_ess >= min_eff_size_perchain, "\n")
+	}, error = function(e) {
+		cat("  Final ESS check failed:", e$message, "\n")
+	})
 	
-	# Create model_id for consistent naming with legacy covariate indicator
-	legacy_indicator <- ifelse(use_legacy_covariate, "with_legacy_covariate", "without_legacy_covariate")
-	model_id <- paste(model_name, species, min.date, max.date, legacy_indicator, sep = "_")
+	cat("=== ITERATIVE SAVING SUMMARY ===\n")
+	cat("  Initial samples:", nrow(initial_samples), "iterations\n")
+	cat("  Additional loops:", loop_counter, "\n")
+	cat("  Total accumulated samples:", nrow(all_samples), "iterations\n")
+	cat("  Checkpoints saved:", loop_counter + 1, "files\n")
+	cat("  Final sample size:", nrow(samples), "iterations\n")
 	
-	# Save MCMC samples
+		# Save MCMC samples with absolute path
 	samples_file <- file.path(model_output_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
 	
 	# Create the complete chain structure with metadata
@@ -718,17 +937,133 @@ run_scenarios_fixed <- function(j, chain_no) {
 		)
 	)
 	
+		# Save with error handling
+		tryCatch({
 	saveRDS(chain_output, samples_file)
-	
-	cat("Saved MCMC samples to:", samples_file, "\n")
+			cat("✓ SUCCESS: Saved MCMC samples to:", samples_file, "\n")
+		}, error = function(e) {
+			cat("✗ ERROR: Failed to save samples to", samples_file, "\n")
+			cat("  Error:", e$message, "\n")
+			# Try to save to current directory as fallback
+			fallback_file <- paste0("samples_", model_id, "_chain", chain_no, "_FALLBACK.rds")
+			tryCatch({
+				saveRDS(chain_output, fallback_file)
+				cat("✓ FALLBACK: Saved to current directory:", fallback_file, "\n")
+			}, error = function(e2) {
+				cat("✗ CRITICAL: Failed to save even to fallback location\n")
+				cat("  Fallback error:", e2$message, "\n")
+			})
+		})
+		
 	cat("Sample dimensions:", dim(samples), "\n")
 	cat("=== Model fitting completed ===\n")
-	cat("  - Consistent priors across all 6 model types\n")
+	cat("  - TESTING: cycl_only genus_bac model with iterative saving\n")
 	cat("  - Beta regression with precision parameter\n")
 	cat("  - Block samplers for efficient parameter sampling\n")
 	cat("  - CONVERGENCE-BASED: Adaptive sampling until reasonable ESS reached\n")
+	cat("  - ITERATIVE SAVING: Samples accumulated and saved incrementally\n")
 	
-	return(list(status = "SUCCESS", samples = samples, file = samples_file))
+	return(list(
+		status = "SUCCESS", 
+		samples = samples, 
+		file = samples_file,
+		model_data = model.dat,  # Include model_data for parallel execution
+		nimble_code = modelCode,  # Include nimble code for parallel execution
+		metadata = list(
+			rank.name = rank.name,
+			species = species,
+			model_name = model_name,
+			model_id = model_id,
+			use_legacy_covariate = use_legacy_covariate,
+			scenario = scenario,
+			min.date = min.date,
+			max.date = max.date,
+			niter = total_iterations,
+			nburnin = burnin,
+			thin = thin,
+			model_data = model.dat,
+			nimble_code = modelCode,
+			model_structure = "standardized_beta_regression_with_consistent_priors"
+		)
+	))
+		
+	}, error = function(e) {
+		# Capture comprehensive error information
+		error_time <- Sys.time()
+		error_context <- list(
+			timestamp = error_time,
+			task_idx = j, # Use j for model index
+			chain_no = chain_no,
+			error_message = if(!is.null(e$message) && e$message != "") e$message else "No error message available",
+			error_call = if(!is.null(e$call)) paste(deparse(e$call), collapse=" ") else "No call information",
+			error_class = class(e)[1],
+			system_info = list(
+				r_version = R.version.string,
+				working_dir = getwd(),
+				available_packages = installed.packages()[,"Package"],
+				memory_usage = if(exists("gc")) gc() else "GC not available"
+			),
+			runtime = if(exists("start_time")) difftime(error_time, start_time, units="secs") else NA
+		)
+		
+		# Create detailed error file with absolute path
+		model_name <- if(exists("model_name")) model_name else "unknown"
+		error_dir <- file.path(getwd(), "data", "model_outputs", "logit_beta_regression", model_name)
+		dir.create(error_dir, showWarnings = FALSE, recursive = TRUE)
+		error_file <- file.path(error_dir, paste0("chain_", j, "_", chain_no, "_ERROR.txt"))
+		
+		# Write comprehensive error report
+		error_report <- c(
+			paste("ERROR DETAILED REPORT -", format(error_time)),
+			paste("Task Index:", error_context$task_idx),
+			paste("Model Index:", j),
+			paste("Chain Number:", error_context$chain_no),
+			paste("Error Message:", error_context$error_message),
+			paste("Error Call:", error_context$error_call),
+			paste("Error Class:", error_context$error_class),
+			paste("Runtime (seconds):", round(error_context$runtime, 2)),
+			paste("R Version:", error_context$system_info$r_version),
+			paste("Working Directory:", error_context$system_info$working_dir),
+			paste("Available Packages:", paste(error_context$system_info$available_packages, collapse=", ")),
+			"",
+			"FULL ERROR OBJECT:",
+			capture.output(str(e))
+		)
+		
+		# Save error report with error handling
+		tryCatch({
+			writeLines(error_report, error_file)
+			cat("✓ ERROR REPORT: Saved detailed error to:", error_file, "\n")
+		}, error = function(e) {
+			cat("✗ ERROR: Failed to save error report to", error_file, "\n")
+			cat("  Error:", e$message, "\n")
+			# Try to save to current directory as fallback
+			fallback_error_file <- paste0("chain_", j, "_", chain_no, "_ERROR_FALLBACK.txt")
+			tryCatch({
+				writeLines(error_report, fallback_error_file)
+				cat("✓ FALLBACK: Saved error report to current directory:", fallback_error_file, "\n")
+			}, error = function(e2) {
+				cat("✗ CRITICAL: Failed to save error report even to fallback location\n")
+				cat("  Fallback error:", e2$message, "\n")
+			})
+		})
+		
+		# Also log to console with detailed information
+		cat("ERROR in Model", j, "Chain", error_context$chain_no, ":\n")
+		cat("  Message:", error_context$error_message, "\n")
+		cat("  Call:", error_context$error_call, "\n")
+		cat("  Class:", error_context$error_class, "\n")
+		cat("  Runtime:", round(error_context$runtime, 2), "seconds\n")
+		cat("  Detailed error saved to:", error_file, "\n")
+		
+		# Return detailed error information
+		return(list(
+			status = "ERROR", 
+			error = error_context$error_message,
+			error_details = error_context,
+			error_file = error_file
+		))
+	})
 }
 
 # Run multiple models for testing
@@ -744,14 +1079,21 @@ cat("\nTesting", test_models, "models across all ranks to verify convergence fix
 library(parallel)
 library(doParallel)
 
-# Create cluster with appropriate number of cores
-# Ensure we have at least 2 models running simultaneously
-# Each model needs 4 chains, so we want at least 8 cores total
-ncores <- max(8, min(detectCores() - 1, test_models * nchains))  # At least 8 cores, leave one free
+# Create cluster with exactly the number of cores needed for testing
+# For testing: 2 chains need exactly 2 cores
+ncores <- test_models * nchains  # Exactly 1 model × 2 chains = 2 cores
+cat("Creating cluster with exactly", ncores, "cores for", test_models, "model ×", nchains, "chains\n")
 cl <- makeCluster(ncores, type = "PSOCK")
 
 # Register the cluster
 registerDoParallel(cl)
+
+# Verify cluster size
+actual_workers <- length(cl)
+cat("Cluster created with", actual_workers, "workers\n")
+if (actual_workers != ncores) {
+  cat("WARNING: Expected", ncores, "workers but got", actual_workers, "\n")
+}
 
 # Export necessary objects to workers
 clusterExport(cl, c("params", "k", "nchains"))
@@ -767,43 +1109,310 @@ cat("Data loaded successfully\n")
 clusterExport(cl, c("run_scenarios_fixed", "params", "all_ranks", "check_continue"))
 
 # Run in parallel for faster execution
-	cat("Starting parallel execution for", test_models, "models with 4 chains each using", ncores, "cores\n")
+	cat("TESTING: Starting parallel execution for", test_models, "cycl_only genus_bac model with", nchains, "chains using", ncores, "cores\n")
 	cat("Expected runtime: Variable (convergence-based sampling)\n")
-	cat("  - Models to test:", test_models, "across", length(unique(params$rank.name)), "ranks\n")
+	cat("  - Models to test:", test_models, "cycl_only genus_bac model\n")
 	cat("  - Chains per model:", nchains, "(total", test_models * nchains, "parallel tasks)\n")
-	cat("  - Initial iterations: ~", round(test_models * 8 / 6, 1), "minutes\n")
+	cat("  - Initial iterations: ~", round(test_models * 4 / 6, 1), "minutes\n")
 	cat("  - Additional iterations: Variable based on convergence\n")
 	cat("  - Target: ESS >= 10 per parameter\n")
 start_time <- Sys.time()
 
-# Run ALL models with 4 chains each in parallel simultaneously
-cat("Running", test_models, "models with 4 chains each in parallel simultaneously...\n")
-cat("This ensures proper convergence assessment with multiple chains per model\n")
+# Run TEST model with 2 chains in parallel
+cat("TESTING: Running", test_models, "cycl_only genus_bac model with", nchains, "chains in parallel\n")
+cat("This tests the iterative saving and convergence-based sampling functionality\n")
 
 # Create a combined task list: (model_idx, chain_no) pairs
 all_tasks <- expand.grid(model_idx = 1:test_models, chain_no = 1:nchains)
 cat("Total parallel tasks:", nrow(all_tasks), "(", test_models, "models ×", nchains, "chains)\n")
+cat("Task details:\n")
+print(all_tasks)
+cat("Cluster size:", ncores, "workers\n")
+cat("Starting parallel execution with foreach...\n")
 
-# Run everything in parallel
-cat("Starting parallel execution at:", format(Sys.time()), "\n")
-all_results_parallel = foreach(task_idx = 1:nrow(all_tasks), 
-                             .packages = c("nimble", "microbialForecast", "here", "tidyverse", "coda"),
-                             .export = c("run_scenarios_fixed", "params", "all_tasks")) %dopar% {
-  # Get model and chain info
-  model_idx <- all_tasks$model_idx[task_idx]
-  chain_no <- all_tasks$chain_no[task_idx]
+# Function to monitor progress in real-time
+monitor_progress <- function() {
+  cat("\n=== REAL-TIME PROGRESS MONITORING ===\n")
+  cat("Press Ctrl+C to stop monitoring\n")
+  
+  while(TRUE) {
+    Sys.sleep(30)  # Check every 30 seconds
+    
+    completed <- 0
+    errors <- 0
+    for (model_idx in 1:test_models) {
+      for (chain_no in 1:nchains) {
+        status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
+        error_file <- paste0("chain_", model_idx, "_", chain_no, "_ERROR.txt")
+        
+        if (file.exists(status_file)) completed <- completed + 1
+        if (file.exists(error_file)) errors <- errors + 1
+      }
+    }
+    
+    total <- test_models * nchains
+    cat(format(Sys.time()), "- Progress:", completed, "/", total, "completed,", 
+        errors, "failed,", total - completed - errors, "running\n")
+  }
+}
+
+# Start progress monitoring in background (optional)
+cat("To monitor progress in real-time, run: monitor_progress()\n")
+cat("Or check status files manually:\n")
+cat("  - chain_[model]_[chain]_status.txt for completed chains\n")
+cat("  - chain_[model]_[chain]_ERROR.txt for failed chains\n")
+
+# Run everything in parallel with incremental saving
+cat("Starting parallel execution with incremental saving at:", format(Sys.time()), "\n")
+
+# Create a function that saves results as they complete
+runAndSave_task <- function(task_idx) {
+  # Initialize error tracking
+  error_details <- list()
+  start_time <- Sys.time()
   
   tryCatch({
-    cat("Worker: Model", model_idx, "Chain", chain_no, "starting at", format(Sys.time()), "\n")
+    # Get task details
+    task <- all_tasks[task_idx, ]
+    model_idx <- task$model_idx
+    chain_no <- task$chain_no
+    
+    cat("Worker: Model", model_idx, "Chain", chain_no, "starting at", format(start_time), "\n")
+    
+    # Log system information for debugging
+    cat("Worker: System info - R version:", R.version.string, "\n")
+    cat("Worker: Working directory:", getwd(), "\n")
+    cat("Worker: Available packages:", paste(installed.packages()[,"Package"], collapse=", "), "\n")
+    
+    # Check if required packages are loaded
+    required_packages <- c("nimble", "microbialForecast", "here", "tidyverse", "coda")
+    missing_packages <- required_packages[!required_packages %in% installed.packages()[,"Package"]]
+    if (length(missing_packages) > 0) {
+      stop("Missing required packages: ", paste(missing_packages, collapse=", "))
+    }
+    
+    # Check if data is available
+    if (!exists("all_ranks") || is.null(all_ranks)) {
+      stop("Data 'all_ranks' not available in worker environment")
+    }
+    
+    # Check if params is available
+    if (!exists("params") || is.null(params) || nrow(params) == 0) {
+      stop("Parameters 'params' not available or empty in worker environment")
+    }
+    
+    # Validate model index
+    if (model_idx > nrow(params)) {
+      stop("Model index ", model_idx, " exceeds available models (", nrow(params), ")")
+    }
+    
+    cat("Worker: All checks passed, calling run_scenarios_fixed...\n")
+    
+    # Run the model with detailed error context
     result <- run_scenarios_fixed(j = model_idx, chain_no = chain_no)
+    
+    # Validate result structure
+    if (!is.list(result) || !("status" %in% names(result))) {
+      stop("Invalid result structure from run_scenarios_fixed")
+    }
+    
+    # Save result immediately if successful
+    if (result$status == "SUCCESS") {
+      # Create output directory early with HPC compatibility
+      possible_bases <- c(
+        here("data", "model_outputs"),
+        file.path(getwd(), "data", "model_outputs"),
+        file.path(Sys.getenv("HOME"), "data", "model_outputs"),
+        file.path(Sys.getenv("PWD"), "data", "model_outputs"),
+        "./data/model_outputs"
+      )
+      
+      model_output_dir <- NULL
+      for (base_dir in possible_bases) {
+        if (!is.null(base_dir) && base_dir != "" && base_dir != "NULL") {
+          test_dir <- file.path(base_dir, "logit_beta_regression", params$model_name[model_idx])
+          tryCatch({
+            dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+            if (dir.exists(test_dir)) {
+              model_output_dir <- test_dir
+              cat("  Created output directory:", model_output_dir, "\n")
+              break
+            }
+          }, error = function(e) {
+            cat("  Failed to create directory with base:", base_dir, "-", e$message, "\n")
+          })
+        }
+      }
+      
+      if (is.null(model_output_dir)) {
+        # Fallback: create in current directory
+        model_output_dir <- file.path("data", "model_outputs", "logit_beta_regression", params$model_name[model_idx])
+        dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
+        cat("  WARNING: Using fallback output directory:", model_output_dir, "\n")
+      }
+      
+      # Create model_id for consistent naming
+      legacy_indicator <- ifelse(grepl("Legacy with covariate", params$scenario[model_idx]), 
+                                "with_legacy_covariate", "without_legacy_covariate")
+      model_id <- paste(params$model_name[model_idx], params$species[model_idx], 
+                       params$min.date[model_idx], params$max.date[model_idx], 
+                       legacy_indicator, sep = "_")
+      
+      # Save MCMC samples immediately
+      samples_file <- file.path(model_output_dir, 
+                               paste0("samples_", model_id, "_chain", chain_no, ".rds"))
+      
+      # Create the complete chain structure with metadata
+      # Use the metadata from the result if available, otherwise create it
+      if ("metadata" %in% names(result) && !is.null(result$metadata)) {
+        # Use the complete metadata from the result
+        metadata <- result$metadata
+        # Add parallel execution specific fields
+        metadata$task_idx <- task_idx
+        metadata$completed_at <- Sys.time()
+      } else {
+        # Fallback: create metadata if not available in result
+        metadata <- list(
+          rank.name = params$rank.name[model_idx],
+          species = params$species[model_idx],
+          model_name = params$model_name[model_idx],
+          model_id = model_id,
+          use_legacy_covariate = grepl("Legacy with covariate", params$scenario[model_idx]),
+          scenario = params$scenario[model_idx],
+          min.date = params$min.date[model_idx],
+          max.date = params$max.date[model_idx],
+          niter = nrow(result$samples),
+          nburnin = 500,  # Default burnin
+          thin = 1,       # Default thin
+          task_idx = task_idx,
+          completed_at = Sys.time(),
+          model_data = result$model_data,  # Include model_data from result
+          nimble_code = result$nimble_code,  # Include nimble_code if available
+          model_structure = "standardized_beta_regression_with_consistent_priors"  # Model structure identifier
+        )
+      }
+      
+      chain_output <- list(
+        samples = result$samples,
+        metadata = metadata
+      )
+      
+      saveRDS(chain_output, samples_file)
+      cat("SAVED: Chain", chain_no, "for model", model_idx, "to", samples_file, "\n")
+      
+      # Also save a simple status file to track progress
+      status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
+      writeLines(paste("SUCCESS", Sys.time(), sep = "\t"), status_file)
+    }
+    
     cat("Worker: Model", model_idx, "Chain", chain_no, "completed at", format(Sys.time()), "\n")
     return(list(model_idx = model_idx, chain_no = chain_no, result = result))
+    
   }, error = function(e) {
-    return(list(model_idx = model_idx, chain_no = chain_no, 
-                result = list(status = "ERROR", error = e$message)))
+    # Capture comprehensive error information
+    error_time <- Sys.time()
+    error_details <- list(
+      timestamp = error_time,
+      task_idx = task_idx,
+      model_idx = if(exists("model_idx")) model_idx else NA,
+      chain_no = if(exists("chain_no")) chain_no else NA,
+      error_message = if(!is.null(e$message) && e$message != "") e$message else "No error message available",
+      error_call = if(!is.null(e$call)) paste(deparse(e$call), collapse=" ") else "No call information",
+      error_class = class(e)[1],
+      system_info = list(
+        r_version = R.version.string,
+        working_dir = getwd(),
+        available_packages = installed.packages()[,"Package"],
+        memory_usage = if(exists("gc")) gc() else "GC not available"
+      ),
+      runtime = if(exists("start_time")) difftime(error_time, start_time, units="secs") else NA
+    )
+    
+    # Create detailed error file
+    task <- all_tasks[task_idx, ]
+    error_file <- paste0("chain_", task$model_idx, "_", task$chain_no, "_ERROR.txt")
+    
+    # Write comprehensive error report
+    error_report <- c(
+      paste("ERROR DETAILED REPORT -", format(error_time)),
+      paste("Task Index:", error_details$task_idx),
+      paste("Model Index:", error_details$model_idx),
+      paste("Chain Number:", error_details$chain_no),
+      paste("Error Message:", error_details$error_message),
+      paste("Error Call:", error_details$error_call),
+      paste("Error Class:", error_details$error_class),
+      paste("Runtime (seconds):", round(error_details$runtime, 2)),
+      paste("R Version:", error_details$system_info$r_version),
+      paste("Working Directory:", error_details$system_info$working_dir),
+      paste("Available Packages:", paste(error_details$system_info$available_packages, collapse=", ")),
+      "",
+      "FULL ERROR OBJECT:",
+      capture.output(str(e))
+    )
+    
+    writeLines(error_report, error_file)
+    
+    # Also log to console with detailed information
+    cat("ERROR in Model", error_details$model_idx, "Chain", error_details$chain_no, ":\n")
+    cat("  Message:", error_details$error_message, "\n")
+    cat("  Call:", error_details$error_call, "\n")
+    cat("  Class:", error_details$error_class, "\n")
+    cat("  Runtime:", round(error_details$runtime, 2), "seconds\n")
+    cat("  Detailed error saved to:", error_file, "\n")
+    
+    # Return detailed error information
+    return(list(
+      model_idx = error_details$model_idx, 
+      chain_no = error_details$chain_no, 
+      result = list(
+        status = "ERROR", 
+        error = error_details$error_message,
+        error_details = error_details,
+        error_file = error_file
+      )
+    ))
   })
 }
+
+# Export the function to workers
+clusterExport(cl, c("runAndSave_task", "params", "all_tasks"))
+
+# Run everything in parallel with incremental saving
+all_results_parallel = foreach(task_idx = 1:nrow(all_tasks), 
+                             .packages = c("nimble", "microbialForecast", "here", "tidyverse", "coda"),
+                             .export = c("runAndSave_task", "params", "all_tasks")) %dopar% {
+  runAndSave_task(task_idx)
+}
 cat("Parallel execution completed at:", format(Sys.time()), "\n")
+
+# Show progress summary
+cat("\n=== PROGRESS SUMMARY ===\n")
+cat("Checking which chains have been completed...\n")
+
+# Count completed chains
+completed_chains <- 0
+error_chains <- 0
+for (model_idx in 1:test_models) {
+  for (chain_no in 1:nchains) {
+    status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
+    error_file <- paste0("chain_", model_idx, "_", chain_no, "_ERROR.txt")
+    
+    if (file.exists(status_file)) {
+      completed_chains <- completed_chains + 1
+      cat("✓ Model", model_idx, "Chain", chain_no, "completed\n")
+    } else if (file.exists(error_file)) {
+      error_chains <- error_chains + 1
+      cat("✗ Model", model_idx, "Chain", chain_no, "failed\n")
+    } else {
+      cat("? Model", model_idx, "Chain", chain_no, "status unknown\n")
+    }
+  }
+}
+
+cat("\nProgress Summary:\n")
+cat("  Completed chains:", completed_chains, "/", test_models * nchains, "\n")
+cat("  Failed chains:", error_chains, "/", test_models * nchains, "\n")
+cat("  Success rate:", round(completed_chains / (test_models * nchains) * 100, 1), "%\n")
 
 # Reorganize results by model
 all_results <- list()

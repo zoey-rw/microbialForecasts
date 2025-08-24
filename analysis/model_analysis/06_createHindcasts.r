@@ -3,8 +3,8 @@
 testing=TRUE
 #### Reading in files ####
 
-source("source.R")
-source("microbialForecast/R/run_hindcast.r")
+source("../../source.R")
+source("../../microbialForecast/R/run_hindcast.r")
 
 # Load data.table for optimization
 if (!require(data.table, quietly = TRUE)) {
@@ -47,7 +47,7 @@ cat("🚀 Starting hindcast generation for", if(testing) paste0(model_limit, " m
 pb <- txtProgressBar(min = 0, max = model_limit, style = 3)
 
 for(k in 1:model_limit){
-	source("microbialForecast/R/run_hindcast.r")
+	source("../../microbialForecast/R/run_hindcast.r")
 
 	model_id=model_id_list[k]
 	# Update progress bar instead of verbose message
