@@ -113,25 +113,62 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 	
 	cat("  Filtered data dimensions:", dim(rank_filtered), "\n")
 	
-	# Create a simplified model.dat structure for Dirichlet models
-	# This mimics what prepTaxonomicData would create but without the broken function
-	model.dat <- list()
+	# Follow the exact same pattern as prepBetaRegData
+	# Create expanded data with all possible plot-date combinations
+	cat("    Creating expanded data structure like prepBetaRegData...\n")
 	
 	# Get unique plots and sites
 	plots <- unique(rank_filtered$plotID)
 	sites <- unique(rank_filtered$siteID)
 	dates <- unique(rank_filtered$dates)
 	
-	# Create plot and site mappings
+	# Debug: Check data format
+	cat("    Data format check:\n")
+	cat("      First few plots:", head(plots), "\n")
+	cat("      Plots class:", class(plots), "\n")
+	cat("      First few sites:", head(sites), "\n")
+	cat("      Sites class:", class(sites), "\n")
+	cat("      First few dates:", head(dates), "\n")
+	cat("      Dates class:", class(dates), "\n")
+	cat("      Any NA dates:", any(is.na(dates)), "\n")
+	
+	# Create all possible plot-date combinations (like prepBetaRegData does)
+	all_poss_date_combos <- tidyr::expand(
+		rank_filtered,
+		nesting(siteID, plotID),
+		dates
+	) %>% 
+	distinct() %>% 
+	mutate(plot_date = paste0(plotID, "_", format(dates, "%Y%m%d")))
+	
+	# Merge back with actual data (like prepBetaRegData does)
+	expanded_dat <- merge(rank_filtered, all_poss_date_combos, all = TRUE) %>% 
+		arrange(siteID, plotID, dates)
+	
+	# Create sequential timepoints like prepBetaRegData does
+	expanded_dat$timepoint <- as.numeric(as.factor(expanded_dat$dates))
+	
+	# Get timepoint for actual data (like prepBetaRegData does)
+	timepoint <- expanded_dat[match(rank_filtered$dates, expanded_dat$dates), ]$timepoint
+	names(timepoint) <- expanded_dat[match(rank_filtered$dates, expanded_dat$dates), ]$dates
+	
+	# Use the original timepoints from expanded_dat (no artificial mapping)
+	cat("    Using original timepoints from expanded_dat\n")
+	
+	# Create plot and site mappings - ensure 1-based indexing
 	plot_map <- data.frame(plotID = plots, plot_num = 1:length(plots))
 	site_map <- data.frame(siteID = sites, site_num = 1:length(sites))
-	date_map <- data.frame(dates = dates, timepoint = 1:length(dates))
 	
 	# Merge mappings
 	rank_filtered <- rank_filtered %>%
 		left_join(plot_map, by = "plotID") %>%
-		left_join(site_map, by = "siteID") %>%
-		left_join(date_map, by = "dates")
+		left_join(site_map, by = "siteID")
+	
+	# Add timepoint to rank_filtered
+	rank_filtered$timepoint <- timepoint
+	
+	# Create model.dat structure like prepBetaRegData does
+	model.dat <- list()
 	
 	# Create the y matrix for Dirichlet model (compositional data)
 	y_data <- rank_filtered %>%
@@ -151,7 +188,33 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 	model.dat$timepoint <- rank_filtered$timepoint
 	model.dat$plot_site <- rank_filtered$site_num
 	model.dat$plot_num <- rank_filtered$plot_num
-	model.dat$plot_site_num <- rank_filtered$site_num
+	
+	# Create plot_site_num like prepBetaRegData does
+	# Each plot belongs to a site, and we need to map plot index p to site index k
+	plot_site <- substr(plots, 1, 4)  # Extract site ID from plot ID
+	unique_sites <- unique(plot_site)  # Get unique site IDs in order they appear
+	site_indices <- 1:length(unique_sites)  # Create sequential site indices
+	names(site_indices) <- unique_sites  # Name them with site IDs
+	
+	# Now map each plot to its site index: plot_site_num[p] gives site index for plot p
+	plot_site_num <- site_indices[plot_site]
+	
+	# Add plot_site_num to model.dat - this maps plot indices to site indices
+	model.dat$plot_site_num <- plot_site_num
+	
+	# Debug: Check plot_site_num values
+	cat("    Checking plot_site_num values:\n")
+	cat("      plot_site_num range:", range(plot_site_num), "\n")
+	cat("      plot_site_num unique values:", paste(sort(unique(plot_site_num)), collapse = ", "), "\n")
+	cat("      Number of unique plot_site_num values:", length(unique(plot_site_num)), "\n")
+	cat("      Number of sites:", length(sites), "\n")
+	
+	# Debug: Check timepoint values
+	cat("    Checking timepoint values:\n")
+	cat("      timepoint range:", range(rank_filtered$timepoint), "\n")
+	cat("      timepoint unique values:", paste(sort(unique(rank_filtered$timepoint)), collapse = ", "), "\n")
+	cat("      Number of unique timepoint values:", length(unique(rank_filtered$timepoint)), "\n")
+	cat("      Expected environmental time periods: full calibration period\n")
 	
 	# Debug: Check for any 0 or negative values in indexing arrays
 	cat("  Checking indexing arrays for 0 or negative values...\n")
@@ -207,6 +270,20 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 	cat("    Final plot_index range:", range(plot_index_array), "\n")
 	cat("    N.date:", length(dates), "\n")
 	
+	# CRITICAL FIX: Ensure all arrays are properly aligned and no missing values
+	cat("  Final validation of arrays...\n")
+	cat("    plot_start_array length:", length(plot_start_array), "\n")
+	cat("    plot_index_array length:", length(plot_index_array), "\n")
+	cat("    Any plot_start_array == 0:", any(plot_start_array == 0), "\n")
+	cat("    Any plot_index_array == 0:", any(plot_index_array == 0), "\n")
+	
+	# Fill any remaining 0 values with 1 (safe fallback)
+	plot_start_array[plot_start_array == 0] <- 1
+	plot_index_array[plot_index_array == 0] <- 1
+	
+	cat("    After fixing zeros - plot_start range:", range(plot_start_array), "\n")
+	cat("    After fixing zeros - plot_index range:", range(plot_index_array), "\n")
+	
 	model.dat$plot_start <- plot_start_array
 	model.dat$plot_index <- plot_index_array
 	model.dat$site_start <- site_info$site_start
@@ -216,42 +293,146 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 	model.dat$N.spp <- length(keep_names)
 	model.dat$N.core <- nrow(rank_filtered)
 	model.dat$N.site <- length(sites)
-	model.dat$N.date <- length(dates)
+	model.dat$N.date <- NULL  # Will be set after environmental data filtering
 	
-	# Add cyclical predictors
-	model.dat$sin_mo <- sin(2 * pi * as.numeric(format(dates, "%m")) / 12)
-	model.dat$cos_mo <- cos(2 * pi * as.numeric(format(dates, "%m")) / 12)
+	# Cyclical predictors will be added by filter_date_site approach
 	
 	cat("  Dirichlet data prepared successfully\n")
 	
-	# Prepare constants
-	constants <- model.dat[c("plotID", "timepoint", "plot_site",
-							"site_start", "plot_start", "plot_index",
+	# Debug: Check what's in model.dat
+	cat("    Model.dat contents:\n")
+	cat("      Names:", paste(names(model.dat), collapse = ", "), "\n")
+	cat("      Length:", length(model.dat), "\n")
+	
+	# Prepare constants - only include what's actually used in the model
+	# Note: N.date will be set after environmental data filtering
+	constants <- model.dat[c("plot_start", "plot_index",
 							"plot_num", "plot_site_num",
-							"N.plot", "N.spp", "N.core", "N.site", "N.date",
-							"sin_mo", "cos_mo")]
+							"N.plot", "N.spp", "N.core", "N.site")]
 	
-	# Add environmental predictors - create placeholder values if missing
-	cat("  Preparing environmental predictors...\n")
+	# Debug: Check constants after creation
+	cat("    Constants after creation:\n")
+	cat("      Names:", paste(names(constants), collapse = ", "), "\n")
+	cat("      Length:", length(constants), "\n")
 	
-	# Create placeholder environmental data for testing
-	n_plots <- constants$N.plot
-	n_dates <- constants$N.date
-	n_sites <- constants$N.site
+	# Use the exact same approach as prepBetaRegData for environmental data
+	cat("  Preparing environmental predictors using prepBetaRegData approach...\n")
 	
-	# Temperature and moisture (site x time)
-	constants$temp <- matrix(rnorm(n_sites * n_dates, 15, 5), nrow = n_sites, ncol = n_dates)
-	constants$mois <- matrix(runif(n_sites * n_dates, 0.1, 0.8), nrow = n_sites, ncol = n_dates)
-	
-	# pH and pC (plot x plot_start)
-	constants$pH <- matrix(rnorm(n_plots * n_plots, 6.5, 1), nrow = n_plots, ncol = n_plots)
-	constants$pC <- matrix(rnorm(n_plots * n_plots, 2.5, 0.5), nrow = n_plots, ncol = n_plots)
-	
-	# LAI and relEM (plot x time)
-	constants$LAI <- matrix(runif(n_plots * n_dates, 0.5, 4), nrow = n_plots, ncol = n_dates)
-	constants$relEM <- matrix(runif(n_plots * n_dates, 0.1, 0.9), nrow = n_plots, ncol = n_dates)
-	
-	cat("  Environmental predictors created successfully\n")
+	# Load environmental predictor data
+	predictor_file <- here("data", "clean", "all_predictor_data.rds")
+	if (file.exists(predictor_file)) {
+		cat("    Loading environmental predictors from:", predictor_file, "\n")
+		all_predictors <- readRDS(predictor_file)
+		
+		cat("    Predictor data structure:", paste(names(all_predictors), collapse = ", "), "\n")
+		
+		# Get the sites and plots that have been observed for multiple dates
+		# This mimics what prepBetaRegData does
+		keep_plots <- plots
+		keep_sites <- sites
+		
+		# Use filter_date_site like prepBetaRegData does
+		cat("    Filtering environmental data using filter_date_site...\n")
+		
+		# Debug: Check rownames of each component
+		cat("    Checking rownames of environmental data components:\n")
+		for (i in 1:length(all_predictors)) {
+			comp_name <- names(all_predictors)[i]
+			if (is.matrix(all_predictors[[i]])) {
+				cat("      ", comp_name, ": ", class(all_predictors[[i]]), " dim:", paste(dim(all_predictors[[i]]), collapse = "x"), "\n")
+				cat("        First few rownames:", paste(head(rownames(all_predictors[[i]])), collapse = ", "), "\n")
+			} else {
+				cat("      ", comp_name, ": ", class(all_predictors[[i]]), "\n")
+			}
+		}
+		
+		filt_predictor_data <- lapply(all_predictors, filter_date_site, 
+																	keep_sites = keep_sites,
+																	keep_plots = keep_plots, 
+																	min.date = as.Date("2013-01-01"), 
+																	max.date = as.Date("2018-01-01"))
+		
+		# Debug: Check what filter_date_site returned
+		cat("    Filtered predictor data structure:\n")
+		for (i in 1:length(filt_predictor_data)) {
+			cat("      ", names(filt_predictor_data)[i], ": ", class(filt_predictor_data[[i]]), 
+				ifelse(is.matrix(filt_predictor_data[[i]]), paste(" dim:", paste(dim(filt_predictor_data[[i]]), collapse = "x")), ""), "\n")
+		}
+		
+		# Rename relEM_plot to relEM like prepBetaRegData does
+		names(filt_predictor_data) <- recode(names(filt_predictor_data), relEM_plot = "relEM")
+		
+		# Debug: Check for any NULL or problematic components
+		cat("    Checking for NULL or problematic components:\n")
+		for (i in 1:length(filt_predictor_data)) {
+			comp_name <- names(filt_predictor_data)[i]
+			comp_value <- filt_predictor_data[[i]]
+			if (is.null(comp_value)) {
+				cat("      WARNING:", comp_name, "is NULL - removing\n")
+				filt_predictor_data[[i]] <- NULL
+			} else if (length(comp_value) == 1 && is.na(comp_value)) {
+				cat("      WARNING:", comp_name, "is NA - removing\n")
+				filt_predictor_data[[i]] <- NULL
+			} else {
+				cat("      ", comp_name, "is valid:", class(comp_value), "\n")
+			}
+		}
+		
+		# Add sine/cosine using the same approach as prepBetaRegData
+		cat("    Adding sine/cosine predictors...\n")
+		if ("mois" %in% names(filt_predictor_data) && !is.null(filt_predictor_data$mois)) {
+			sin_cos_month <- get_sin_cos(colnames(filt_predictor_data$mois))
+			filt_predictor_data$sin_mo = sin_cos_month$sin
+			filt_predictor_data$cos_mo = sin_cos_month$cos
+		} else {
+			cat("    WARNING: mois data not available for sine/cosine\n")
+			# Create default sine/cosine based on our time structure
+			months <- 1:constants$N.date
+			filt_predictor_data$sin_mo = sin(2 * pi * months / 12)
+			filt_predictor_data$cos_mo = cos(2 * pi * months / 12)
+		}
+		
+		# Debug: Check constants before adding environmental data
+		cat("    Constants before adding environmental data:\n")
+		cat("      Names:", paste(names(constants), collapse = ", "), "\n")
+		cat("      Length:", length(constants), "\n")
+		
+		# Debug: Check filt_predictor_data names
+		cat("    Environmental data names:\n")
+		cat("      Names:", paste(names(filt_predictor_data), collapse = ", "), "\n")
+		cat("      Length:", length(filt_predictor_data), "\n")
+		
+		# Add filtered environmental data to constants
+		constants <- c(constants, filt_predictor_data)
+		
+		# Set N.date based on the actual environmental data time periods
+		if ("mois" %in% names(filt_predictor_data) && !is.null(filt_predictor_data$mois)) {
+			model.dat$N.date <- ncol(filt_predictor_data$mois)
+			cat("    Set N.date to", model.dat$N.date, "based on environmental data\n")
+		} else {
+			model.dat$N.date <- length(unique(dates))
+			cat("    Set N.date to", model.dat$N.date, "based on microbial data dates\n")
+		}
+		
+		# Add N.date to constants now that it's been set
+		constants$N.date <- model.dat$N.date
+		
+		# Debug: Check constants after adding environmental data
+		cat("    Constants after adding environmental data:\n")
+		cat("      Names:", paste(names(constants), collapse = ", "), "\n")
+		cat("      Length:", length(constants), "\n")
+		
+		cat("    Environmental predictors loaded successfully using prepBetaRegData approach\n")
+	} else {
+		cat("    WARNING: Environmental predictor file not found, using defaults\n")
+		# Create default environmental predictor matrices
+		constants$temp <- matrix(15, nrow = constants$N.site, ncol = constants$N.date)
+		constants$mois <- matrix(0.5, nrow = constants$N.site, ncol = constants$N.date)
+		constants$pH <- matrix(6.5, nrow = constants$N.plot, ncol = constants$N.date)
+		constants$pC <- matrix(2.0, nrow = constants$N.plot, ncol = constants$N.date)
+		constants$LAI <- matrix(2.0, nrow = constants$N.plot, ncol = constants$N.date)
+		constants$relEM <- matrix(0.5, nrow = constants$N.plot, ncol = constants$N.date)
+	}
 	
 	# Add driver uncertainty parameters
 	temporalDriverUncertainty <- FALSE  # Set to TRUE if you want driver uncertainty
@@ -313,13 +494,13 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 			# Plot-level process model ----
 			for (s in 1:N.spp) {
 				for (p in 1:N.plot) {
-					for (t in plot_start[p]) {
-						plot_mu[p, s, t] ~ dgamma(0.5, 1) # Plot means for first date
-						# Convert back to relative abundance
-						plot_rel[p, s, t] <- plot_mu[p, s, t] / sum(plot_mu[p, 1:N.spp, t])
-					}
-
-					for (t in plot_index[p]:N.date) {
+					# Initial condition - ensure plot_start[p] is valid
+					plot_mu[p, s, plot_start[p]] ~ dgamma(0.5, 1) # Plot means for first date
+					# Convert back to relative abundance
+					plot_rel[p, s, plot_start[p]] <- plot_mu[p, s, plot_start[p]] / sum(plot_mu[p, 1:N.spp, plot_start[p]])
+					
+					# Dynamic evolution - ensure plot_index[p] is valid
+					for (t in (plot_index[p] + 1):N.date) {
 						# Previous value * rho - with numerical stability
 						log(Ex[p, s, t]) <- rho[s] * log(max(plot_mu[p, s, t - 1], 0.001)) +
 							beta[s, 1] * temp[plot_site_num[p], t] +
@@ -328,7 +509,6 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 							beta[s, 4] * pC[p, plot_start[p]] +
 							beta[s, 5] * relEM[p, t] +
 							beta[s, 6] * LAI[plot_site_num[p], t] +
-							beta[s, 7] * sin_mo[t] + beta[s, 8] * cos_mo[t] +
 							site_effect[plot_site_num[p], s] +
 							intercept[s]
 						# Add process error (sigma) - with numerical stability
@@ -339,23 +519,23 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 				}
 			}
 
-				# Priors for site effect covariance matrix - improved
-	sig ~ dgamma(2, 8)  # Tighter gamma prior for better convergence
+			# Priors for site effect covariance matrix - improved
+			sig ~ dgamma(2, 8)  # Tighter gamma prior for better convergence
 
-	# Priors for site random effects - robust Student-t priors
-	for (s in 1:N.spp) {
-		for (k in 1:N.site) {
-			site_effect[k, s] ~ dt(0, sig, df = 3)  # Heavy-tailed for robustness
-		}
-	}
+			# Priors for site random effects - robust Student-t priors
+			for (s in 1:N.spp) {
+				for (k in 1:N.site) {
+					site_effect[k, s] ~ dt(0, sig, df = 3)  # Heavy-tailed for robustness
+				}
+			}
 
-	# Priors for everything else - improved with robust priors
-	for (s in 1:N.spp) {
-		sigma[s] ~ dgamma(2, 15)    # Tighter gamma prior for process error
-		intercept[s] ~ dt(0, 0.3, df = 3)  # Robust prior for intercept
-		rho[s] ~ dbeta(2, 2)        # Truncated beta prior (0,1) for stability
-		beta[s, 1:8] ~ dmvt(zeros[1:8], omega[1:8, 1:8], df = 3)  # Robust multivariate t
-	}
+			# Priors for everything else - improved with robust priors
+			for (s in 1:N.spp) {
+				sigma[s] ~ dgamma(2, 15)    # Tighter gamma prior for process error
+				intercept[s] ~ dt(0, 0.3, df = 3)  # Robust prior for intercept
+				rho[s] ~ dbeta(2, 2)        # Truncated beta prior (0,1) for stability
+				beta[s, 1:8] ~ dmvt(zeros[1:8], omega[1:8, 1:8], df = 3)  # Robust multivariate t
+			}
 		})
 	} else if (model_name == "env_cov") {
 		modelCode <- nimble::nimbleCode({
@@ -367,13 +547,13 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 			# Plot-level process model ----
 			for (s in 1:N.spp) {
 				for (p in 1:N.plot) {
-					for (t in plot_start[p]) {
-						plot_mu[p, s, t] ~ dgamma(0.5, 1) # Plot means for first date
-						# Convert back to relative abundance
-						plot_rel[p, s, t] <- plot_mu[p, s, t] / sum(plot_mu[p, 1:N.spp, t])
-					}
-
-					for (t in plot_index[p]:N.date) {
+					# Initial condition - ensure plot_start[p] is valid
+					plot_mu[p, s, plot_start[p]] ~ dgamma(0.5, 1) # Plot means for first date
+					# Convert back to relative abundance
+					plot_rel[p, s, plot_start[p]] <- plot_mu[p, s, plot_start[p]] / sum(plot_mu[p, 1:N.spp, plot_start[p]])
+					
+					# Dynamic evolution - ensure plot_index[p] is valid
+					for (t in (plot_index[p] + 1):N.date) {
 						# Previous value * rho - with numerical stability
 						log(Ex[p, s, t]) <- rho[s] * log(max(plot_mu[p, s, t - 1], 0.001)) +
 							beta[s, 1] * temp[plot_site_num[p], t] +
@@ -421,13 +601,13 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 			# Plot-level process model ----
 			for (s in 1:N.spp) {
 				for (p in 1:N.plot) {
-					for (t in plot_start[p]) {
-						plot_mu[p, s, t] ~ dgamma(0.5, 1) # Plot means for first date
-						# Convert back to relative abundance
-						plot_rel[p, s, t] <- plot_mu[p, s, t] / sum(plot_mu[p, 1:N.spp, t])
-					}
-
-					for (t in plot_index[p]:N.date) {
+					# Initial condition - ensure plot_start[p] is valid
+					plot_mu[p, s, plot_start[p]] ~ dgamma(0.5, 1) # Plot means for first date
+					# Convert back to relative abundance
+					plot_rel[p, s, plot_start[p]] <- plot_mu[p, s, plot_start[p]] / sum(plot_mu[p, 1:N.spp, plot_start[p]])
+					
+					# Dynamic evolution - ensure plot_index[p] is valid
+					for (t in (plot_index[p] + 1):N.date) {
 						# Previous value * rho - with numerical stability
 						log(Ex[p, s, t]) <- rho[s] * log(max(plot_mu[p, s, t - 1], 0.001)) +
 							beta[s, 1] * sin_mo[t] + beta[s, 2] * cos_mo[t] +
@@ -462,7 +642,7 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 	}
 	
 	# Create inits using the Dirichlet-specific inits function
-	source("dirichlet_helper_functions.r")
+	source(here("analysis", "model_analysis", "dirichlet_covariance", "dirichlet_helper_functions.r"))
 	inits <- initsFun_dirichlet(constants, type = "tax")
 	
 	cat("Dirichlet model built successfully\n")

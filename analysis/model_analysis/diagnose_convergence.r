@@ -122,3 +122,4 @@ if (length(recent_files) > 0) {
 } else {
   cat("No recent output files found\n")
 }
+
