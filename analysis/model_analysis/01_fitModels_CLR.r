@@ -674,6 +674,7 @@ run_scenarios_fixed <- function(j, chain_no) {
 	# Create the complete chain structure with enhanced metadata
 	chain_output <- list(
 		samples = samples,
+		samples2 = samples,  # CLR models use same samples for both parameter and plot predictions
 		metadata = list(
 			rank.name = rank.name,
 			species = species,
@@ -926,6 +927,7 @@ runAndSave_task <- function(task_idx) {
       
       chain_output <- list(
         samples = result$samples,
+        samples2 = result$samples,  # CLR models use same samples for both parameter and plot predictions
         metadata = metadata
       )
       
@@ -987,9 +989,9 @@ runAndSave_task <- function(task_idx) {
     # Also log to console with detailed information
     cat("ERROR in Model", error_details$model_idx, "Chain", error_details$chain_no, ":\n")
     cat("  Message:", error_details$error_message, "\n")
-    cat("  Call:", error_details$error_details$error_call, "\n")
-    cat("  Class:", error_details$error_details$error_class, "\n")
-    cat("  Runtime:", round(error_details$error_details$runtime, 2), "seconds\n")
+    cat("  Call:", error_details$error_call, "\n")
+    cat("  Class:", error_details$error_class, "\n")
+    cat("  Runtime:", round(error_details$runtime, 2), "seconds\n")
     cat("  Detailed error saved to:", error_file, "\n")
     
     # Return detailed error information

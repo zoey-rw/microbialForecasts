@@ -584,7 +584,7 @@ pacman::p_load(tidyverse, anytime)
 
 
 #' @title create_covariate_samples
-#' @description samples covariate values
+#' @description samples covariate values with strict data validation - fails fast when data is missing
 #'
 #' @export
 #'
@@ -592,62 +592,272 @@ create_covariate_samples <- function(model.inputs, plotID = NULL, siteID,
 																		 Nmc_large, Nmc,
 																		 N.beta = 8, prev_samples = NULL, ...) {
 	
-	# Simple version to test
-	start_date <- model.inputs$site_start[siteID]
+	# STRICT VERSION: This function fails fast when data is missing - no fallbacks!
+	
+	# Validate inputs - fail fast if invalid
+	if (is.null(model.inputs) || !is.list(model.inputs)) {
+		stop("model.inputs is NULL or not a list - investigate data loading")
+	}
+	
+	# Get the start date for this site - fail fast if missing
+	# FIXED: Handle both list and vector structures for site_start
+	if (is.null(model.inputs$site_start)) {
+		stop("model.inputs$site_start is NULL - investigate data structure")
+	}
+	
+	# Check if site_start is a list (old format) or vector (new format)
+	if (is.list(model.inputs$site_start)) {
+		# Old format: site_start is a list with site names as keys
+		if (is.null(model.inputs$site_start[[siteID]])) {
+			stop("Site ", siteID, " not found in model.inputs$site_start - investigate site mapping")
+		}
+		start_date <- model.inputs$site_start[[siteID]]
+	} else if (is.vector(model.inputs$site_start)) {
+		# New format: site_start is a vector where index corresponds to site number
+		# We need to find the site number for this siteID
+		if (!"plot_site_num" %in% names(model.inputs)) {
+			stop("plot_site_num not found in model.inputs - cannot map siteID to site number")
+		}
+		
+		# Find a plot for this site to get the site number
+		# The siteID and plot_site_num are vectors in the model data
+		# Use truth.plot.long for proper mapping since it has the correct structure
+		if ("truth.plot.long" %in% names(model.inputs)) {
+			plot_site_key <- model.inputs$truth.plot.long %>%
+				select(siteID, plotID) %>%
+				distinct()
+			
+			site_row <- plot_site_key %>% filter(siteID == !!siteID) %>% head(1)
+			if (nrow(site_row) == 0) {
+				stop("Site ", siteID, " not found in truth.plot.long - investigate site mapping")
+			}
+			
+			# Get the plot for this site
+			plot_for_site <- site_row$plotID[1]
+			
+			# Find the plot_site_num for this plot
+			plot_index <- which(model.inputs$plotID == plot_for_site)[1]
+			if (is.na(plot_index)) {
+				stop("Plot ", plot_for_site, " not found in plotID vector - investigate plot mapping")
+			}
+			
+			site_num <- model.inputs$plot_site_num[plot_index]
+			if (is.na(site_num) || site_num < 1 || site_num > length(model.inputs$site_start)) {
+				stop("Invalid site number ", site_num, " for plot ", plot_for_site, " - investigate site mapping")
+			}
+			
+			start_date <- model.inputs$site_start[site_num]
+		} else {
+			# Fallback to old method if truth.plot.long not available
+			plot_site_key <- data.frame(
+				siteID = model.inputs$siteID,
+				plot_site_num = model.inputs$plot_site_num
+			) %>% distinct()
+			
+			site_row <- plot_site_key %>% filter(siteID == !!siteID) %>% head(1)
+			if (nrow(site_row) == 0) {
+				stop("Site ", siteID, " not found in plot_site_key - investigate site mapping")
+			}
+			
+			site_num <- site_row$plot_site_num[1]
+			if (site_num < 1 || site_num > length(model.inputs$site_start)) {
+				stop("Invalid site number ", site_num, " for site ", siteID, " - investigate site mapping")
+			}
+			
+			start_date <- model.inputs$site_start[site_num]
+		}
+	} else {
+		stop("model.inputs$site_start is neither a list nor a vector - investigate data structure")
+	}
+	
+	# Validate start_date - fail fast if invalid
+	if (is.na(start_date) || is.null(start_date) || start_date < 1) {
+		stop("Invalid start_date ", start_date, " for site ", siteID, " - investigate site data")
+	}
+	
+	# Get N.date - fail fast if invalid
+	if (is.null(model.inputs$N.date) || !is.numeric(model.inputs$N.date) || model.inputs$N.date < 1) {
+		stop("Invalid N.date in model.inputs - investigate data structure")
+	}
+	
 	NT <- model.inputs$N.date
 	
+	# Ensure start_date is within bounds - fail fast if out of bounds
+	if (start_date > NT) {
+		stop("start_date ", start_date, " exceeds N.date ", NT, " for site ", siteID, 
+			 " - investigate calibration vs validation period mismatch")
+	}
+	
+	# Validate all required data structures - fail fast if missing
+	required_arrays <- c("temp", "temp_sd", "mois", "mois_sd", "pH", "pH_sd", "pC", "pC_sd", "relEM", "LAI")
+	required_vectors <- c("sin_mo", "cos_mo")
+	
+	# Check arrays
+	for (array_name in required_arrays) {
+		if (is.null(model.inputs[[array_name]])) {
+			stop("Required array '", array_name, "' is NULL in model.inputs - investigate data loading")
+		}
+	}
+	
+	# Check vectors (sin_mo and cos_mo)
+	for (vector_name in required_vectors) {
+		if (is.null(model.inputs[[vector_name]])) {
+			stop("Required vector '", vector_name, "' is NULL in model.inputs - investigate data loading")
+		}
+	}
+	
 	# Create output array
-	covar_full <- array(NA, dim = c(Nmc_large, N.beta, NT))
+	covar_full <- array(0, dim = c(Nmc_large, N.beta, NT))
 	
-	# Check if plot exists in plot-level arrays
-	plot_exists_in_pH <- plotID %in% rownames(model.inputs$pH)
-	plot_exists_in_pC <- plotID %in% rownames(model.inputs$pC)
-	plot_exists_in_relEM <- plotID %in% rownames(model.inputs$relEM)
-	
-	# Loop through timepoints
-	for (time in start_date:NT) {
+	# STRICT ARRAY ACCESS: Fail fast if data is missing or out of bounds
+	for (time in 1:NT) {
 		
-		# Get values with fallbacks for missing plots
-		pH_value <- if (plot_exists_in_pH) {
-			model.inputs$pH[plotID, start_date]
-		} else {
-			mean(model.inputs$pH[, start_date], na.rm = TRUE)
+		# Temperature - fail fast if missing
+		if (!siteID %in% rownames(model.inputs$temp)) {
+			stop("Site ", siteID, " not found in temperature data rownames - investigate site mapping")
+		}
+		if (time > ncol(model.inputs$temp)) {
+			stop("Time ", time, " exceeds temperature data columns (", ncol(model.inputs$temp), ") - investigate time dimension")
 		}
 		
-		pC_value <- if (plot_exists_in_pC) {
-			model.inputs$pC[plotID, start_date]
-		} else {
-			mean(model.inputs$pC[, start_date], na.rm = TRUE)
+		temp_mean <- model.inputs$temp[siteID, time]
+		if (is.na(temp_mean) || is.infinite(temp_mean)) {
+			stop("Temperature value is NA or infinite for site ", siteID, " time ", time, " - investigate data quality")
 		}
 		
-		relEM_value <- if (plot_exists_in_relEM) {
-			model.inputs$relEM[plotID, time]
-		} else {
-			mean(model.inputs$relEM[, time], na.rm = TRUE)
+		temp_sd <- model.inputs$temp_sd[siteID, time]
+		if (is.na(temp_sd) || is.infinite(temp_sd) || temp_sd <= 0) {
+			stop("Temperature SD is NA, infinite, or <= 0 for site ", siteID, " time ", time, " - investigate data quality")
 		}
 		
-		# Get standard deviations with fallbacks
-		pH_sd_value <- if (plot_exists_in_pH) {
-			model.inputs$pH_sd[plotID, start_date]
-		} else {
-			mean(model.inputs$pH_sd[, start_date], na.rm = TRUE)
+		# Moisture - fail fast if missing
+		if (!siteID %in% rownames(model.inputs$mois)) {
+			stop("Site ", siteID, " not found in moisture data rownames - investigate site mapping")
+		}
+		if (time > ncol(model.inputs$mois)) {
+			stop("Time ", time, " exceeds moisture data columns (", ncol(model.inputs$mois), ") - investigate time dimension")
 		}
 		
-		pC_sd_value <- if (plot_exists_in_pC) {
-			model.inputs$pC_sd[plotID, start_date]
-		} else {
-			mean(model.inputs$pC_sd[, start_date], na.rm = TRUE)
+		mois_mean <- model.inputs$mois[siteID, time]
+		if (is.na(mois_mean) || is.infinite(mois_mean)) {
+			stop("Moisture value is NA or infinite for site ", siteID, " time ", time, " - investigate data quality")
 		}
 		
-		# Generate samples
-		temp_samples <- rnorm(Nmc_large, model.inputs$temp[siteID, time], model.inputs$temp_sd[siteID, time])
-		mois_samples <- rnorm(Nmc_large, model.inputs$mois[siteID, time], model.inputs$mois_sd[siteID, time])
+		mois_sd <- model.inputs$mois_sd[siteID, time]
+		if (is.na(mois_sd) || is.infinite(mois_sd) || mois_sd <= 0) {
+			stop("Moisture SD is NA, infinite, or <= 0 for site ", siteID, " time ", time, " - investigate data quality")
+		}
+		
+		# pH - fail fast if missing
+		if (is.null(plotID)) {
+			stop("plotID is NULL but required for pH data - investigate plot mapping")
+		}
+		if (!plotID %in% rownames(model.inputs$pH)) {
+			stop("Plot ", plotID, " not found in pH data rownames - investigate plot mapping")
+		}
+		if (time > ncol(model.inputs$pH)) {
+			stop("Time ", time, " exceeds pH data columns (", ncol(model.inputs$pH), ") - investigate time dimension")
+		}
+		
+		pH_value <- model.inputs$pH[plotID, time]
+		if (is.na(pH_value) || is.infinite(pH_value)) {
+			stop("pH value is NA or infinite for plot ", plotID, " time ", time, " - investigate data quality")
+		}
+		
+		pH_sd_value <- model.inputs$pH_sd[plotID, time]
+		if (is.na(pH_sd_value) || is.infinite(pH_sd_value) || pH_sd_value <= 0) {
+			stop("pH SD is NA, infinite, or <= 0 for plot ", plotID, " time ", time, " - investigate data quality")
+		}
+		
+		# pC - fail fast if missing
+		if (!plotID %in% rownames(model.inputs$pC)) {
+			stop("Plot ", plotID, " not found in pC data rownames - investigate plot mapping")
+		}
+		if (time > ncol(model.inputs$pC)) {
+			stop("Time ", time, " exceeds pC data columns (", ncol(model.inputs$pC), ") - investigate time dimension")
+		}
+		
+		pC_value <- model.inputs$pC[plotID, time]
+		if (is.na(pC_value) || is.infinite(pC_value)) {
+			stop("pC value is NA or infinite for plot ", plotID, " time ", time, " - investigate data quality")
+		}
+		
+		pC_sd_value <- model.inputs$pC_sd[plotID, time]
+		if (is.na(pC_sd_value) || is.infinite(pC_sd_value) || pC_sd_value <= 0) {
+			stop("pC SD is NA, infinite, or <= 0 for plot ", plotID, " time ", time, " - investigate data quality")
+		}
+		
+		# relEM - fail fast if missing
+		if (!plotID %in% rownames(model.inputs$relEM)) {
+			stop("Plot ", plotID, " not found in relEM data rownames - investigate plot mapping")
+		}
+		if (time > ncol(model.inputs$relEM)) {
+			stop("Time ", time, " exceeds relEM data columns (", ncol(model.inputs$relEM), ") - investigate time dimension")
+		}
+		
+		relEM_value <- model.inputs$relEM[plotID, time]
+		if (is.na(relEM_value) || is.infinite(relEM_value)) {
+			stop("relEM value is NA or infinite for plot ", plotID, " time ", time, " - investigate data quality")
+		}
+		
+		# LAI - fail fast if missing
+		if (!siteID %in% rownames(model.inputs$LAI)) {
+			stop("Site ", siteID, " not found in LAI data rownames - investigate site mapping")
+		}
+		if (time > ncol(model.inputs$LAI)) {
+			stop("Time ", time, " exceeds LAI data columns (", ncol(model.inputs$LAI), ") - investigate time dimension")
+		}
+		
+		lai_value <- model.inputs$LAI[siteID, time]
+		if (is.na(lai_value) || is.infinite(lai_value)) {
+			stop("LAI value is NA or infinite for site ", siteID, " time ", time, " - investigate data quality")
+		}
+		
+		# Seasonal predictors - fail fast if missing
+		if (time > length(model.inputs$sin_mo)) {
+			stop("Time ", time, " exceeds sin_mo length (", length(model.inputs$sin_mo), ") - investigate seasonal data")
+		}
+		
+		sin_mo_value <- model.inputs$sin_mo[time]
+		if (is.na(sin_mo_value) || is.infinite(sin_mo_value)) {
+			stop("sin_mo value is NA or infinite for time ", time, " - investigate seasonal data quality")
+		}
+		
+		if (time > length(model.inputs$cos_mo)) {
+			stop("Time ", time, " exceeds cos_mo length (", length(model.inputs$cos_mo), ") - investigate seasonal data")
+		}
+		
+		cos_mo_value <- model.inputs$cos_mo[time]
+		if (is.na(cos_mo_value) || is.infinite(cos_mo_value)) {
+			stop("cos_mo value is NA or infinite for time ", time, " - investigate seasonal data quality")
+		}
+		
+		# Generate samples - fail fast if sampling fails
+		temp_samples <- rnorm(Nmc_large, temp_mean, temp_sd)
+		if (any(is.na(temp_samples)) || any(is.infinite(temp_samples))) {
+			stop("Temperature sampling produced NA or infinite values - investigate parameters")
+		}
+		
+		mois_samples <- rnorm(Nmc_large, mois_mean, mois_sd)
+		if (any(is.na(mois_samples)) || any(is.infinite(mois_samples))) {
+			stop("Moisture sampling produced NA or infinite values - investigate parameters")
+		}
+		
 		pH_samples <- rnorm(Nmc_large, pH_value, pH_sd_value)
+		if (any(is.na(pH_samples)) || any(is.infinite(pH_samples))) {
+			stop("pH sampling produced NA or infinite values - investigate parameters")
+		}
+		
 		pC_samples <- rnorm(Nmc_large, pC_value, pC_sd_value)
+		if (any(is.na(pC_samples)) || any(is.infinite(pC_samples))) {
+			stop("pC sampling produced NA or infinite values - investigate parameters")
+		}
+		
+		# These are deterministic, so just repeat the values
 		relEM_samples <- rep(relEM_value, Nmc_large)
-		LAI_samples <- rep(model.inputs$LAI[siteID, time], Nmc_large)
-		sin_mo_samples <- rep(model.inputs$sin_mo[time], Nmc_large)
-		cos_mo_samples <- rep(model.inputs$cos_mo[time], Nmc_large)
+		LAI_samples <- rep(lai_value, Nmc_large)
+		sin_mo_samples <- rep(sin_mo_value, Nmc_large)
+		cos_mo_samples <- rep(cos_mo_value, Nmc_large)
 		
 		# Assign to array
 		covar_full[, 1, time] <- temp_samples
@@ -661,7 +871,6 @@ create_covariate_samples <- function(model.inputs, plotID = NULL, siteID,
 	}
 	
 	# Sample and return
-	# Handle case where we want more samples than available
 	if (Nmc > Nmc_large) {
 		# If we want more samples than available, sample with replacement
 		covar <- covar_full[sample.int(Nmc_large, Nmc, replace = TRUE), , ]
@@ -669,6 +878,13 @@ create_covariate_samples <- function(model.inputs, plotID = NULL, siteID,
 		# If we have enough samples, sample without replacement
 		covar <- covar_full[sample.int(Nmc_large, Nmc, replace = FALSE), , ]
 	}
+	
+	# Final validation - this should never fail if we got here
+	if (is.null(covar) || !is.array(covar) || length(dim(covar)) != 3) {
+		stop("CRITICAL ERROR: Final validation failed - this should never happen!")
+	}
+	
+	# SUCCESS: Return the covariate array
 	return(covar)
 }
 

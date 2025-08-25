@@ -24,7 +24,14 @@ taxa_fcast <- function(plotID,
 	Nmc_large <- max(nrow(param_samples)) #20000 # Larger sample number for covariate/IC set of values
 	#Nmc_large <- 20000
 	print(Nmc_large)
-	row_samples <- sample.int(Nmc_large,Nmc)
+	# Handle case where we want more samples than available
+	if (Nmc > Nmc_large) {
+		# If we want more samples than available, sample with replacement
+		row_samples <- sample.int(Nmc_large, Nmc, replace = TRUE)
+	} else {
+		# If we have enough samples, sample without replacement
+		row_samples <- sample.int(Nmc_large, Nmc, replace = FALSE)
+	}
 
 	date_key <- model.inputs$truth.plot.long %>%
 		select(dateID, date_num) %>% distinct()

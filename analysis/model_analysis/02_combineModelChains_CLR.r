@@ -1,5 +1,5 @@
 # Combine chains from each taxon model, and create basic summary stats
-source("source.R")
+source("../../source.R")
 
 # For phenology analysis: use cycl_only models for 2013-2015 data
 model_name <- "cycl_only"
@@ -8,16 +8,16 @@ model_name <- "cycl_only"
 # params_in = read.csv(here("data/clean/model_input_df.csv"))
 # model_id_list = unique(params_in$model_id)
 
-# Use our expanded CLR model IDs from CLR_regression_expanded
-# Get all model IDs from the expanded directory by looking at individual chain files
-clr_output_dir <- here("data/model_outputs/CLR_regression_expanded")
-clr_chain_files <- list.files(clr_output_dir, pattern = "samples_CLR_expanded_.*_chain[0-9]+\\.rds$", 
+# Use our expanded CLR model IDs from CLR_regression directory
+# Get all model IDs from the CLR_regression directory by looking at individual chain files
+clr_output_dir <- here("data/model_outputs/CLR_regression")
+clr_chain_files <- list.files(clr_output_dir, pattern = "samples_.*_chain[0-9]+\\.rds$", 
                               recursive = TRUE, full.names = FALSE)
 # Extract model IDs from chain file names (remove _chain[0-9] suffix)
-model_id_list <- unique(gsub("samples_CLR_expanded_(.*)_chain[0-9]+\\.rds", "\\1", clr_chain_files))
+model_id_list <- unique(gsub("samples_(.*)_chain[0-9]+\\.rds", "\\1", clr_chain_files))
 model_id_list <- gsub(".*/", "", model_id_list)  # Remove directory path
 
-cat("Found", length(model_id_list), "CLR models in CLR_regression_expanded\n")
+cat("Found", length(model_id_list), "CLR models in CLR_regression\n")
 
 cat("Processing CLR phenology models for 2013-2015 data\n")
 cat("Model type:", model_name, "\n")
@@ -30,13 +30,13 @@ cl <- makeCluster(1, outfile="")
 registerDoParallel(cl)
 #for(model_id in model_id_list){
 foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
-	source("source.R")
+	source("../../source.R")
 	
 	# Do we want to keep all the chain files separately? Deleting them will save space
 	delete_samples_files = F
 	
 	#for (model_name in c("all_covariates", "cycl_only")) {
-	file.list <- list.files(path = here("data/model_outputs/CLR_regression_expanded/"),
+	file.list <- list.files(path = here("data/model_outputs/CLR_regression/"),
 													pattern = "_chain",
 													recursive = T,
 													full.names = T)
@@ -90,11 +90,20 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 		# Create the same output structure as multi-chain models
 		if (is.list(chain_data) && "samples" %in% names(chain_data)) {
 			# New format with metadata
-			out <- list(
-				samples = list(mcmc(chain_data$samples, start = 1, end = nrow(chain_data$samples), thin = 1)),
-				samples2 = list(mcmc(chain_data$samples2, start = 1, end = nrow(chain_data$samples2), thin = 1)),
-				metadata = chain_data$metadata
-			)
+			if ("samples2" %in% names(chain_data)) {
+				out <- list(
+					samples = list(mcmc(chain_data$samples, start = 1, end = nrow(chain_data$samples), thin = 1)),
+					samples2 = list(mcmc(chain_data$samples2, start = 1, end = nrow(chain_data$samples2), thin = 1)),
+					metadata = chain_data$metadata
+				)
+			} else {
+				# CLR models use same samples for both parameter and plot predictions
+				out <- list(
+					samples = list(mcmc(chain_data$samples, start = 1, end = nrow(chain_data$samples), thin = 1)),
+					samples2 = list(mcmc(chain_data$samples, start = 1, end = nrow(chain_data$samples), thin = 1)),
+					metadata = chain_data$metadata
+				)
+			}
 		} else {
 			# Old format (raw matrix)
 			out <- list(
@@ -155,18 +164,47 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 				# New format with metadata
 				cat("    Chain", i, "dimensions:", dim(chain_data$samples), "\n")
 				chains[[i]] <- chain_data$samples
-				chains2[[i]] <- chain_data$samples2
+				
+				# Handle samples2 - CLR models may have same samples for both
+				if ("samples2" %in% names(chain_data)) {
+					chains2[[i]] <- chain_data$samples2
+					cat("    ✓ samples2 found\n")
+				} else {
+					# CLR models use same samples for both parameter and plot predictions
+					chains2[[i]] <- chain_data$samples
+					cat("    ✓ Using samples for samples2 (CLR model)\n")
+				}
+				
 				metadata_list[[i]] <- chain_data$metadata
+				cat("    ✓ Metadata loaded\n")
 			} else {
 				# Old format (raw matrix)
 				cat("    Chain", i, "dimensions:", dim(chain_data), "\n")
 				chains[[i]] <- chain_data
 				chains2[[i]] <- chain_data
 				metadata_list[[i]] <- list(model_id = model_id)
+				cat("    ✓ Old format handled\n")
 			}
 		}
 		
 		cat("Creating output structure...\n")
+		
+		# Validate that we have valid chains
+		if (length(chains) == 0) {
+			cat("ERROR: No valid chains loaded for", model_id, "\n")
+			return(message("ERROR: No valid chains loaded for ", model_id))
+		}
+		
+		cat("Successfully loaded", length(chains), "chains\n")
+		
+		# Validate chain dimensions
+		chain_dims <- sapply(chains, dim)
+		cat("Chain dimensions:", paste(apply(chain_dims, 2, paste, collapse="x"), collapse=", "), "\n")
+		
+		# Check if all chains have the same dimensions
+		if (length(unique(apply(chain_dims, 2, paste, collapse="x"))) > 1) {
+			cat("WARNING: Chains have different dimensions, this may cause issues\n")
+		}
 		
 		# Convert chains to mcmc objects for compatibility with summary functions
 		cat("Converting chains to mcmc format...\n")
