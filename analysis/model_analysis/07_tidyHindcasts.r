@@ -1,7 +1,7 @@
 # Combine hindcasts from all workflows
 # This script must be run before other analysis scripts
 
-source("source.R")
+source("../../source.R")
 
 # Load required packages for memory efficiency
 if (!require(arrow, quietly = TRUE)) {
