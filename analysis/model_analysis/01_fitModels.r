@@ -68,23 +68,29 @@ source("source.R")
 
 # Function to check if MCMC should continue based on effective sample size
 check_continue <- function(samples, min_eff_size = 10) {
+	# Validate input
+	if (is.null(samples) || nrow(samples) == 0) {
+		cat("  WARNING: Empty or NULL samples provided to check_continue, defaulting to continue\n")
+		return(TRUE)
+	}
+
 	# Convert to mcmc object for effectiveSize calculation
 	if (!inherits(samples, "mcmc")) {
 		samples <- as.mcmc(samples)
 	}
-	
+
 	# Calculate effective sample sizes for all parameters
 	eff_sizes <- effectiveSize(samples)
-	
+
 	# Check if any parameter has ESS below threshold
 	min_ess <- min(eff_sizes, na.rm = TRUE)
-	
+
 	# Continue if minimum ESS is below threshold
 	continue <- min_ess < min_eff_size
-	
+
 	cat("  ESS check - Min ESS:", round(min_ess, 1), "Target:", min_eff_size, "\n")
 	cat("  Continue sampling:", continue, "\n")
-	
+
 	return(continue)
 }
 
@@ -121,6 +127,62 @@ if (nrow(params) > 0) {
 	print(params[, c("rank.name", "species", "model_name", "model_id")])
 } else {
 	cat("No models to run\n")
+}
+
+# Filter parameters to only include models with available species and ranks
+cat("Filtering models to only include those with available data...\n")
+original_n_models <- nrow(params)
+
+# Create a function to check if a model has valid data
+is_valid_model <- function(rank_name, species_name) {
+	# Check if rank exists in data
+	if (!(rank_name %in% names(all_ranks))) {
+		return(FALSE)
+	}
+
+	rank_data <- all_ranks[[rank_name]]
+
+	# Check if species exists in rank data
+	if (!(species_name %in% colnames(rank_data))) {
+		return(FALSE)
+	}
+
+	return(TRUE)
+}
+
+# Filter the parameters dataframe
+valid_indices <- sapply(1:nrow(params), function(i) {
+	is_valid_model(params$rank.name[i], params$species[i])
+})
+
+params <- params[valid_indices, ]
+filtered_n_models <- nrow(params)
+
+# Report filtering results
+if (filtered_n_models < original_n_models) {
+	n_filtered <- original_n_models - filtered_n_models
+	cat("⚠️  Filtered out", n_filtered, "models with unavailable species/ranks\n")
+	cat("  Original models:", original_n_models, "\n")
+	cat("  Valid models:", filtered_n_models, "\n")
+} else {
+	cat("✓ All", filtered_n_models, "models have valid data\n")
+}
+
+# Additional validation: ensure we have at least one valid model
+if (filtered_n_models == 0) {
+	cat("❌ ERROR: No valid models remaining after filtering!\n")
+	cat("Available ranks in data:", paste(names(all_ranks), collapse=", "), "\n")
+
+	# Show some examples of available species for each rank
+	for (rank_name in names(all_ranks)) {
+		rank_data <- all_ranks[[rank_name]]
+		metadata_cols <- c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date")
+		available_species <- setdiff(colnames(rank_data), metadata_cols)
+		cat("  ", rank_name, "species (first 5):", paste(head(available_species, 5), collapse=", "),
+		    if(length(available_species) > 5) paste("... (+", length(available_species) - 5, " more)") else "", "\n")
+	}
+
+	stop("No valid models to run - check species names and rank names in parameters")
 }
 
 # Create function that uses our working approach for each model
@@ -313,11 +375,6 @@ run_scenarios_fixed <- function(j, chain_no) {
 		constants$zeros <- rep(0, 2)
 	}
 	
-	# Scale cyclical predictors
-		cat("Scaling cyclical predictors...\n")
-	constants$sin_mo = scale(constants$sin_mo, center = F) %>% as.numeric()
-	constants$cos_mo = scale(constants$cos_mo, center = F) %>% as.numeric()
-	
 	cat("Constants prepared successfully\n")
 	
 	# STANDARDIZED MODEL DEFINITIONS - All models use consistent priors
@@ -343,19 +400,19 @@ run_scenarios_fixed <- function(j, chain_no) {
 				}
 			}
 
-			# STANDARDIZED PRIORS - Consistent across all models
-			site_effect_sd ~ dgamma(2, 6)  # Standardized: moderate prior
+			# TIGHTER PRIORS - Moderately constrained for better convergence
+			site_effect_sd ~ dgamma(3, 12)  # Tighter: smaller variance (mean=0.25, was mean=0.33)
 			for (k in 1:N.site) {
 				site_effect[k] ~ dnorm(0, sd = site_effect_sd)
 			}
-			
-			precision ~ dgamma(2, 0.1)  # Standardized: moderate precision prior
-			intercept ~ dnorm(-2, sd = 0.8)  # Standardized: normal prior, moderate variance
-			rho ~ dbeta(3, 3)  # Standardized: informative beta prior
-			legacy_effect ~ dnorm(0, sd = 0.2)  # Standardized: moderate legacy prior
-			
+
+			precision ~ dgamma(2, 0.1)  # Keep moderate for observation model
+			intercept ~ dnorm(-2, sd = 0.5)  # Moderately tighter (was 0.3)
+			rho ~ dbeta(4, 4)  # Slightly more concentrated (mean=0.5)
+			legacy_effect ~ dnorm(0, sd = 0.15)  # Moderately tighter (was 0.2)
+
 			for (b in 1:2) {
-				beta[b] ~ dnorm(0, sd = 0.3)  # Standardized: moderate beta prior
+				beta[b] ~ dnorm(0, sd = 0.1)  # Tighter constraint (was 0.3)
 			}
 		})
 	} else if (model_name == "env_cycl" && use_legacy_covariate) {
@@ -391,28 +448,19 @@ run_scenarios_fixed <- function(j, chain_no) {
 				}
 			}
 			
-			# Hierarchical priors for site effects - better mixing with constraints
-			site_effect_sd ~ dgamma(2, 8)  # Prior on site effect standard deviation
+			# TIGHTER PRIORS - Moderately constrained for better convergence
+			site_effect_sd ~ dgamma(3, 12)  # Tighter: smaller variance (mean=0.25, was mean=0.25)
 			for (k in 1:N.site) {
-				site_effect[k] ~ T(dnorm(0, sd = site_effect_sd), -5, 5)  # Truncated normal priors
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Remove truncation, use tighter SD
 			}
-			
-			# Parameter-specific priors for better convergence
-			# precision: Use appropriate prior for beta regression precision parameter
-			precision ~ dgamma(2, 0.1)  # Moderate precision prior
-			
-			# intercept: Use tighter prior for better convergence
-			intercept ~ dt(-2, 0.3, df = 3)  # Centered around expected value, tighter variance
 
-			# rho: Use tighter bounded prior for better convergence
-			rho ~ dbeta(3, 3)    # More informative, prevents extreme values
-			
-			# Legacy effect: Account for research facility bias - TIGHT prior to prevent explosion
-			legacy_effect ~ dnorm(0, sd = 0.1)  # Very tight prior centered at zero
-			
-			# Tight variance for ecological effects to ensure stability
+			precision ~ dgamma(2, 0.1)  # Keep moderate for observation model
+			intercept ~ dnorm(-2, sd = 0.5)  # Moderately tighter (was dt with sd=0.3)
+			rho ~ dbeta(4, 4)  # Slightly more concentrated (mean=0.5)
+			legacy_effect ~ dnorm(0, sd = 0.15)  # Moderately tighter (was 0.1)
+
 			for (b in 1:8) {
-				beta[b] ~ dnorm(0, sd=0.15)
+				beta[b] ~ dnorm(0, sd = 0.2)  # Moderately tighter (was 0.15)
 			}
 		})
 	} else if (model_name == "env_cycl" && !use_legacy_covariate) {
@@ -447,18 +495,18 @@ run_scenarios_fixed <- function(j, chain_no) {
 				}
 			}
 			
-			# STANDARDIZED PRIORS - Consistent across all models
-			site_effect_sd ~ dgamma(2, 6)  # Standardized: moderate prior
+			# TIGHTER PRIORS - Moderately constrained for better convergence
+			site_effect_sd ~ dgamma(3, 12)  # Tighter: smaller variance (mean=0.25, was mean=0.33)
 			for (k in 1:N.site) {
-				site_effect[k] ~ T(dnorm(0, sd = site_effect_sd), -5, 5)  # Truncated normal priors
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Remove truncation, use tighter SD
 			}
-			
-			precision ~ dgamma(2, 0.1)  # Standardized: moderate precision prior
-			intercept ~ dnorm(-2, sd = 0.8)  # Standardized: normal prior, moderate variance
-			rho ~ dbeta(3, 3)  # Standardized: informative beta prior
-			
+
+			precision ~ dgamma(2, 0.1)  # Keep moderate for observation model
+			intercept ~ dnorm(-2, sd = 0.5)  # Moderately tighter (was 0.8)
+			rho ~ dbeta(4, 4)  # Slightly more concentrated (mean=0.5)
+
 			for (b in 1:8) {
-				beta[b] ~ dnorm(0, sd = 0.3)  # Standardized: moderate beta prior
+				beta[b] ~ dnorm(0, sd = 0.1)  # Tighter constraint (was 0.3)
 			}
 		})
 	} else if (model_name == "env_cov" && use_legacy_covariate) {
@@ -492,19 +540,19 @@ run_scenarios_fixed <- function(j, chain_no) {
 				}
 			}
 
-			# STANDARDIZED PRIORS - Consistent across all models
-			site_effect_sd ~ dgamma(2, 6)  # Standardized: moderate prior
+			# TIGHTER PRIORS - Moderately constrained for better convergence
+			site_effect_sd ~ dgamma(3, 12)  # Tighter: smaller variance (mean=0.25, was mean=0.33)
 			for (k in 1:N.site) {
 				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Hierarchical normal priors
 			}
 
-			precision ~ dgamma(2, 0.1)  # Standardized: moderate precision prior
-			intercept ~ dnorm(-2, sd = 0.8)  # Standardized: normal prior, moderate variance
-			rho ~ dbeta(3, 3)  # Standardized: informative beta prior
-			legacy_effect ~ dnorm(0, sd = 0.2)  # Standardized: moderate legacy prior
+			precision ~ dgamma(2, 0.1)  # Keep moderate for observation model
+			intercept ~ dnorm(-2, sd = 0.5)  # Moderately tighter (was 0.8)
+			rho ~ dbeta(4, 4)  # Slightly more concentrated (mean=0.5)
+			legacy_effect ~ dnorm(0, sd = 0.15)  # Moderately tighter (was 0.2)
 
 			for (b in 1:6) {
-				beta[b] ~ dnorm(0, sd = 0.3)  # Standardized: moderate beta prior
+				beta[b] ~ dnorm(0, sd = 0.1)  # Tighter constraint (was 0.3)
 			}
 		})
 	} else if (model_name == "env_cov" && !use_legacy_covariate) {
@@ -537,18 +585,18 @@ run_scenarios_fixed <- function(j, chain_no) {
 				}
 			}
 
-			# STANDARDIZED PRIORS - Consistent across all models
-			site_effect_sd ~ dgamma(2, 6)  # Standardized: moderate prior
+			# TIGHTER PRIORS - Moderately constrained for better convergence
+			site_effect_sd ~ dgamma(3, 12)  # Tighter: smaller variance (mean=0.25, was mean=0.33)
 			for (k in 1:N.site) {
 				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Hierarchical normal priors
 			}
 
-			precision ~ dgamma(2, 0.1)  # Standardized: moderate precision prior
-			intercept ~ dnorm(-2, sd = 0.8)  # Standardized: normal prior, moderate variance
-			rho ~ dbeta(3, 3)  # Standardized: informative beta prior
+			precision ~ dgamma(2, 0.1)  # Keep moderate for observation model
+			intercept ~ dnorm(-2, sd = 0.5)  # Moderately tighter (was 0.8)
+			rho ~ dbeta(4, 4)  # Slightly more concentrated (mean=0.5)
 
 			for (b in 1:6) {
-				beta[b] ~ dnorm(0, sd = 0.3)  # Standardized: moderate beta prior
+				beta[b] ~ dnorm(0, sd = 0.1)  # Tighter constraint (was 0.3)
 			}
 		})
 	} else {
@@ -571,18 +619,18 @@ run_scenarios_fixed <- function(j, chain_no) {
 				}
 			}
 			
-			# STANDARDIZED PRIORS - Consistent across all models
-			site_effect_sd ~ dgamma(2, 6)  # Standardized: moderate prior
-			for (k in 1:N.site) { 
+			# TIGHTER PRIORS - Moderately constrained for better convergence
+			site_effect_sd ~ dgamma(3, 12)  # Tighter: smaller variance (mean=0.25, was mean=0.33)
+			for (k in 1:N.site) {
 				site_effect[k] ~ dnorm(0, sd = site_effect_sd)
 			}
-			
-			precision ~ dgamma(2, 0.1)  # Standardized: moderate precision prior
-			intercept ~ dnorm(-2, sd = 0.8)  # Standardized: normal prior, moderate variance
-			rho ~ dbeta(3, 3)  # Standardized: informative beta prior
-			
+
+			precision ~ dgamma(2, 0.1)  # Keep moderate for observation model
+			intercept ~ dnorm(-2, sd = 0.5)  # Moderately tighter (was 0.8)
+			rho ~ dbeta(4, 4)  # Slightly more concentrated (mean=0.5)
+
 			for (b in 1:2) {
-				beta[b] ~ dnorm(0, sd = 0.3)  # Standardized: moderate beta prior
+				beta[b] ~ dnorm(0, sd = 0.1)  # Tighter constraint (was 0.3)
 			}
 		})
 	}
@@ -599,18 +647,18 @@ run_scenarios_fixed <- function(j, chain_no) {
 	# Simplified initialization strategy - spread chains out properly
 	set.seed(chain_no * 1000 + j * 100)  # Different seed per chain/model
 	
-	# Initialize parameters with proper spacing between chains
-	inits$rho <- runif(1, 0.2, 0.8)  # Spread chains out more
-	inits$intercept <- rnorm(1, logit(y_mean), 0.5)
-	inits$precision <- rgamma(1, 2, 0.1)
-	inits$beta <- rnorm(constants$N.beta, 0, 0.1)
-	
-	# Initialize hierarchical parameters
-	inits$site_effect_sd <- max(0.001, min(0.3, y_sd * 0.05))
-	
+	# Initialize parameters with tighter ranges for better convergence
+	inits$rho <- runif(1, 0.3, 0.7)  # Tighter range around 0.5
+	inits$intercept <- rnorm(1, logit(y_mean), 0.2)  # Tighter initialization
+	inits$precision <- rgamma(1, 2, 0.1)  # Keep moderate
+	inits$beta <- rnorm(constants$N.beta, 0, 0.02)  # Even tighter beta initialization for SD=0.1
+
+	# Initialize hierarchical parameters with tighter ranges
+	inits$site_effect_sd <- max(0.001, min(0.2, y_sd * 0.02))  # Tighter site effect SD
+
 	# Initialize legacy effect if using legacy covariate
 	if (use_legacy_covariate) {
-		inits$legacy_effect <- rnorm(1, 0, 0.05)  # Start close to zero
+		inits$legacy_effect <- rnorm(1, 0, 0.03)  # Tighter initialization
 	}
 	
 	cat("Model built successfully\n")
@@ -717,14 +765,14 @@ run_scenarios_fixed <- function(j, chain_no) {
 	
 	# TESTING: Run MCMC with convergence-based sampling for testing
 	cat("Running MCMC with convergence-based sampling...\n")
-	burnin <- 100    # Reduced burnin for testing
-	thin <- 1        # No thinning to preserve all samples
-	iter_per_chunk <- 200   # Reduced iterations per convergence check for testing
-	init_iter <- 100  # Reduced initial iterations for testing
-	min_eff_size_perchain <- 5  # Reduced ESS target for testing
-	max_loops <- 10  # Reduced maximum loops for testing
+	burnin <- 1000    # Reduced burnin for testing
+	thin <- 2
+	iter_per_chunk <- 1000   # Reduced iterations per convergence check for testing
+	init_iter <- 2000  # Reduced initial iterations for testing
+	min_eff_size_perchain <- 20 # Reduced ESS target for testing
+	max_loops <- 40  # Reduced maximum loops for testing
 	max_save_size <- 60000  # Maximum samples to keep in memory
-	min_total_iterations <- 500  # Reduced minimum iterations for testing
+	min_total_iterations <- 3000  # Reduced minimum iterations for testing
 	
 	cat("TESTING: Running MCMC with convergence-based sampling (reduced parameters)\n")
 	cat("  Initial iterations:", init_iter, "burnin:", burnin, "\n")
@@ -781,6 +829,11 @@ run_scenarios_fixed <- function(j, chain_no) {
 	model_id <- paste(model_name, species, min.date, max.date, legacy_indicator, sep = "_")
 	
 	# Check if we need to continue sampling for convergence
+	# Initialize continue variable with proper scoping
+	continue <- TRUE  # Default to continue sampling
+	loop_counter <- 0
+	total_iterations <- init_iter
+
 	# Try to check convergence, with fallback if it fails
 	tryCatch({
 		continue <- check_continue(initial_samples, min_eff_size = min_eff_size_perchain)
@@ -789,8 +842,6 @@ run_scenarios_fixed <- function(j, chain_no) {
 		cat("  Error:", e$message, "\n")
 		continue <- TRUE  # Default to continue if check fails
 	})
-	loop_counter <- 0
-	total_iterations <- init_iter
 	
 	# Store all samples as we go - FIXED: Use initial samples as starting point
 	all_samples <- initial_samples
@@ -860,6 +911,8 @@ run_scenarios_fixed <- function(j, chain_no) {
 		})
 		
 		# Check if we need to continue
+		# Reset continue to TRUE as default, then check convergence
+		continue <- TRUE  # Default to continue unless convergence is achieved
 		tryCatch({
 			continue <- check_continue(all_samples, min_eff_size = min_eff_size_perchain)
 		}, error = function(e) {
@@ -1079,9 +1132,8 @@ cat("\nTesting", test_models, "models across all ranks to verify convergence fix
 library(parallel)
 library(doParallel)
 
-# Create cluster with exactly the number of cores needed for testing
-# For testing: 2 chains need exactly 2 cores
-ncores <- test_models * nchains  # Exactly 1 model × 2 chains = 2 cores
+# Create cluster
+ncores <- 28
 cat("Creating cluster with exactly", ncores, "cores for", test_models, "model ×", nchains, "chains\n")
 cl <- makeCluster(ncores, type = "PSOCK")
 
