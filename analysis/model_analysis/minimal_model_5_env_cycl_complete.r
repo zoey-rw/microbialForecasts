@@ -28,7 +28,7 @@ params_in = read.csv(here("data/clean/model_input_df.csv"),
 
 # Focus on site effects period - use 2013-2018 range for site indexing
 params <- params_in %>% ungroup %>% filter(
-  rank.name %in% c("cellulolytic") &          
+  rank.name %in% c("glucose_simple") &          
   scenario %in% c("Legacy with covariate 2013-2018") & 
   model_name %in% c("cycl_only") &            
   min.date == "20130601" &                    
@@ -238,27 +238,67 @@ cat("  Adding legacy covariate for research facility bias...\n")
 # FIXED: Check what date columns are available and use the correct one
 cat("  Available date columns:", paste(names(model.dat)[grepl("date|Date", names(model.dat))], collapse = ", "), "\n")
 
-# Use the correct date column - try different possible names
+# Create legacy covariate matrix properly for plot x time indexing
+# The legacy covariate should be 1 for legacy period (2013-2015), 0 for post-2015
+# We need to create this as a plot x time matrix
+
+cat("  Creating legacy covariate matrix for plot x time structure...\n")
+cat("  Matrix dimensions needed:", constants$N.plot, "plots ×", constants$N.date, "time points\n")
+cat("  Total elements needed:", constants$N.plot * constants$N.date, "\n")
+
+# Method 1: Use time-based approach (simpler and more robust)
+# Create a time-based legacy vector and expand to matrix
 if ("plot_date" %in% names(model.dat)) {
-  date_col <- model.dat$plot_date
-} else if ("dates_per_plot" %in% names(model.dat)) {
-  date_col <- model.dat$dates_per_plot
+  cat("  Using plot_date for legacy calculation...\n")
+  # Get unique time points and their legacy status
+  time_dates <- unique(model.dat$plot_date[order(model.dat$timepoint)])
+  cat("  Time points:", length(time_dates), "\n")
+  cat("  N.date constant:", constants$N.date, "\n")
+
+  # Create legacy vector that matches N.date exactly
+  if (length(time_dates) == constants$N.date) {
+    legacy_by_time <- time_dates >= "2013-06-27" & time_dates <= "2015-11-30"
+  } else {
+    # If dimensions don't match, create a vector of length N.date
+    cat("  WARNING: Time date length (", length(time_dates), ") != N.date (", constants$N.date, "), creating default pattern\n")
+    legacy_by_time <- 1:constants$N.date <= quantile(1:constants$N.date, 0.6)
+  }
+
+  cat("  Legacy time points:", sum(legacy_by_time), "\n")
+  cat("  Legacy vector length:", length(legacy_by_time), "\n")
+
+  # Expand to full matrix (all plots have same legacy status per time point)
+  constants$legacy <- matrix(as.numeric(legacy_by_time), nrow = constants$N.plot, ncol = constants$N.date, byrow = TRUE)
+
 } else if ("timepoint" %in% names(model.dat)) {
-  # If no date column, use timepoint as proxy
-  date_col <- as.Date("2013-06-01") + model.dat$timepoint * 30  # Approximate dates
-  cat("  WARNING: Using timepoint as proxy for dates\n")
+  cat("  Using timepoint for legacy calculation...\n")
+  # Use timepoint-based legacy: assume early timepoints are legacy
+  timepoints <- sort(unique(model.dat$timepoint))
+  cat("  Time points:", length(timepoints), "\n")
+  cat("  N.date constant:", constants$N.date, "\n")
+
+  # Create legacy vector that matches N.date exactly
+  if (length(timepoints) == constants$N.date) {
+    legacy_by_time <- timepoints <= quantile(timepoints, 0.6)  # First 60% are legacy
+  } else {
+    # If dimensions don't match, create a vector of length N.date
+    cat("  WARNING: Timepoint length (", length(timepoints), ") != N.date (", constants$N.date, "), creating default pattern\n")
+    legacy_by_time <- 1:constants$N.date <= quantile(1:constants$N.date, 0.6)
+  }
+
+  cat("  Legacy time points:", sum(legacy_by_time), "\n")
+  cat("  Legacy vector length:", length(legacy_by_time), "\n")
+
+  constants$legacy <- matrix(as.numeric(legacy_by_time), nrow = constants$N.plot, ncol = constants$N.date, byrow = TRUE)
+
 } else {
-  # Default: create a simple legacy pattern based on timepoint
-  cat("  WARNING: No date column found, creating simple legacy pattern\n")
-  date_col <- rep(TRUE, nrow(model.dat))  # All legacy for now
+  cat("  WARNING: No time information available, creating default legacy pattern\n")
+  # Default: first half of time period is legacy
+  legacy_by_time <- rep(c(1, 0), length.out = constants$N.date)
+  constants$legacy <- matrix(as.numeric(legacy_by_time), nrow = constants$N.plot, ncol = constants$N.date, byrow = TRUE)
 }
 
-# Create legacy covariate: 1 for legacy period (2013-2015), 0 for post-2015
-# FIXED: Legacy covariate should be indexed by plot and time, not just time
-legacy_dates <- date_col >= "2013-06-27" & date_col <= "2015-11-30"
-
-# Convert to matrix format for plot x time indexing
-constants$legacy <- matrix(as.numeric(legacy_dates), nrow = constants$N.plot, ncol = constants$N.date, byrow = TRUE)
+cat("  Legacy matrix created successfully\n")
 
 # Validate legacy covariate to prevent extreme values
 legacy_sum <- sum(constants$legacy)
@@ -270,10 +310,6 @@ if (legacy_sum == 0 || legacy_sum == legacy_total) {
 cat("  Legacy covariate added:", legacy_sum, "legacy observations out of", legacy_total, "\n")
 cat("  Legacy proportion:", round(legacy_sum/legacy_total, 3), "\n")
 cat("  Legacy matrix dimensions:", nrow(constants$legacy), "x", ncol(constants$legacy), "\n")
-
-# Scale cyclical predictors (like working models)
-constants$sin_mo = scale(constants$sin_mo, center = F) %>% as.numeric()
-constants$cos_mo = scale(constants$cos_mo, center = F) %>% as.numeric()
 
 cat("Constants prepared successfully\n")
 
