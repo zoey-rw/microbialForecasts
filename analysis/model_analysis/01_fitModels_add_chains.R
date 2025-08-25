@@ -56,7 +56,7 @@ params <- params_in %>% ungroup %>% filter(
 									 "acetate_simple", "chitinolytic", "denitrification", "n_fixation", 
 									 "nitrification", "plant_pathogen", "endophyte") &
 		# Focus ONLY on 2013-2018 period (exclude 2015-2018)
-	scenario %in% c("Legacy with covariate 2013-2018", "2013-2018") &
+	scenario == "Legacy with covariate 2013-2018" &
 	# All three model types
 	model_name %in% c("cycl_only", "env_cov", "env_cycl")
 )
