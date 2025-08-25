@@ -69,23 +69,31 @@ fcast_logit_beta <- function(plotID,
 	date_key <- model.inputs$truth.plot.long %>%
 		select(dateID, date_num) %>% distinct()
 
-	#Sample covariate data
+	#Sample covariate data - FAIL FAST: This will stop execution if data is missing
 	tryCatch({
 		covar <- create_covariate_samples(model.inputs, plotID, siteID,
 																		Nmc_large, Nmc)
 	}, error = function(e) {
-		if (grepl("missing value where TRUE/FALSE needed", e$message)) {
-			message("Error in forecast for plot ", plotID, ": missing value where TRUE/FALSE needed")
-			message("This usually means site ", siteID, " is missing from model.inputs$site_start")
-			return(NULL)
-		} else {
-			stop(e)  # Re-throw other errors
-		}
+		message("ERROR in create_covariate_samples for plot ", plotID, " site ", siteID, ":")
+		message("  ", e$message)
+		message("  This indicates missing or invalid data that needs investigation.")
+		message("  Check:")
+		message("    1. Site mapping between calibration and validation periods")
+		message("    2. Array dimensions and rownames")
+		message("    3. Data quality (NA, infinite values)")
+		message("    4. Time period compatibility")
+		stop("Hindcasting stopped due to data issues - investigate and fix root cause")
 	})
 	
-	# Check if covar is NULL (error occurred)
-	if (is.null(covar)) {
-		return(NULL)
+	# Validation - covar should always be valid now since function fails fast
+	if (!is.array(covar) || length(dim(covar)) != 3) {
+		stop("CRITICAL ERROR: create_covariate_samples returned invalid array - this should never happen!")
+	}
+	
+	# Validate we have enough covariates for the model type
+	expected_covars <- if (model_name == "cycl_only") 2 else if (model_name == "env_cov") 6 else 8
+	if (dim(covar)[2] < expected_covars) {
+		stop("CRITICAL ERROR: covar has ", dim(covar)[2], " covariates but model expects ", expected_covars, " for plot ", plotID)
 	}
 
 	plot_obs <- model.inputs$truth.plot.long %>%
@@ -138,6 +146,31 @@ fcast_logit_beta <- function(plotID,
 		last_obs <- plot_est %>% filter(timepoint==max(timepoint))
 		plot_start_date <- last_obs$timepoint
 		ic <- last_obs$`50%`
+	}
+
+	# CRITICAL FIX: Validate plot_start_date before using it
+	if (is.na(plot_start_date) || is.null(plot_start_date) || plot_start_date < 1) {
+		message("Warning: Invalid plot_start_date ", plot_start_date, " for plot ", plotID, " - using default")
+		plot_start_date <- 1
+	}
+
+	# Get NT from model.inputs for bounds checking
+	NT <- tryCatch({
+		if (is.null(model.inputs$N.date) || !is.numeric(model.inputs$N.date) || model.inputs$N.date < 1) {
+			warning("Invalid N.date in model.inputs, using default")
+			12
+		} else {
+			model.inputs$N.date
+		}
+	}, error = function(e) {
+		warning("Error accessing N.date: ", e$message, " - using default")
+		12
+	})
+
+	# Ensure plot_start_date is within bounds
+	if (plot_start_date > NT) {
+		message("Warning: plot_start_date ", plot_start_date, " exceeds N.date ", NT, " for plot ", plotID, " - adjusting")
+		plot_start_date <- 1
 	}
 
 	if (length(site_effect)==0) {
@@ -238,10 +271,12 @@ fcast_logit_beta <- function(plotID,
 	# Only forecast for valid timepoints (where we have data or can reasonably predict)
 	valid_timepoints <- plot_start_date:NT
 	
-	# Ensure we don't try to forecast beyond available data
+	# CRITICAL FIX: Ensure we don't try to forecast beyond available data
 	if (max(valid_timepoints) > NT) {
 		valid_timepoints <- valid_timepoints[valid_timepoints <= NT]
 	}
+	
+	# plot_start_date bounds checking already done earlier in the function
 
 	for (time in valid_timepoints) {
 		if (time == plot_start_date) {
@@ -249,7 +284,20 @@ fcast_logit_beta <- function(plotID,
 			next
 		}
 		
+		# CRITICAL FIX: Bounds checking for covariate access
+		if (time > dim(covar)[3]) {
+			message("Warning: Time ", time, " exceeds covariate array bounds for plot ", plotID, " - skipping")
+			next
+		}
+		
 		Z  <- covar[, ,time]
+		
+		# CRITICAL FIX: Validate Z dimensions
+		if (ncol(Z) != ncol(betas)) {
+			message("Warning: Covariate dimension mismatch at time ", time, " for plot ", plotID, " - skipping")
+			next
+		}
+		
 		Ex <- rho * logit(x) + apply(Z * betas, 1, sum) + site_effect + intercept
 		
 		# Add legacy effect if using legacy covariate

@@ -1,6 +1,5 @@
 # Combine chains from each taxon model, and create basic summary stats
-#source("../../source.R")
-source("source.R")
+source("../../source.R")
 
 # Define model types and time periods for logit beta regression
 model_types <- c("cycl_only", "env_cycl", "env_cov")
@@ -51,16 +50,35 @@ for (model_id in names(model_files)) {
   
   message("Processing ", basename(model_id), " with ", length(chain_paths), " chains...")
   
-  # Check if samples file already exists
-  if (samples_exists(chain_paths[[1]])) {
-    message("Summary samples file already exists for ", basename(model_id))
-    next
+  # Check if combined file already exists
+  # The combined file should have the same name as the model_id but without _chain suffix
+  # and should be different from the original individual model files
+  combined_file_path <- gsub("_chain[1234567]", "", chain_paths[[1]])
+  
+  # Check if this is actually a combined file (not the original individual model file)
+  # The combined file should have been created by this script, so we'll check if it exists
+  # and has the expected structure
+  if (file.exists(combined_file_path)) {
+    # Check if it's actually a combined file by examining its structure
+    tryCatch({
+      test_read <- readRDS(combined_file_path)
+      if (is.list(test_read) && "samples" %in% names(test_read) && 
+          is.list(test_read$samples) && length(test_read$samples) > 1) {
+        message("Combined file already exists for ", basename(model_id))
+        next
+      } else {
+        message("File exists but is not a combined file, will overwrite: ", basename(model_id))
+      }
+    }, error = function(e) {
+      message("Error reading existing file, will overwrite: ", basename(model_id))
+    })
   }
   
   # Combine chains
   message("Combining chains for ", basename(model_id), "...")
   out <- tryCatch({
-    combine_chains_simple_new(chain_paths)
+    # Use the new combine_chains function that handles different sample sizes robustly
+    combine_chains(chain_paths)
   }, error = function(e) {
     message("Error combining chains for ", basename(model_id), ": ", e$message)
     return(NULL)

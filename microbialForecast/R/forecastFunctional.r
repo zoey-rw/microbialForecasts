@@ -22,7 +22,14 @@ fg_fcast <- function(
 	siteID <- substr(plotID, 1, 4)
 
 	# Prep MCMC sampling IDs
-	row_samples <- sample.int(max(nrow(param_samples)),Nmc)
+	# Handle case where we want more samples than available
+	if (Nmc > max(nrow(param_samples))) {
+		# If we want more samples than available, sample with replacement
+		row_samples <- sample.int(max(nrow(param_samples)), Nmc, replace = TRUE)
+	} else {
+		# If we have enough samples, sample without replacement
+		row_samples <- sample.int(max(nrow(param_samples)), Nmc, replace = FALSE)
+	}
 	# Initial condition uncertainty
 	ic <- truncnorm::rtruncnorm(Nmc, mean = .5, sd = .2, a = 0, b = 1)
 	NT = model.inputs$N.date
