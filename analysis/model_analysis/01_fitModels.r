@@ -360,7 +360,7 @@ run_scenarios_fixed <- function(j, chain_no) {
 				}
 				for (t in plot_index[p]:N.date) {
 					# STABLE: Use log transformation instead of logit for numerical stability
-					log_Ex_prev[p, t] <- log(max(0.001, mu[p, t-1]))  # Safe log with bounds
+					log_Ex_prev[p, t] <- log(max(0.001, plot_mu[p, t-1]))  # Safe log with bounds
 
 					# STABLE: Direct linear predictor in log space
 					log_Ex_mean[p, t] <- rho * log_Ex_prev[p, t] +
@@ -407,7 +407,7 @@ run_scenarios_fixed <- function(j, chain_no) {
 				
 				for (t in plot_index[p]:N.date) {
 					# STABLE: Use log transformation instead of logit for numerical stability
-					log_Ex_prev[p, t] <- log(max(0.001, mu[p, t-1]))  # Safe log with bounds
+					log_Ex_prev[p, t] <- log(max(0.001, plot_mu[p, t-1]))  # Safe log with bounds
 
 					# STABLE: Direct linear predictor in log space
 					log_Ex_mean[p, t] <- rho * log_Ex_prev[p, t] +
@@ -462,7 +462,7 @@ run_scenarios_fixed <- function(j, chain_no) {
 
 				for (t in plot_index[p]:N.date) {
 					# STABLE: Use log transformation instead of logit for numerical stability
-					log_Ex_prev[p, t] <- log(max(0.001, mu[p, t-1]))  # Safe log with bounds
+					log_Ex_prev[p, t] <- log(max(0.001, plot_mu[p, t-1]))  # Safe log with bounds
 
 					# STABLE: Direct linear predictor in log space
 					log_Ex_mean[p, t] <- rho * log_Ex_prev[p, t] +
@@ -503,9 +503,8 @@ run_scenarios_fixed <- function(j, chain_no) {
 			 ". Only models WITH legacy covariates are supported after simplification.")
 	}
 
-	# Create inits
-		cat("Creating initial values...\n")
-	inits <- createInits(constants)
+	# Create inits using minimal model's stable initialization strategy
+		cat("Creating initial values using minimal model's stable approach...\n")
 	
 	# Calculate data-informed initial values for better convergence
 	y_data <- model.dat$y[, 1]  # Get the species abundance data
@@ -515,19 +514,22 @@ run_scenarios_fixed <- function(j, chain_no) {
 	# Simplified initialization strategy - spread chains out properly
 	set.seed(chain_no * 1000 + j * 100)  # Different seed per chain/model
 	
-	# Initialize parameters with ranges consistent with improved priors
-	inits$rho <- runif(1, 0.3, 0.7)  # Tighter range around 0.5
-	inits$intercept <- rnorm(1, 0, 0.5)  # More flexible initialization around 0
-	inits$precision <- rgamma(1, 0.1, 0.1)  # Match the new gamma prior
-	inits$beta <- rnorm(constants$N.beta, 0, 0.1)  # More flexible beta initialization for SD=0.5
-
-	# Initialize hierarchical parameters with more flexible ranges
-	inits$site_effect_sd <- max(0.001, min(0.5, y_sd * 0.1))  # More flexible site effect SD
-
-	# Initialize legacy effect if using legacy covariate
-	if (use_legacy_covariate) {
-		inits$legacy_effect <- rnorm(1, 0, 0.5)  # More flexible initialization to match sd=2 prior
-	}
+	# CRITICAL: Use minimal model's stable initialization strategy
+	# Start with very small, controlled initial values to prevent extreme values
+	beta_init <- rep(0.01, constants$N.beta)  # Start ALL beta coefficients very close to zero
+	
+	# Initialize parameters with controlled, moderate values
+	inits <- list(
+		precision = 50,  # Start with moderate precision (like minimal model)
+		rho = 0.3,      # Start rho at 0.3 (moderate persistence)
+		beta = beta_init,  # Start ALL beta parameters at 0.01 (very small)
+		site_effect_sd = 0.5,  # Start with moderate site effect SD
+		site_effect = rnorm(constants$N.site, 0, 0.1),  # Small random initial values
+		intercept = -2,  # Start intercept at -2 (like minimal model)
+		legacy_effect = 0,  # Start legacy effect at 0 (like minimal model)
+		Ex = matrix(0.3, nrow = constants$N.plot, ncol = constants$N.date),  # Start with moderate abundance
+		plot_mu = matrix(0.3, nrow = constants$N.plot, ncol = constants$N.date)   # Start with moderate abundance
+	)
 	
 	cat("Model built successfully\n")
 	
@@ -613,11 +615,14 @@ run_scenarios_fixed <- function(j, chain_no) {
 		cat("  Added slice sampler for site_effect[1]\n")
 	}
 	
-	# Use block sampler for beta parameters when multiple exist, individual for single
+	# Use individual slice samplers for beta parameters (like minimal model) to prevent extreme values
 	if (constants$N.beta > 1) {
-		# Use block sampler for correlated beta parameters (more efficient)
-		mcmcConf$addSampler(target = paste0("beta[1:", constants$N.beta, "]"), type = "AF_slice")
-		cat("  Added block AF_slice sampler for beta[1:", constants$N.beta, "]\n")
+		# Add individual slice samplers for each beta parameter (more stable than block sampling)
+		for (i in 1:constants$N.beta) {
+			mcmcConf$addSampler(target = paste0("beta[", i, "]"), type = "slice")
+			cat("    Added slice sampler for beta[", i, "]\n")
+		}
+		cat("  Added", constants$N.beta, "individual slice samplers for beta parameters (like minimal model)\n")
 	} else {
 		# Individual sampler for single beta
 		mcmcConf$addSampler(target = "beta[1]", type = "slice")
@@ -1391,12 +1396,16 @@ for (chain_no in 1:nchains) {
   }
 }
 
-# STABLE TRANSFORMATION SUMMARY
-cat("\n=== STABLE TRANSFORMATION UPDATE COMPLETE ===\n")
+# STABLE TRANSFORMATION + MINIMAL MODEL INITIALIZATION SUMMARY
+cat("\n=== STABLE TRANSFORMATION + MINIMAL MODEL INITIALIZATION UPDATE COMPLETE ===\n")
 cat("✓ Successfully updated all three models with stable log/exp transformations\n")
 cat("✓ Replaced unstable logit(Ex) → logit(plot_mu) with stable log/exp approach\n")
+cat("✓ CRITICAL FIX: Adopted minimal model's stable initialization strategy\n")
+cat("✓ CRITICAL FIX: Beta parameters start at 0.01 (very small) instead of random values\n")
+cat("✓ CRITICAL FIX: Explicit initialization of Ex and plot_mu matrices to 0.3\n")
+cat("✓ CRITICAL FIX: Individual slice samplers for beta parameters (like minimal model)\n")
 cat("✓ Updated cycl_only model: 2 seasonal beta parameters\n")
 cat("✓ Updated env_cycl model: 8 beta parameters (6 env + 2 seasonal)\n")
 cat("✓ Updated env_cov model: 6 environmental beta parameters\n")
 cat("✓ All models now use bounded transformations: max(0.001, min(0.999, exp(...)))\n")
-cat("✓ This should resolve the extreme site effect and unmixing issues\n")
+cat("✓ This should resolve the extreme beta values (1000-1200) and unmixing issues\n")

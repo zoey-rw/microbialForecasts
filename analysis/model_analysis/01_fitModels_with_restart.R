@@ -25,7 +25,14 @@ nchains = 2
 #### Run on all groups ----
 
 source("source.R")
-source("model_restart_functions.R")  # Load restart functions
+source(here("analysis", "model_analysis", "model_restart_functions.R"))  # Load restart functions
+
+# Load data early for filtering
+cat("Loading data files for filtering...\n")
+bacteria <- readRDS(here("data/clean/groupAbundances_16S_2023.rds"))
+fungi <- readRDS(here("data/clean/groupAbundances_ITS_2023.rds"))
+all_ranks = c(bacteria, fungi)
+cat("Data loaded successfully for", length(all_ranks), "ranks\n")
 
 # Enhanced check_continue function with restart capability
 check_continue_with_restart <- function(samples, min_eff_size = 10, model_info = NULL) {
@@ -257,8 +264,162 @@ run_scenarios_with_restart <- function(j, chain_no) {
 	cat("Constants prepared successfully\n")
 
 	# STANDARDIZED MODEL DEFINITIONS - All models use consistent priors
-	# [Model code definitions remain the same as original script]
-	# ... [Include all the model code definitions from the original script]
+		cat("Building Nimble model...\n")
+	if (model_name == "cycl_only" && use_legacy_covariate) {
+		modelCode <- nimble::nimbleCode({
+			for (i in 1:N.core) {
+				y[i, 1] ~ dbeta(shape1 = plot_mu[plot_num[i], timepoint[i]] * precision, 
+								 shape2 = (1 - plot_mu[plot_num[i], timepoint[i]]) * precision)
+			}
+			for (p in 1:N.plot) {
+				for (t in plot_start[p]) {
+					Ex[p, t] ~ dunif(0.0001,.9999)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+				for (t in plot_index[p]:N.date) {
+					# STABLE: Use log transformation instead of logit for numerical stability
+					log_Ex_prev[p, t] <- log(max(0.001, plot_mu[p, t-1]))  # Safe log with bounds
+
+					# STABLE: Direct linear predictor in log space
+					log_Ex_mean[p, t] <- rho * log_Ex_prev[p, t] +
+						beta[1] * sin_mo[t] + beta[2] * cos_mo[t] +
+						site_effect[plot_site_num[p]] +
+						legacy_effect * legacy[t] +
+						intercept
+
+					# STABLE: Use exp() instead of ilogit() for numerical stability
+					Ex[p, t] <- max(0.001, min(0.999, exp(log_Ex_mean[p, t])))
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+			}
+
+			# IMPROVED PRIORS - More flexible priors for better convergence
+			site_effect_sd ~ dgamma(2, 0.1)  # More flexible site effect variance
+			for (k in 1:N.site) {
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)
+			}
+
+			precision ~ dgamma(0.1, 0.1)  # Less informative prior for observation precision
+			intercept ~ dnorm(0, sd = 2)  # More flexible baseline abundance
+			rho ~ dbeta(5, 5)  # Tighter beta prior centered at 0.5
+			legacy_effect ~ dnorm(0, sd = 2)  # More flexible legacy effect
+
+			for (b in 1:2) {
+				beta[b] ~ dnorm(0, sd = 0.5)  # More flexible seasonal coefficients
+			}
+		})
+	} else if (model_name == "env_cycl" && use_legacy_covariate) {
+		modelCode <- nimble::nimbleCode({
+			# Loop through core observations - CONVERTED TO BETA REGRESSION
+			for (i in 1:N.core) {
+				y[i, 1] ~ dbeta(shape1 = plot_mu[plot_num[i], timepoint[i]] * precision, 
+								 shape2 = (1 - plot_mu[plot_num[i], timepoint[i]]) * precision)
+			}
+
+			for (p in 1:N.plot) {
+				# Plot-level process model
+				for (t in plot_start[p]) {
+					Ex[p, t] ~ dunif(0.0001,.9999)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+				
+				for (t in plot_index[p]:N.date) {
+					# STABLE: Use log transformation instead of logit for numerical stability
+					log_Ex_prev[p, t] <- log(max(0.001, plot_mu[p, t-1]))  # Safe log with bounds
+
+					# STABLE: Direct linear predictor in log space
+					log_Ex_mean[p, t] <- rho * log_Ex_prev[p, t] +
+						site_effect[plot_site_num[p]] +
+						beta[1] * temp[plot_site_num[p], t] +
+						beta[2] * mois[plot_site_num[p], t] +
+						beta[3] * pH[p, plot_start[p]] +
+						beta[4] * pC[p, plot_start[p]] +
+						beta[5] * relEM[p, t] +
+						beta[6] * LAI[plot_site_num[p], t] +
+						beta[7] * sin_mo[t] +
+						beta[8] * cos_mo[t] +
+						legacy_effect * legacy[t] +  # LEGACY COVARIATE
+						intercept
+
+					# STABLE: Use exp() instead of ilogit() for numerical stability
+					Ex[p, t] <- max(0.001, min(0.999, exp(log_Ex_mean[p, t])))
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+			}
+			
+			# IMPROVED PRIORS - More flexible priors for better convergence
+			site_effect_sd ~ dgamma(2, 0.1)  # More flexible site effect variance
+			for (k in 1:N.site) {
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Remove truncation, use flexible SD
+			}
+
+			precision ~ dgamma(0.1, 0.1)  # Less informative prior for observation precision
+			intercept ~ dnorm(0, sd = 2)  # More flexible baseline abundance
+			rho ~ dbeta(5, 5)  # Tighter beta prior centered at 0.5
+			legacy_effect ~ dnorm(0, sd = 2)  # More flexible legacy effect
+
+			for (b in 1:8) {
+				beta[b] ~ dnorm(0, sd = 0.5)  # More flexible seasonal + environmental coefficients
+			}
+		})
+
+	} else if (model_name == "env_cov" && use_legacy_covariate) {
+		modelCode <- nimble::nimbleCode({
+			# Loop through core observations - CONVERTED TO BETA REGRESSION
+			for (i in 1:N.core) {
+				y[i, 1] ~ dbeta(shape1 = plot_mu[plot_num[i], timepoint[i]] * precision, 
+								 shape2 = (1 - plot_mu[plot_num[i], timepoint[i]]) * precision)
+			}
+
+			for (p in 1:N.plot) {
+				# Plot-level process model
+				for (t in plot_start[p]) {
+					Ex[p, t] ~ dunif(0.0001,.9999)
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+
+				for (t in plot_index[p]:N.date) {
+					# STABLE: Use log transformation instead of logit for numerical stability
+					log_Ex_prev[p, t] <- log(max(0.001, plot_mu[p, t-1]))  # Safe log with bounds
+
+					# STABLE: Direct linear predictor in log space
+					log_Ex_mean[p, t] <- rho * log_Ex_prev[p, t] +
+						site_effect[plot_site_num[p]] +
+						beta[1] * temp[plot_site_num[p], t] +
+						beta[2] * mois[plot_site_num[p], t] +
+						beta[3] * pH[p, plot_start[p]] +
+						beta[4] * pC[p, plot_start[p]] +
+						beta[5] * relEM[p, t] +
+						beta[6] * LAI[plot_site_num[p], t] +
+						legacy_effect * legacy[t] +  # LEGACY COVARIATE
+						intercept
+
+					# STABLE: Use exp() instead of ilogit() for numerical stability
+					Ex[p, t] <- max(0.001, min(0.999, exp(log_Ex_mean[p, t])))
+					plot_mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+				}
+			}
+
+			# IMPROVED PRIORS - More flexible priors for better convergence
+			site_effect_sd ~ dgamma(2, 0.1)  # More flexible site effect variance
+			for (k in 1:N.site) {
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Hierarchical normal priors
+			}
+
+			precision ~ dgamma(0.1, 0.1)  # Less informative prior for observation precision
+			intercept ~ dnorm(0, sd = 2)  # More flexible baseline abundance
+			rho ~ dbeta(5, 5)  # Tighter beta prior centered at 0.5
+			legacy_effect ~ dnorm(0, sd = 2)  # More flexible legacy effect
+
+			for (b in 1:6) {
+				beta[b] ~ dnorm(0, sd = 0.5)  # More flexible environmental coefficients
+			}
+		})
+	} else {
+		# Error handling for unsupported model combinations
+		stop("Unsupported model combination: ", model_name, " with use_legacy_covariate=", use_legacy_covariate,
+			 ". Only models WITH legacy covariates are supported after simplification.")
+	}
 
 	# Create inits with restart capability
 		cat("Creating initial values...\n")
@@ -860,5 +1021,513 @@ if (nrow(params) > 0) {
 	cat("No models to run\n")
 }
 
-# [Continue with the rest of the original script's setup and parallel execution]
+# Pre-validate data availability for all models to catch errors early
+cat("Pre-validating data availability for all models...\n")
+validation_errors <- list()
+
+for (i in 1:nrow(params)) {
+	rank_name <- params$rank.name[i]
+	species_name <- params$species[i]
+
+	# Check if rank exists in data
+	if (!(rank_name %in% names(all_ranks))) {
+		validation_errors <- c(validation_errors,
+			paste("Model", i, ": Rank '", rank_name, "' not found in data. Available ranks:",
+				  paste(names(all_ranks), collapse=", ")))
+		next
+	}
+
+	rank_data <- all_ranks[[rank_name]]
+
+	# Check if species exists in rank data
+	if (!(species_name %in% colnames(rank_data))) {
+		validation_errors <- c(validation_errors,
+			paste("Model", i, ": Species '", species_name, "' not found in rank '", rank_name, "'"))
+		next
+	}
+
+	# Check if species has valid data
+	species_data <- rank_data[[species_name]]
+	if (all(is.na(species_data)) || all(species_data == 0) || all(species_data == 1)) {
+		validation_errors <- c(validation_errors,
+			paste("Model", i, ": Species '", species_name, "' has no valid variation (all NA, 0, or 1)"))
+	}
+}
+
+# Report validation results
+if (length(validation_errors) > 0) {
+	cat("⚠️  Validation errors found:\n")
+	for (error in validation_errors) {
+		cat("  ", error, "\n")
+	}
+	cat("  These models will be filtered out before processing\n")
+} else {
+	cat("✓ All models passed validation\n")
+}
+
+# Create a function to check if a model has valid data
+is_valid_model <- function(rank_name, species_name) {
+	# Check if rank exists in data
+	if (!(rank_name %in% names(all_ranks))) {
+		return(FALSE)
+	}
+
+	rank_data <- all_ranks[[rank_name]]
+
+	# Check if species exists in rank data
+	if (!(species_name %in% colnames(rank_data))) {
+		return(FALSE)
+	}
+
+	# Check if species has valid data
+	species_data <- rank_data[[species_name]]
+	if (all(is.na(species_data)) || all(species_data == 0) || all(species_data == 1)) {
+		return(FALSE)
+	}
+
+	return(TRUE)
+}
+
+# Filter the parameters dataframe
+valid_indices <- sapply(1:nrow(params), function(i) {
+	is_valid_model(params$rank.name[i], params$species[i])
+})
+
+params <- params[valid_indices, ]
+filtered_n_models <- nrow(params)
+
+# Report filtering results
+if (filtered_n_models < nrow(params_in)) {
+	n_filtered <- nrow(params_in) - filtered_n_models
+	cat("⚠️  Filtered out", n_filtered, "models with unavailable species/ranks\n")
+	cat("  Original models:", nrow(params_in), "\n")
+	cat("  Valid models:", filtered_n_models, "\n")
+} else {
+	cat("✓ All", filtered_n_models, "models have valid data\n")
+}
+
+# Additional validation: ensure we have at least one valid model
+if (filtered_n_models == 0) {
+	cat("❌ ERROR: No valid models remaining after filtering!\n")
+	cat("Available ranks in data:", paste(names(all_ranks), collapse=", "), "\n")
+
+	# Show some examples of available species for each rank
+	for (rank_name in names(all_ranks)) {
+		rank_data <- all_ranks[[rank_name]]
+		metadata_cols <- c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date")
+		available_species <- setdiff(colnames(rank_data), metadata_cols)
+		cat("  ", rank_name, "species (first 5):", paste(head(available_species, 5), collapse=", "),
+		    if(length(available_species) > 5) paste("... (+", length(available_species) - 5, " more)") else "", "\n")
+	}
+
+	stop("No valid models to run - check species names and rank names in parameters")
+}
+
+# Set up parallel cluster for Nimble
+library(parallel)
+library(doParallel)
+
+# Create cluster
+ncores <- 28
+cat("Creating cluster with exactly", ncores, "cores for", filtered_n_models, "model ×", nchains, "chains\n")
+cl <- makeCluster(ncores, type = "PSOCK")
+
+# Register the cluster
+registerDoParallel(cl)
+
+# Verify cluster size
+actual_workers <- length(cl)
+cat("Cluster created with", actual_workers, "workers\n")
+if (actual_workers != ncores) {
+  cat("WARNING: Expected", ncores, "workers but got", actual_workers, "\n")
+}
+
+# Export necessary objects to workers
+clusterExport(cl, c("params", "k", "nchains"))
+
+# Data already loaded above for filtering
+
+# Export the function and data to workers
+clusterExport(cl, c("run_scenarios_with_restart", "params", "all_ranks", "check_continue_with_restart"))
+
+# Run in parallel for faster execution
+	cat("TESTING: Starting parallel execution for", filtered_n_models, "cycl_only genus_bac model with", nchains, "chains using", ncores, "cores\n")
+	cat("Expected runtime: Variable (convergence-based sampling)\n")
+	cat("  - Models to test:", filtered_n_models, "cycl_only genus_bac model\n")
+	cat("  - Chains per model:", nchains, "(total", filtered_n_models * nchains, "parallel tasks)\n")
+	cat("  - Initial iterations: ~", round(filtered_n_models * 4 / 6, 1), "minutes\n")
+	cat("  - Additional iterations: Variable based on convergence\n")
+	cat("  - Target: ESS >= 10 per parameter\n")
+	cat("  - Restart functionality:", if(RESTART_ENABLED) "ENABLED" else "DISABLED", "\n")
+start_time <- Sys.time()
+
+# Run TEST model with 2 chains in parallel
+cat("TESTING: Running", filtered_n_models, "cycl_only genus_bac model with", nchains, "chains in parallel\n")
+cat("This tests the iterative saving and convergence-based sampling functionality\n")
+
+# Create a combined task list: (model_idx, chain_no) pairs
+all_tasks <- expand.grid(model_idx = 1:filtered_n_models, chain_no = 1:nchains)
+cat("Total parallel tasks:", nrow(all_tasks), "(", filtered_n_models, "models ×", nchains, "chains)\n")
+cat("Task details:\n")
+print(all_tasks)
+cat("Cluster size:", ncores, "workers\n")
+cat("Starting parallel execution with foreach...\n")
+
+# Function to monitor progress in real-time
+monitor_progress <- function() {
+  cat("\n=== REAL-TIME PROGRESS MONITORING ===\n")
+  cat("Press Ctrl+C to stop monitoring\n")
+  
+  while(TRUE) {
+    Sys.sleep(30)  # Check every 30 seconds
+    
+    completed <- 0
+    errors <- 0
+    for (model_idx in 1:filtered_n_models) {
+      for (chain_no in 1:nchains) {
+        status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
+        error_file <- paste0("chain_", model_idx, "_", chain_no, "_ERROR.txt")
+        
+        if (file.exists(status_file)) completed <- completed + 1
+        if (file.exists(error_file)) errors <- errors + 1
+      }
+    }
+    
+    total <- filtered_n_models * nchains
+    cat(format(Sys.time()), "- Progress:", completed, "/", total, "completed,", 
+        errors, "failed,", total - completed - errors, "running\n")
+  }
+}
+
+# Start progress monitoring in background (optional)
+cat("To monitor progress in real-time, run: monitor_progress()\n")
+cat("Or check status files manually:\n")
+cat("  - chain_[model]_[chain]_status.txt for completed chains\n")
+cat("  - chain_[model]_[chain]_ERROR.txt for failed chains\n")
+
+# Run everything in parallel with incremental saving
+cat("Starting parallel execution with incremental saving at:", format(Sys.time()), "\n")
+
+# Create a function that saves results as they complete
+runAndSave_task <- function(task_idx) {
+  # Initialize error tracking
+  error_details <- list()
+  start_time <- Sys.time()
+  
+  tryCatch({
+    # Get task details
+    task <- all_tasks[task_idx, ]
+    model_idx <- task$model_idx
+    chain_no <- task$chain_no
+    
+    cat("Worker: Model", model_idx, "Chain", chain_no, "starting at", format(start_time), "\n")
+    
+    # Log system information for debugging
+    cat("Worker: System info - R version:", R.version.string, "\n")
+    cat("Worker: Working directory:", getwd(), "\n")
+    cat("Worker: Available packages:", paste(installed.packages()[,"Package"], collapse=", "), "\n")
+    
+    # Check if required packages are loaded
+    required_packages <- c("nimble", "microbialForecast", "here", "tidyverse", "coda")
+    missing_packages <- required_packages[!required_packages %in% installed.packages()[,"Package"]]
+    if (length(missing_packages) > 0) {
+      stop("Missing required packages: ", paste(missing_packages, collapse=", "))
+    }
+    
+    # Check if data is available
+    if (!exists("all_ranks") || is.null(all_ranks)) {
+      stop("Data 'all_ranks' not available in worker environment")
+    }
+    
+    # Check if params is available
+    if (!exists("params") || is.null(params) || nrow(params) == 0) {
+      stop("Parameters 'params' not available or empty in worker environment")
+    }
+    
+    # Validate model index
+    if (model_idx > nrow(params)) {
+      stop("Model index ", model_idx, " exceeds available models (", nrow(params), ")")
+    }
+    
+    cat("Worker: All checks passed, calling run_scenarios_with_restart...\n")
+    
+    # Run the model with detailed error context
+    result <- run_scenarios_with_restart(j = model_idx, chain_no = chain_no)
+    
+    # Validate result structure
+    if (!is.list(result) || !("status" %in% names(result))) {
+      stop("Invalid result structure from run_scenarios_with_restart")
+    }
+    
+    # Save result immediately if successful
+    if (result$status == "SUCCESS") {
+      # Create output directory early with HPC compatibility
+      possible_bases <- c(
+        here("data", "model_outputs"),
+        file.path(getwd(), "data", "model_outputs"),
+        file.path(Sys.getenv("HOME"), "data", "model_outputs"),
+        file.path(Sys.getenv("PWD"), "data", "model_outputs"),
+        "./data/model_outputs"
+      )
+      
+      model_output_dir <- NULL
+      for (base_dir in possible_bases) {
+        if (!is.null(base_dir) && base_dir != "" && base_dir != "NULL") {
+          test_dir <- file.path(base_dir, "logit_beta_regression", params$model_name[model_idx])
+          tryCatch({
+            dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+            if (dir.exists(test_dir)) {
+              model_output_dir <- test_dir
+              cat("  Created output directory:", model_output_dir, "\n")
+              break
+            }
+          }, error = function(e) {
+            cat("  Failed to create directory with base:", base_dir, "-", e$message, "\n")
+          })
+        }
+      }
+      
+      if (is.null(model_output_dir)) {
+        # Fallback: create in current directory
+        model_output_dir <- file.path("data", "model_outputs", "logit_beta_regression", params$model_name[model_idx])
+        dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
+        cat("  WARNING: Using fallback output directory:", model_output_dir, "\n")
+      }
+      
+      # Create model_id for consistent naming
+      legacy_indicator <- ifelse(grepl("Legacy with covariate", params$scenario[model_idx]), 
+                                "with_legacy_covariate", "without_legacy_covariate")
+      model_id <- paste(params$model_name[model_idx], params$species[model_idx], 
+                       params$min.date[model_idx], params$max.date[model_idx], 
+                       legacy_indicator, sep = "_")
+      
+      # Save MCMC samples immediately
+      samples_file <- file.path(model_output_dir, 
+                               paste0("samples_", model_id, "_chain", chain_no, ".rds"))
+      
+      # Create the complete chain structure with metadata
+      # Use the metadata from the result if available, otherwise create it
+      if ("metadata" %in% names(result) && !is.null(result$metadata)) {
+        # Use the complete metadata from the result
+        metadata <- result$metadata
+        # Add parallel execution specific fields
+        metadata$task_idx <- task_idx
+        metadata$completed_at <- Sys.time()
+      } else {
+        # Fallback: create metadata if not available in result
+        metadata <- list(
+          rank.name = params$rank.name[model_idx],
+          species = params$species[model_idx],
+          model_name = params$model_name[model_idx],
+          model_id = model_id,
+          use_legacy_covariate = grepl("Legacy with covariate", params$scenario[model_idx]),
+          scenario = params$scenario[model_idx],
+          min.date = params$min.date[model_idx],
+          max.date = params$max.date[model_idx],
+          niter = nrow(result$samples),
+          nburnin = 500,  # Default burnin
+          thin = 1,       # Default thin
+          task_idx = task_idx,
+          completed_at = Sys.time(),
+          model_data = result$model_data,  # Include model_data from result
+          nimble_code = result$nimble_code,  # Include nimble_code if available
+          model_structure = "standardized_beta_regression_with_restart_capability"  # Model structure identifier
+        )
+      }
+      
+      chain_output <- list(
+        samples = result$samples,
+        metadata = metadata
+      )
+      
+      saveRDS(chain_output, samples_file)
+      cat("SAVED: Chain", chain_no, "for model", model_idx, "to", samples_file, "\n")
+      
+      # Also save a simple status file to track progress
+      status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
+      writeLines(paste("SUCCESS", Sys.time(), sep = "\t"), status_file)
+    }
+    
+    cat("Worker: Model", model_idx, "Chain", chain_no, "completed at", format(Sys.time()), "\n")
+    return(list(model_idx = model_idx, chain_no = chain_no, result = result))
+    
+  }, error = function(e) {
+    # Capture comprehensive error information
+    error_time <- Sys.time()
+    error_details <- list(
+      timestamp = error_time,
+      task_idx = task_idx,
+      model_idx = if(exists("model_idx")) model_idx else NA,
+      chain_no = if(exists("chain_no")) chain_no else NA,
+      error_message = if(!is.null(e$message) && e$message != "") e$message else "No error message available",
+      error_call = if(!is.null(e$call)) paste(deparse(e$call), collapse=" ") else "No call information",
+      error_class = class(e)[1],
+      system_info = list(
+        r_version = R.version.string,
+        working_dir = getwd(),
+        available_packages = installed.packages()[,"Package"],
+        memory_usage = if(exists("gc")) gc() else "GC not available"
+      ),
+      runtime = if(exists("start_time")) difftime(error_time, start_time, units="secs") else NA
+    )
+    
+    # Create detailed error file
+    task <- all_tasks[task_idx, ]
+    error_file <- paste0("chain_", task$model_idx, "_", task$chain_no, "_ERROR.txt")
+    
+    # Write comprehensive error report
+    error_report <- c(
+      paste("ERROR DETAILED REPORT -", format(error_time)),
+      paste("Task Index:", error_details$task_idx),
+      paste("Model Index:", error_details$model_idx),
+      paste("Chain Number:", error_details$chain_no),
+      paste("Error Message:", error_details$error_message),
+      paste("Error Call:", error_details$error_call),
+      paste("Error Class:", error_details$error_class),
+      paste("Runtime (seconds):", round(error_details$runtime, 2)),
+      paste("R Version:", error_details$system_info$r_version),
+      paste("Working Directory:", error_details$system_info$working_dir),
+      paste("Available Packages:", paste(error_details$system_info$available_packages, collapse=", ")),
+      "",
+      "FULL ERROR OBJECT:",
+      capture.output(str(e))
+    )
+    
+    writeLines(error_report, error_file)
+    
+    # Also log to console with detailed information
+    cat("ERROR in Model", error_details$model_idx, "Chain", error_details$chain_no, ":\n")
+    cat("  Message:", error_details$error_message, "\n")
+    cat("  Call:", error_details$error_call, "\n")
+    cat("  Class:", error_details$error_class, "\n")
+    cat("  Runtime:", round(error_details$runtime, 2), "seconds\n")
+    cat("  Detailed error saved to:", error_file, "\n")
+    
+    # Return detailed error information
+    return(list(
+      model_idx = error_details$model_idx, 
+      chain_no = error_details$chain_no, 
+      result = list(
+        status = "ERROR", 
+        error = error_details$error_message,
+        error_details = error_details,
+        error_file = error_file
+      )
+    ))
+  })
+}
+
+# Export the function to workers
+clusterExport(cl, c("runAndSave_task", "params", "all_tasks"))
+
+# Run everything in parallel with incremental saving
+all_results_parallel = foreach(task_idx = 1:nrow(all_tasks), 
+                             .packages = c("nimble", "microbialForecast", "here", "tidyverse", "coda"),
+                             .export = c("runAndSave_task", "params", "all_tasks")) %dopar% {
+  runAndSave_task(task_idx)
+}
+cat("Parallel execution completed at:", format(Sys.time()), "\n")
+
+# Show progress summary
+cat("\n=== PROGRESS SUMMARY ===\n")
+cat("Checking which chains have been completed...\n")
+
+# Count completed chains
+completed_chains <- 0
+error_chains <- 0
+for (model_idx in 1:filtered_n_models) {
+  for (chain_no in 1:nchains) {
+    status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
+    error_file <- paste0("chain_", model_idx, "_", chain_no, "_ERROR.txt")
+    
+    if (file.exists(status_file)) {
+      completed_chains <- completed_chains + 1
+      cat("✓ Model", model_idx, "Chain", chain_no, "completed\n")
+    } else if (file.exists(error_file)) {
+      error_chains <- error_chains + 1
+      cat("✗ Model", model_idx, "Chain", chain_no, "failed\n")
+    } else {
+      cat("? Model", model_idx, "Chain", chain_no, "status unknown\n")
+    }
+  }
+}
+
+cat("\nProgress Summary:\n")
+cat("  Completed chains:", completed_chains, "/", filtered_n_models * nchains, "\n")
+cat("  Failed chains:", error_chains, "/", filtered_n_models * nchains, "\n")
+cat("  Success rate:", round(completed_chains / (filtered_n_models * nchains) * 100, 1), "%\n")
+
+# Reorganize results by model
+all_results <- list()
+for (model_idx in 1:filtered_n_models) {
+  all_results[[model_idx]] <- list()
+  for (chain_no in 1:nchains) {
+    # Find the result for this model/chain combination
+    task_result <- all_results_parallel[[which(all_tasks$model_idx == model_idx & all_tasks$chain_no == chain_no)]]
+    all_results[[model_idx]][[chain_no]] <- task_result$result
+  }
+}
+
+# Stop the cluster
+stopCluster(cl)
+
+end_time <- Sys.time()
+runtime <- difftime(end_time, start_time, units = "mins")
+
+cat("\n", paste(rep("=", 50), collapse = ""), "\n")
+cat("ALL MODELS COMPLETED\n")
+cat("Total runtime:", round(runtime, 1), "minutes\n")
+cat(paste(rep("=", 50), collapse = ""), "\n")
+
+# Summary of all models
+cat("\nSummary of All Models:\n")
+for (model_idx in 1:filtered_n_models) {
+  cat("\nModel", model_idx, ":", params$species[model_idx], "(", params$model_name[model_idx], ")\n")
+  
+  output.list <- all_results[[model_idx]]
+  
+  # Status summary for this model
+  status_summary <- sapply(output.list, function(x) {
+    if (is.list(x) && "status" %in% names(x)) {
+      x$status
+    } else {
+      "ERROR"
+    }
+  })
+  
+  cat("  Results:", paste(status_summary, collapse = ", "), "\n")
+  
+  # Detailed status for this model
+  for (i in 1:length(output.list)) {
+    if (is.list(output.list[[i]]) && "status" %in% names(output.list[[i]])) {
+      if (output.list[[i]]$status == "SUCCESS") {
+        cat("    Chain", i, ": SUCCESS - Samples:", dim(output.list[[i]]$samples)[1], "iterations\n")
+      } else {
+        cat("    Chain", i, ": ERROR -", output.list[[i]]$error, "\n")
+      }
+    } else {
+      cat("    Chain", i, ": ERROR - Unexpected output format\n")
+    }
+  }
+}
+
+# Clean up status files
+for (chain_no in 1:nchains) {
+  status_file <- paste0("chain_", chain_no, "_status.txt")
+  if (file.exists(status_file)) {
+    unlink(status_file)
+  }
+}
+
+# STABLE TRANSFORMATION SUMMARY
+cat("\n=== STABLE TRANSFORMATION UPDATE COMPLETE ===\n")
+cat("✓ Successfully updated all three models with stable log/exp transformations\n")
+cat("✓ Replaced unstable logit(Ex) → logit(plot_mu) with stable log/exp approach\n")
+cat("✓ Updated cycl_only model: 2 seasonal beta parameters\n")
+cat("✓ Updated env_cycl model: 8 beta parameters (6 env + 2 seasonal)\n")
+cat("✓ Updated env_cov model: 6 environmental beta parameters\n")
+cat("✓ All models now use bounded transformations: max(0.001, min(0.999, exp(...)))\n")
+cat("✓ This should resolve the extreme site effect and unmixing issues\n")
+cat("✓ RESTART CAPABILITY: Can use initial values from previous chains\n")
+cat("✓ ENHANCED ERROR HANDLING: Better diagnostics for restart scenarios\n")
 
