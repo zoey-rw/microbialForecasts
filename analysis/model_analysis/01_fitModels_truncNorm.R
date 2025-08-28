@@ -345,7 +345,7 @@ nchains = 4
 
 #### Run on all groups ----
 
-source("../../source.R")
+source("source.R")
 
 # Load data early for filtering
 cat("Loading data files for filtering...\n")
@@ -479,12 +479,12 @@ cat("Testing with", nrow(valid_models), "models\n")
 cat("Models to test:\n")
 print(valid_models)
 
-cat("Testing", nrow(valid_models), "models across all ranks to verify truncated normal approach\n")
+cat("HPC PRODUCTION: Running", nrow(valid_models), "models across all ranks with truncated normal approach\n")
 
-# Create cluster for parallel execution - Use 10 cores for local testing (HPC will use 28)
-n_cores <- min(10, detectCores())  # Limit to 10 cores for local testing
-cat("Creating cluster with", n_cores, "cores for", nrow(valid_models), "model ×", nchains, "chains\n")
-cat("Local testing cores:", n_cores, "| HPC production will use 28 cores\n")
+# Create cluster for parallel execution - Use full 28 cores for HPC production
+n_cores <- 28  # Use full HPC allocation
+cat("Creating cluster with", n_cores, "cores for", nrow(valid_models), "models ×", nchains, "chains\n")
+cat("HPC cores allocated:", n_cores, "\n")
 
 # Create cluster with explicit error handling
 tryCatch({
@@ -520,7 +520,7 @@ cat("Parallel backend registered. Checking registration...\n")
 cat("getDoParWorkers():", getDoParWorkers(), "\n")
 cat("getDoParName():", getDoParName(), "\n")
 
-cat("HPC PRODUCTION: Starting parallel execution for", nrow(valid_models), "models with", nchains, "chains using", n_cores, "cores\n")
+cat("HPC PRODUCTION: Starting parallel execution for", nrow(valid_models), "models with", nchains, "chains\n")
 cat("Expected runtime: Variable (convergence-based sampling)\n")
 cat("  - Models to run:", nrow(valid_models), "models (cycl_only, env_cov, env_cycl)\n")
 cat("  - Chains per model:", nchains, "(total", nrow(valid_models) * nchains, "parallel tasks)\n")
@@ -883,8 +883,9 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
     }
     
     # Remove beta samplers if they exist
-    if (length(constants$beta) > 1) {
-      mcmcConf$removeSamplers(paste0("beta[1:", length(constants$beta), "]"))
+    n_beta <- if (model_name == "env_cycl") 8 else if (model_name == "env_cov") 6 else 2
+    if (n_beta > 1) {
+      mcmcConf$removeSamplers(paste0("beta[1:", n_beta, "]"))
     } else {
       mcmcConf$removeSamplers("beta[1]")
     }
@@ -1613,7 +1614,7 @@ model_output_dir <- here("data", "model_outputs", "truncated_normal")
 start_time <- Sys.time()
 
 # Export the function to workers
-clusterExport(cl, c("runAndSave_task", "run_truncated_normal_scenarios", "valid_models", "all_tasks", "model_output_dir"))
+clusterExport(cl, c("runAndSave_task", "run_truncated_normal_scenarios", "valid_models", "all_tasks", "model_output_dir", "params"))
 
 # Run everything in parallel with incremental saving
 cat("DEBUG: Starting foreach loop with", nrow(all_tasks), "tasks\n")
@@ -1663,7 +1664,7 @@ cat("DEBUG: Data exists in workers:", unlist(test_data), "\n")
 
 all_results_parallel = foreach(task_idx = 1:nrow(all_tasks), 
                              .packages = c("nimble", "microbialForecast", "here", "tidyverse", "coda"),
-                             .export = c("runAndSave_task", "run_truncated_normal_scenarios", "valid_models", "all_tasks", "model_output_dir")) %dopar% {
+                             .export = c("runAndSave_task", "run_truncated_normal_scenarios", "valid_models", "all_tasks", "model_output_dir", "params")) %dopar% {
   cat("DEBUG: Worker starting task", task_idx, "at", Sys.time(), "\n")
   
   # Test if we can access the function
