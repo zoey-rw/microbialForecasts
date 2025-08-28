@@ -1,5 +1,6 @@
 # Combine chains from each taxon model, and create basic summary stats
-source("../../source.R")
+#source("../../source.R")
+source("source.R")
 
 # Define model types and time periods for logit beta regression
 model_types <- c("cycl_only", "env_cycl", "env_cov")
