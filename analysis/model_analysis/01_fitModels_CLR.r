@@ -61,12 +61,9 @@ converged_list = readRDS(here("data/summary/converged_taxa_list.rds"))
 
 	# Focus on legacy covariate models for 2013-2018 period
 	params <- params_in %>% ungroup %>% filter(
-		# Target key functional groups for 2013-2018 period
-		rank.name %in% c("phylum_fun") &
-		#rank.name %in% c("saprotroph", "ectomycorrhizal", "cellulolytic", "assim_nitrite_reduction", 
-		#                  "acetate_simple", "chitinolytic", "denitrification", "n_fixation", 
-		#                  "nitrification", "plant_pathogen", "endophyte") &
-			# Focus on 2013-2018 period (both legacy and non-legacy scenarios)
+		# Test multiple ranks for generalization testing
+		rank.name %in% c("phylum_fun", "class_fun", "order_fun") &
+		# Focus on 2013-2018 period (both legacy and non-legacy scenarios)
 		scenario %in% c("Legacy with covariate 2013-2018", "2013-2018") &
 		# All three model types
 		model_name %in% c("cycl_only", "env_cov", "env_cycl")
@@ -751,9 +748,9 @@ cat("Testing with", nrow(params), "models\n")
 cat("Models to test:\n")
 print(params[, c("rank.name", "species", "model_name", "model_id")])
 
-# Test with a few models to verify fixes work
-test_models <- 3  # Test 3 models for verification
-cat("\nTesting", test_models, "models to verify convergence fixes\n")
+# Test with more models to verify generalization across ranks and model types
+test_models <- 6  # Test 6 models for comprehensive verification
+cat("\nTesting", test_models, "models to verify generalization across ranks and model types\n")
 
 # Set up parallel cluster for Nimble
 library(parallel)
