@@ -78,7 +78,7 @@ max_save_size <- 20000  # Maximum samples to save
 # Sequential execution settings
 # NOTE: This should match batch_restart_models.R to avoid conflicts
 # batch_restart_models.R uses nchains = 2, so we'll use the same here
-nchains <- 3  # Number of chains per model (for testing - can be changed to 4 for production)
+nchains <- 4  # Number of chains per model (for HPC mode))
 
 #### Run on all groups ----
 
@@ -326,10 +326,8 @@ run_scenarios_with_restart <- function(j, chain_no) {
 				)
 
 				cat("  ✓ Restart setup complete using previous parameter estimates\n")
-
-				cat("  ✓ Restart setup complete:\n")
-				cat("    - Extreme values detected:", n_extreme, "/", length(restart_inits$extreme_flags), "\n")
-				cat("    - Using fallback values:", n_fallback, "\n")
+				cat("    - Extreme values detected:", sum(restart_inits$extreme_flags), "/", length(restart_inits$extreme_flags), "\n")
+				cat("    - Using fallback values:", sum(restart_inits$fallback_used), "\n")
 				cat("    - Ready to restart with improved initial values\n")
 
 			} else {
@@ -918,18 +916,20 @@ run_scenarios_with_restart <- function(j, chain_no) {
 		total_iterations <- total_iterations + iter_per_chunk
 		
 		# Get updated samples and accumulate them
+		# CRITICAL: NIMBLE's mvSamples resets between runs, so current_samples contains ONLY the latest iteration
 		current_samples <- as.matrix(compiled$mvSamples)
-		cat("  Current total samples in compiled object:", nrow(current_samples), "\n")
-		cat("  Previous accumulated samples:", nrow(all_samples), "\n")
+		current_sample_count <- nrow(current_samples)
+		previous_sample_count <- nrow(all_samples)
 		
-		# Only take the new samples (skip the initial ones we already have)
-		if (nrow(current_samples) > nrow(initial_samples)) {
-			new_samples <- current_samples[(nrow(initial_samples) + 1):nrow(current_samples), , drop = FALSE]
-			all_samples <- rbind(all_samples, new_samples)
-			cat("  Updated samples collected:", nrow(new_samples), "new samples,", nrow(all_samples), "total accumulated\n")
+		cat("  Current iteration samples:", current_sample_count, "\n")
+		cat("  Previous accumulated samples:", previous_sample_count, "\n")
+		
+		# CORRECTED LOGIC: Always append all current samples since mvSamples resets
+		if (current_sample_count > 0) {
+			all_samples <- rbind(all_samples, current_samples)
+			cat("  ✓ Added", current_sample_count, "new samples, total accumulated:", nrow(all_samples), "\n")
 		} else {
-			cat("  WARNING: No new samples detected, using current samples\n")
-			all_samples <- current_samples
+			cat("  WARNING: No samples in current iteration\n")
 		}
 		
 		        # Save checkpoint after each loop using package function
@@ -983,8 +983,8 @@ run_scenarios_with_restart <- function(j, chain_no) {
 
 	cat("MCMC completed successfully\n")
 	cat("Final sample dimensions:", dim(samples), "\n")
-	cat("Total iterations run:", n_iterations, "\n")
-	cat("Restart iterations:", n_iterations, "\n")
+	cat("Total iterations run:", total_iterations, "\n")
+	cat("Restart iterations:", total_iterations, "\n")
 
 	if (!is.null(restart_inits)) {
 		cat("🔄 RESTART MODE RESULTS:\n")
@@ -1031,7 +1031,7 @@ run_scenarios_with_restart <- function(j, chain_no) {
 			scenario = scenario,
 			min.date = min.date,
 			max.date = max.date,
-			niter = n_iterations,
+			niter = total_iterations,
 			nburnin = burnin,
 			thin = thin,
 			model_data = model.dat,
@@ -1042,8 +1042,8 @@ run_scenarios_with_restart <- function(j, chain_no) {
 				extreme_values_detected = sum(restart_inits$extreme_flags),
 				fallback_values_used = sum(restart_inits$fallback_used),
 				fallback_strategy = RESTART_FALLBACK_STRATEGY,
-				restart_iterations = n_iterations
-			) else list(restart_used = FALSE, restart_iterations = n_iterations)
+				restart_iterations = total_iterations
+			) else list(restart_used = FALSE, restart_iterations = total_iterations)
 		)
 	)
 
@@ -1096,7 +1096,7 @@ run_scenarios_with_restart <- function(j, chain_no) {
 			scenario = scenario,
 			min.date = min.date,
 			max.date = max.date,
-			niter = n_iterations,
+			niter = total_iterations,
 			nburnin = burnin,
 			thin = thin,
 			model_data = model.dat,
@@ -1211,21 +1211,35 @@ params_in = read.csv(here("data/clean/model_input_df.csv"),
 rerun_list = readRDS(here("data/summary/unconverged_taxa_list.rds"))
 converged_list = readRDS(here("data/summary/converged_taxa_list.rds"))
 
-# RESTART CONFIGURATION: Focus on ascomycota model for testing multiple chains
-params <- params_in %>% ungroup %>% filter(
-	# Focus on ascomycota model for testing multiple chains
-	model_id %in% c(
-		"env_cycl_ascomycota_20130601_20180101"
-	) &
-	# Ensure we have the legacy covariate models
-	scenario %in% c("Legacy with covariate 2013-2018", "2013-06-01_2018-01-01")
-)
+# RESTART CONFIGURATION: Use full unconverged list for production runs
+cat("DEBUG: Starting filtering process...\n")
+cat("DEBUG: rerun_list length:", length(rerun_list), "\n")
+cat("DEBUG: First few rerun_list items:", head(rerun_list, 3), "\n")
+cat("DEBUG: converged_list length:", length(converged_list), "\n")
+
+# Create full model names that match the rerun_list format
+params_with_full_names <- params_in %>% ungroup %>% 
+	filter(scenario %in% c("Legacy with covariate 2013-2018", "2013-06-01_2018-01-01")) %>%
+	mutate(full_model_name = ifelse(
+		grepl("_with_legacy_covariate$", model_id),
+		model_id,  # Already has the suffix
+		paste0(model_id, "_with_legacy_covariate")  # Add the suffix
+	))
+
+cat("DEBUG: After scenario filtering, params has", nrow(params_with_full_names), "rows\n")
+cat("DEBUG: Sample full_model_names:", head(params_with_full_names$full_model_name, 3), "\n")
+
+# Filter for unconverged models
+params <- params_with_full_names %>% filter(full_model_name %in% rerun_list)
+cat("DEBUG: After rerun_list filtering, params has", nrow(params), "rows\n")
 
 # Remove duplicate model entries
-params <- params %>% distinct(model_id, .keep_all = TRUE)
+params <- params %>% distinct(full_model_name, .keep_all = TRUE)
+cat("DEBUG: After deduplication, params has", nrow(params), "rows\n")
 
-# Filter out already converged models
-params <- params %>% filter(!model_id %in% converged_list)
+# Filter out already converged models (using full model names)
+params <- params %>% filter(!full_model_name %in% converged_list)
+cat("DEBUG: After converged_list filtering, params has", nrow(params), "rows\n")
 
 # Set valid_models for compatibility with runAndSave_task function
 valid_models <- params
@@ -1243,6 +1257,35 @@ if (nrow(params) > 0) {
 
 # Pre-validate data availability for all models to catch errors early
 cat("Pre-validating data availability for all models...\n")
+
+# Check if we have any models to validate
+if (nrow(params) == 0) {
+	cat("❌ ERROR: No models to validate after filtering!\n")
+	cat("This means either:\n")
+	cat("  1. No models in rerun_list match the scenario filter\n")
+	cat("  2. All models in rerun_list are already in converged_list\n")
+	cat("  3. There's a mismatch in model naming between params and rerun_list\n")
+	
+	# Show what we have in the lists for debugging
+	cat("\nDebugging information:\n")
+	cat("rerun_list length:", length(rerun_list), "\n")
+	if (length(rerun_list) > 0) {
+		cat("First few rerun_list items:", paste(head(rerun_list, 5), collapse=", "), "\n")
+	}
+	cat("converged_list length:", length(converged_list), "\n")
+	if (length(converged_list) > 0) {
+		cat("First few converged_list items:", paste(head(converged_list, 5), collapse=", "), "\n")
+	}
+	
+	# Show sample from params_in for comparison
+	if (nrow(params_in) > 0) {
+		cat("Sample model_ids from params_in:", paste(head(params_in$model_id, 5), collapse=", "), "\n")
+		cat("Available scenarios:", paste(unique(params_in$scenario), collapse=", "), "\n")
+	}
+	
+	stop("No models available for processing after filtering")
+}
+
 validation_errors <- list()
 
 for (i in 1:nrow(params)) {
@@ -1588,149 +1631,3 @@ run_sequential_task <- function(task_idx) {
     ))
   })
 }
-
-# Sequential execution - no cluster setup needed
-
-# Sequential execution
-cat("Starting sequential execution with", nrow(all_tasks), "tasks...\n")
-cat("Task details:\n")
-print(all_tasks)
-
-cat("Executing tasks sequentially...\n")
-all_results_sequential <- list()
-
-for (task_idx in 1:nrow(all_tasks)) {
-  cat("\n--- Processing Task", task_idx, "of", nrow(all_tasks), "---\n")
-  
-  tryCatch({
-    result <- run_sequential_task(task_idx)
-    all_results_sequential[[task_idx]] <- result
-    cat("✓ Task", task_idx, "completed successfully\n")
-  }, error = function(e) {
-    cat("✗ Task", task_idx, "failed with error:", e$message, "\n")
-    all_results_sequential[[task_idx]] <- list(
-      status = "ERROR",
-      error = e$message,
-      task_idx = task_idx
-    )
-  })
-}
-
-cat("Sequential execution completed at:", format(Sys.time()), "\n")
-cat("Results length:", length(all_results_sequential), "\n")
-
-# Show progress summary
-cat("\n=== PROGRESS SUMMARY ===\n")
-cat("Checking which chains have been completed...\n")
-
-# Count completed chains
-completed_chains <- 0
-error_chains <- 0
-for (model_idx in 1:filtered_n_models) {
-  for (chain_no in 1:nchains) {
-    status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
-    error_file <- paste0("chain_", model_idx, "_", chain_no, "_ERROR.txt")
-    
-    if (file.exists(status_file)) {
-      completed_chains <- completed_chains + 1
-      cat("✓ Model", model_idx, "Chain", chain_no, "completed\n")
-    } else if (file.exists(error_file)) {
-      error_chains <- error_chains + 1
-      cat("✗ Model", model_idx, "Chain", chain_no, "failed\n")
-    } else {
-      cat("? Model", model_idx, "Chain", chain_no, "status unknown\n")
-    }
-  }
-}
-
-cat("\nProgress Summary:\n")
-cat("  Completed chains:", completed_chains, "/", filtered_n_models * nchains, "\n")
-cat("  Failed chains:", error_chains, "/", filtered_n_models * nchains, "\n")
-cat("  Success rate:", round(completed_chains / (filtered_n_models * nchains) * 100, 1), "%\n")
-
-# Reorganize results by model
-all_results <- list()
-for (model_idx in 1:filtered_n_models) {
-  all_results[[model_idx]] <- list()
-  for (chain_no in 1:nchains) {
-    # Find the result for this model/chain combination
-    task_idx <- which(all_tasks$model_idx == model_idx & all_tasks$chain_no == chain_no)
-    if (length(task_idx) > 0 && task_idx <= length(all_results_sequential)) {
-      task_result <- all_results_sequential[[task_idx]]
-      all_results[[model_idx]][[chain_no]] <- task_result
-    } else {
-      all_results[[model_idx]][[chain_no]] <- list(status = "NOT_FOUND")
-    }
-  }
-}
-
-# Sequential execution - no cluster to stop
-
-end_time <- Sys.time()
-runtime <- difftime(end_time, start_time, units = "mins")
-
-cat("\n", paste(rep("=", 50), collapse = ""), "\n")
-cat("ALL MODELS COMPLETED\n")
-cat("Total runtime:", round(runtime, 1), "minutes\n")
-cat(paste(rep("=", 50), collapse = ""), "\n")
-
-# Summary of all models
-cat("\nSummary of All Models:\n")
-for (model_idx in 1:filtered_n_models) {
-  cat("\nModel", model_idx, ":", params$species[model_idx], "(", params$model_name[model_idx], ")\n")
-  
-  output.list <- all_results[[model_idx]]
-  
-  # Status summary for this model
-  status_summary <- sapply(output.list, function(x) {
-    if (is.list(x) && "status" %in% names(x)) {
-      x$status
-    } else {
-      "ERROR"
-    }
-  })
-  
-  cat("  Results:", paste(status_summary, collapse = ", "), "\n")
-  
-  # Detailed status for this model
-  for (i in 1:length(output.list)) {
-    if (is.list(output.list[[i]]) && "status" %in% names(output.list[[i]])) {
-      if (output.list[[i]]$status == "SUCCESS") {
-        cat("    Chain", i, ": SUCCESS - Samples:", dim(output.list[[i]]$samples)[1], "iterations\n")
-      } else {
-        cat("    Chain", i, ": ERROR -", output.list[[i]]$error, "\n")
-      }
-    } else {
-      cat("    Chain", i, ": ERROR - Unexpected output format\n")
-    }
-  }
-}
-
-# Clean up status files
-for (chain_no in 1:nchains) {
-  status_file <- paste0("chain_", chain_no, "_status.txt")
-  if (file.exists(status_file)) {
-    unlink(status_file)
-  }
-}
-
-# MODEL IMPLEMENTATION SUMMARY
-cat("\n=== MODEL IMPLEMENTATION WITH RESTART CAPABILITY COMPLETE ===\n")
-cat("✓ Successfully implemented beta regression with LOG transformation\n")
-cat("✓ All three model types supported: cycl_only, env_cycl, env_cov\n")
-cat("✓ Enhanced environmental models with LOG approach for numerical stability\n")
-cat("✓ Data-informed initialization for better convergence\n")
-cat("✓ Comprehensive model validation and error checking\n")
-cat("✓ Proper beta distribution for proportion data\n")
-cat("✓ Precision parameter for dispersion\n")
-cat("✓ LOG transformation with exp() for numerical stability\n")
-cat("✓ Flexible priors for environmental models\n")
-cat("✓ Individual slice samplers for beta parameters\n")
-cat("✓ Convergence-based sampling with iterative saving\n")
-cat("✓ Full HPC compatibility with fallback directories\n")
-cat("✓ Comprehensive error handling and logging\n")
-cat("✓ All functionality from original script retained\n")
-cat("✓ Environmental model approach integrated\n")
-cat("✓ RESTART CAPABILITY: Can use initial values from previous chains\n")
-cat("✓ ENHANCED ERROR HANDLING: Better diagnostics for restart scenarios\n")
-
