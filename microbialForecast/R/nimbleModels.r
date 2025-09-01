@@ -1,5 +1,8 @@
-#' @title nimbleMod_shannon
-#' @description nimbleMod_shannon
+#' NIMBLE model for Shannon diversity
+#'
+#' A NIMBLE model code object for fitting Shannon diversity data
+#'
+#' @format An object of class \code{list} containing NIMBLE model code
 #' @export
 nimbleMod_shannon <- nimbleCode({
 	# Observation model (cores ~ plot means)
@@ -83,8 +86,11 @@ nimbleMod_shannon <- nimbleCode({
 
 
 
-#' @title nimbleModTaxa
-#' @description nimbleModTaxa
+#' NIMBLE model for taxonomic data
+#'
+#' A NIMBLE model code object for fitting taxonomic abundance data
+#'
+#' @format An object of class \code{list} containing NIMBLE model code
 #' @export
 nimbleModTaxa <- nimbleCode({
 	# Loop through core observations ----
@@ -188,8 +194,11 @@ nimbleModTaxa <- nimbleCode({
 
 
 
-#' @title nimbleModFunctional
-#' @description nimbleModFunctional
+#' NIMBLE model for functional group data
+#'
+#' A NIMBLE model code object for fitting functional group abundance data
+#'
+#' @format An object of class \code{list} containing NIMBLE model code
 #' @export
 nimbleModFunctional <- nimbleCode({
 	# Loop through core observations ----
@@ -278,8 +287,11 @@ nimbleModFunctional <- nimbleCode({
 
 
 
-#' @title nimbleModFunctional_trunc
-#' @description Model version with truncated Normal distribution to prevent negative values
+#' NIMBLE model for functional groups with truncated Normal distribution
+#'
+#' A NIMBLE model code object for fitting functional group data with truncated Normal distribution to prevent negative values
+#'
+#' @format An object of class \code{list} containing NIMBLE model code
 #' @export
 nimbleModFunctional_trunc <- nimbleCode({
 	# Loop through core observations ----
