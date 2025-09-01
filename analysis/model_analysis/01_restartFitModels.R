@@ -36,7 +36,7 @@ if (length(argv) == 0) {
     argv <- Sys.getenv("R_ARGS")
     if (argv != "") {
         argv <- strsplit(argv, " ")[[1]]
-    } else {
+} else {
         argv <- character(0)
     }
 }
@@ -1345,13 +1345,13 @@ if (filtered_n_models == 0) {
 
 # SEQUENTIAL EXECUTION - Respect command line arguments
 if (run_all_models) {
-    cat("Running restart script sequentially for", filtered_n_models, "model ×", nchains, "chains\n")
-    
+cat("Running restart script sequentially for", filtered_n_models, "model ×", nchains, "chains\n")
+
     # Create a simple task list for sequential execution
-    all_tasks <- expand.grid(model_idx = 1:filtered_n_models, chain_no = 1:nchains)
+all_tasks <- expand.grid(model_idx = 1:filtered_n_models, chain_no = 1:nchains)
     cat("Total sequential tasks:", nrow(all_tasks), "(", filtered_n_models, "models ×", nchains, "chains)\n")
-    cat("Task details:\n")
-    print(all_tasks)
+cat("Task details:\n")
+print(all_tasks)
     
     # Run everything sequentially with restart capability
     cat("Starting sequential execution with restart capability at:", format(Sys.time()), "\n")
@@ -1384,10 +1384,10 @@ if (run_all_models) {
     cat("Starting specific execution at:", format(Sys.time()), "\n")
     cat("  - Model index:", specific_model_idx, "\n")
     cat("  - Chain number:", specific_chain_no, "\n")
-    cat("  - Target: ESS >= 10 per parameter\n")
-    cat("  - Restart functionality:", if(RESTART_ENABLED) "ENABLED" else "DISABLED", "\n")
-    start_time <- Sys.time()
-    
+cat("  - Target: ESS >= 10 per parameter\n")
+cat("  - Restart functionality:", if(RESTART_ENABLED) "ENABLED" else "DISABLED", "\n")
+start_time <- Sys.time()
+
     # Run the specific task
     result <- run_scenarios_with_restart(j = specific_model_idx, chain_no = specific_chain_no)
     
@@ -1402,10 +1402,10 @@ if (run_all_models) {
 # Sequential execution function that preserves all functionality from 01_fitModels_betaReg.R
 run_sequential_task <- function(task_idx) {
   # Get task details first
-  task <- all_tasks[task_idx, ]
-  model_idx <- task$model_idx
-  chain_no <- task$chain_no
-  
+    task <- all_tasks[task_idx, ]
+    model_idx <- task$model_idx
+    chain_no <- task$chain_no
+    
   cat("=== Starting Model", model_idx, "Chain", chain_no, "===\n")
   cat("Time:", format(Sys.time()), "\n")
   

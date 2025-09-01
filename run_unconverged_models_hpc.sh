@@ -1,16 +1,16 @@
 #!/bin/bash
 
 # HPC VERSION: Run unconverged models with 28 cores for maximum efficiency
-echo "=== HPC MODE: UNCONVERGED MODELS WITH 28 CORES ==="
-echo "Target: Maximum efficiency with 28 cores"
-echo "Chains per model: 4"
-echo "Models per batch: 7 (4 chains × 7 models = 28 cores)"
+echo "=== LOCAL MODE: UNCONVERGED MODELS WITH 3 CORES ==="
+echo "Target: Sequential processing with 3 cores"
+echo "Chains per model: 3"
+echo "Models per batch: 1 (3 chains × 1 model = 3 cores)"
 echo ""
 
 # Configuration
-MAX_CORES=28
-CHAINS_PER_MODEL=4
-MODELS_PER_BATCH=7
+MAX_CORES=3
+CHAINS_PER_MODEL=3
+MODELS_PER_BATCH=1
 LOG_DIR="logs_hpc"
 
 # Create logs directory
@@ -44,12 +44,11 @@ run_model_with_chains() {
         echo "  Chain $chain PID: $!"
     }
     
-    # Start all 4 chains simultaneously
-    echo "  Starting all 4 chains simultaneously..."
+    # Start all 3 chains simultaneously
+    echo "  Starting all 3 chains simultaneously..."
     run_chain "1"
     run_chain "2"
     run_chain "3"
-    run_chain "4"
     
     echo "  All chains started for $model_name"
 }
@@ -59,22 +58,29 @@ check_model_convergence() {
     local model_name=$1
     local output_dir="data/model_outputs/logit_beta_fixed_priors/env_cycl"
     
-    # Look for final checkpoint files for all 4 chains
-    local chain1_file="$output_dir/checkpoint_${model_name}_chain1_loop*.rds"
-    local chain2_file="$output_dir/checkpoint_${model_name}_chain2_loop*.rds"
-    local chain3_file="$output_dir/checkpoint_${model_name}_chain3_loop*.rds"
-    local chain4_file="$output_dir/checkpoint_${model_name}_chain4_loop*.rds"
+    # Extract species name from model name (remove env_cycl_ prefix and _date_with_legacy_covariate suffix)
+    local species_name=$(echo "$model_name" | sed 's/env_cycl_//g' | sed 's/_20130601_20180101_with_legacy_covariate//g')
     
-    # Check if all chain files exist
-    if ls $chain1_file >/dev/null 2>&1 && \
-       ls $chain2_file >/dev/null 2>&1 && \
-       ls $chain3_file >/dev/null 2>&1 && \
-       ls $chain4_file >/dev/null 2>&1; then
-        
-        echo "  ✓ All 4 chains completed for $model_name"
+    # Look for checkpoint files in the species subdirectory
+    local species_dir="$output_dir/$species_name"
+    local chain1_file="$species_dir/checkpoint_${model_name}_chain1_loop*.rds"
+    local chain2_file="$species_dir/checkpoint_${model_name}_chain2_loop*.rds"
+    local chain3_file="$species_dir/checkpoint_${model_name}_chain3_loop*.rds"
+    
+    # Count how many chains have checkpoint files
+    local chain_count=0
+    ls $chain1_file >/dev/null 2>&1 && ((chain_count++))
+    ls $chain2_file >/dev/null 2>&1 && ((chain_count++))
+    ls $chain3_file >/dev/null 2>&1 && ((chain_count++))
+    
+    if [ $chain_count -eq 3 ]; then
+        echo "  ✓ All 3 chains completed for $model_name"
         return 0
+    elif [ $chain_count -gt 0 ]; then
+        echo "  ⚠ $chain_count/3 chains completed for $model_name (looking in $species_dir)"
+        return 1
     else
-        echo "  ❌ Some chains failed for $model_name"
+        echo "  ❌ No chains completed for $model_name (looking in $species_dir)"
         return 1
     fi
 }
@@ -113,7 +119,7 @@ for i in "${!model_array[@]}"; do
 done
 
 echo ""
-echo "HPC MODE: Processing all models in batches of $MODELS_PER_BATCH"
+echo "LOCAL MODE: Processing all models sequentially (1 at a time)"
 echo "Each model will run with $CHAINS_PER_MODEL chains simultaneously"
 echo "Total cores utilized: $MAX_CORES"
 echo ""
@@ -199,3 +205,4 @@ echo "Failed: $failed_count"
 echo "Success rate: $(( (completed_count * 100) / total_models ))%"
 echo ""
 echo "HPC script completed!"
+

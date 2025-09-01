@@ -5,7 +5,7 @@
 \alias{nimbleModFunctional}
 \title{nimbleModFunctional}
 \format{
-An object of class \code{{} of length 12.
+An object of class \code{list} of length 12.
 }
 \usage{
 nimbleModFunctional
