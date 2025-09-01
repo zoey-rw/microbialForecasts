@@ -5,7 +5,7 @@
 \alias{nimbleMod_shannon_cycl_only}
 \title{nimbleMod_shannon_cycl_only}
 \format{
-An object of class \code{{} of length 10.
+An object of class \code{list} of length 10.
 }
 \usage{
 nimbleMod_shannon_cycl_only

@@ -5,7 +5,7 @@
 \alias{nimbleModTaxa_cycl_only}
 \title{nimbleModTaxa_cycl_only}
 \format{
-An object of class \code{{} of length 8.
+An object of class \code{list} of length 8.
 }
 \usage{
 nimbleModTaxa_cycl_only

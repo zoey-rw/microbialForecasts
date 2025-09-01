@@ -5,7 +5,7 @@
 \alias{nimbleMod_shannon}
 \title{nimbleMod_shannon}
 \format{
-An object of class \code{{} of length 12.
+An object of class \code{list} of length 12.
 }
 \usage{
 nimbleMod_shannon
