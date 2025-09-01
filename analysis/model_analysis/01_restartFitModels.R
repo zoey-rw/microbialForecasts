@@ -6,7 +6,7 @@
 
 # Load required packages
 library(microbialForecast)
-library(here)
+    library(here)
 
 # Set project root
 here::i_am("analysis/model_analysis/01_restartFitModels.R")
@@ -29,12 +29,33 @@ cat("Package status: microbialForecast loaded \n")
 cat("Ready for analysis.\n")
 cat("==================================================\n")
 
-# Get arguments from the command line
+# Get arguments from the command line - handle both Rscript and R --slave -e
 argv <- commandArgs(TRUE)
-if (length(argv) > 0){
-	k <- as.numeric( argv[1] )
+if (length(argv) == 0) {
+    # Try alternative method for R --slave -e
+    argv <- Sys.getenv("R_ARGS")
+    if (argv != "") {
+        argv <- strsplit(argv, " ")[[1]]
+    } else {
+        argv <- character(0)
+    }
+}
+
+if (length(argv) >= 2) {
+    specific_model_idx <- as.numeric(argv[1])
+    specific_chain_no <- as.numeric(argv[2])
+    run_all_models <- FALSE
+    cat("Running specific model index:", specific_model_idx, "chain:", specific_chain_no, "\n")
+} else if (length(argv) == 1) {
+    specific_model_idx <- as.numeric(argv[1])
+    specific_chain_no <- 1  # Default to chain 1 if only model index provided
+    run_all_models <- FALSE
+    cat("Running specific model index:", specific_model_idx, "chain:", specific_chain_no, "\n")
 } else {
-	k=1
+    specific_model_idx <- 1
+    specific_chain_no <- 1
+    run_all_models <- TRUE
+    cat("Running all models with all chains (default behavior)\n")
 }
 
 # Default restart settings
@@ -44,23 +65,20 @@ RESTART_MAX_RHAT <- 1.1  # Maximum R-hat value allowed
 RESTART_BURNIN_PROP <- 0.5  # Proportion of samples to discard as burnin
 RESTART_FALLBACK_STRATEGY <- "median"  # "median", "random", or "zero"
 
-# MCMC settings - same as main modeling script
-burnin <- 100
+# MCMC settings - configured for production convergence
+burnin <- 200
 thin <- 1
-iter_per_chunk <- 100
-init_iter <- 200
+iter_per_chunk <- 200
+init_iter <- 400
 min_eff_size_perchain <- 10  # Target ESS per parameter
-max_loops <- 30  # Maximum additional loops (same as main script)
-min_total_iterations <- 500  # Minimum total iterations
-max_save_size <- 10000  # Maximum samples to save
+max_loops <- 10  # Production setting (10 * 200 = 2000 + 400 initial = 2400 iterations)
+min_total_iterations <- 2000  # Production setting
+max_save_size <- 20000  # Maximum samples to save
 
 # Sequential execution settings
 # NOTE: This should match batch_restart_models.R to avoid conflicts
 # batch_restart_models.R uses nchains = 2, so we'll use the same here
-nchains <- 2  # Number of chains per model (must match batch script)
-
-# Execution mode: "sequential" or "parallel"
-execution_mode <- "sequential"  # Change to "parallel" to run chains simultaneously
+nchains <- 3  # Number of chains per model (for testing - can be changed to 4 for production)
 
 #### Run on all groups ----
 
@@ -526,10 +544,10 @@ run_scenarios_with_restart <- function(j, chain_no) {
 			cat("WARNING: Legacy covariate is all 0s or all 1s - this may cause numerical issues\n")
 		}
 
-				cat("Legacy covariate added:", legacy_sum, "legacy observations out of", legacy_total, "\n")
+		cat("Legacy covariate added:", legacy_sum, "legacy observations out of", legacy_total, "\n")
 		cat("Legacy proportion:", round(legacy_sum/legacy_total, 3), "\n")
 		cat("Legacy matrix dimensions:", nrow(constants$legacy), "x", ncol(constants$legacy), "\n")
-		
+
 		cat("  ✓ Legacy covariate added successfully\n")
 	}
 	
@@ -584,11 +602,11 @@ run_scenarios_with_restart <- function(j, chain_no) {
 	# Create inits with restart capability
 	cat("Creating initial values...\n")
 
-			# Use restart initial values if available, otherwise create fresh inits
-		if (!is.null(restart_inits)) {
-			cat("  Using restart initial values from previous chains\n")
+	# Use restart initial values if available, otherwise create fresh inits
+	if (!is.null(restart_inits)) {
+		cat("  Using restart initial values from previous chains\n")
 
-					# Get restart initial values
+		# Get restart initial values
 		inits <- restart_inits$initial_values
 		
 		# Debug: Check what we got from restart
@@ -855,9 +873,9 @@ run_scenarios_with_restart <- function(j, chain_no) {
 	cat("  Initial samples dimensions:", dim(initial_samples), "\n")
 	
 			# Create output directory for checkpoints (same as main modeling script)
-		cat("  Creating output directory for checkpoints...\n")
+	cat("  Creating output directory for checkpoints...\n")
 		model_output_dir <- file.path(here("data", "model_outputs", "logit_beta_fixed_priors", model_name))
-		dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
+	dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
 	
 	    # Create model_id for consistent naming using package function
     model_id <- create_model_id(model_name, species, min.date, max.date, use_legacy_covariate, "beta_regression")
@@ -951,11 +969,11 @@ run_scenarios_with_restart <- function(j, chain_no) {
 	}
 	
 	    # Update final progress status using package function
-    final_status <- if(loop_counter >= max_loops) "Completed (max loops)" else 
-        if(total_iterations >= min_total_iterations && !continue) "Converged" else 
-            "Completed (min iterations)"
+		final_status <- if(loop_counter >= max_loops) "Completed (max loops)" else 
+			if(total_iterations >= min_total_iterations && !continue) "Converged" else 
+				"Completed (min iterations)"
     update_progress_file(progress_file, total_iterations, loop_counter)
-    cat("  ✓ Final progress status updated\n")
+		cat("  ✓ Final progress status updated\n")
 	
 	# Get final samples (use accumulated samples)
 	samples <- all_samples
@@ -1193,11 +1211,11 @@ params_in = read.csv(here("data/clean/model_input_df.csv"),
 rerun_list = readRDS(here("data/summary/unconverged_taxa_list.rds"))
 converged_list = readRDS(here("data/summary/converged_taxa_list.rds"))
 
-# RESTART CONFIGURATION: Focus on ectomycorrhizal model that needs completion
+# RESTART CONFIGURATION: Focus on ascomycota model for testing multiple chains
 params <- params_in %>% ungroup %>% filter(
-	# Focus on ectomycorrhizal model that has partial chains
+	# Focus on ascomycota model for testing multiple chains
 	model_id %in% c(
-		"env_cycl_ectomycorrhizal_20130601_20180101"
+		"env_cycl_ascomycota_20130601_20180101"
 	) &
 	# Ensure we have the legacy covariate models
 	scenario %in% c("Legacy with covariate 2013-2018", "2013-06-01_2018-01-01")
@@ -1325,24 +1343,61 @@ if (filtered_n_models == 0) {
 	stop("No valid models to run - check species names and rank names in parameters")
 }
 
-# SEQUENTIAL EXECUTION - No parallel cluster needed
-cat("Running restart script sequentially for", filtered_n_models, "model ×", nchains, "chains\n")
-
-# Create a simple task list for sequential execution
-all_tasks <- expand.grid(model_idx = 1:filtered_n_models, chain_no = 1:nchains)
-cat("Total sequential tasks:", nrow(all_tasks), "(", filtered_n_models, "models ×", nchains, "chains)\n")
-cat("Task details:\n")
-print(all_tasks)
-
-# Run everything sequentially with restart capability
-cat("Starting sequential execution with restart capability at:", format(Sys.time()), "\n")
-cat("RESTART: Starting sequential execution for", filtered_n_models, "models with", nchains, "chains\n")
-cat("Expected runtime: Variable (convergence-based sampling)\n")
-cat("  - Models to restart:", filtered_n_models, "models\n")
-cat("  - Chains per model:", nchains, "(total", filtered_n_models * nchains, "sequential tasks)\n")
-cat("  - Target: ESS >= 10 per parameter\n")
-cat("  - Restart functionality:", if(RESTART_ENABLED) "ENABLED" else "DISABLED", "\n")
-start_time <- Sys.time()
+# SEQUENTIAL EXECUTION - Respect command line arguments
+if (run_all_models) {
+    cat("Running restart script sequentially for", filtered_n_models, "model ×", nchains, "chains\n")
+    
+    # Create a simple task list for sequential execution
+    all_tasks <- expand.grid(model_idx = 1:filtered_n_models, chain_no = 1:nchains)
+    cat("Total sequential tasks:", nrow(all_tasks), "(", filtered_n_models, "models ×", nchains, "chains)\n")
+    cat("Task details:\n")
+    print(all_tasks)
+    
+    # Run everything sequentially with restart capability
+    cat("Starting sequential execution with restart capability at:", format(Sys.time()), "\n")
+    cat("RESTART: Starting sequential execution for", filtered_n_models, "models with", nchains, "chains\n")
+    cat("Expected runtime: Variable (convergence-based sampling)\n")
+    cat("  - Models to restart:", filtered_n_models, "models\n")
+    cat("  - Chains per model:", nchains, "(total", filtered_n_models * nchains, "sequential tasks)\n")
+    cat("  - Target: ESS >= 10 per parameter\n")
+    cat("  - Restart functionality:", if(RESTART_ENABLED) "ENABLED" else "DISABLED", "\n")
+    start_time <- Sys.time()
+    
+    # Run all tasks sequentially
+    for (task_idx in 1:nrow(all_tasks)) {
+        run_sequential_task(task_idx)
+    }
+} else {
+    # Run specific model and chain
+    cat("Running specific model index:", specific_model_idx, "chain:", specific_chain_no, "\n")
+    
+    # Validate model index
+    if (specific_model_idx > filtered_n_models) {
+        stop("Model index ", specific_model_idx, " exceeds available models (", filtered_n_models, ")")
+    }
+    
+    # Validate chain number
+    if (specific_chain_no < 1 || specific_chain_no > nchains) {
+        stop("Chain number ", specific_chain_no, " must be between 1 and ", nchains)
+    }
+    
+    cat("Starting specific execution at:", format(Sys.time()), "\n")
+    cat("  - Model index:", specific_model_idx, "\n")
+    cat("  - Chain number:", specific_chain_no, "\n")
+    cat("  - Target: ESS >= 10 per parameter\n")
+    cat("  - Restart functionality:", if(RESTART_ENABLED) "ENABLED" else "DISABLED", "\n")
+    start_time <- Sys.time()
+    
+    # Run the specific task
+    result <- run_scenarios_with_restart(j = specific_model_idx, chain_no = specific_chain_no)
+    
+    # Handle result
+    if (result$status == "SUCCESS") {
+        cat("✓ SUCCESS: Model", specific_model_idx, "Chain", specific_chain_no, "completed successfully\n")
+    } else {
+        cat("❌ FAILED: Model", specific_model_idx, "Chain", specific_chain_no, "failed with status:", result$status, "\n")
+    }
+}
 
 # Sequential execution function that preserves all functionality from 01_fitModels_betaReg.R
 run_sequential_task <- function(task_idx) {
@@ -1416,7 +1471,7 @@ run_sequential_task <- function(task_idx) {
       # Create model_id for consistent naming using package function
       use_legacy_covariate <- grepl("Legacy with covariate", params$scenario[model_idx])
       model_id <- create_model_id(params$model_name[model_idx], params$species[model_idx], 
-                                 params$min.date[model_idx], params$max.date[model_idx], 
+                       params$min.date[model_idx], params$max.date[model_idx], 
                                  use_legacy_covariate, "beta_regression")
       
       # Save MCMC samples immediately
@@ -1526,10 +1581,10 @@ run_sequential_task <- function(task_idx) {
     
     # Return detailed error information
     return(list(
-      status = "ERROR", 
-      error = error_details$error_message,
-      error_details = error_details,
-      error_file = error_file
+        status = "ERROR", 
+        error = error_details$error_message,
+        error_details = error_details,
+        error_file = error_file
     ))
   })
 }
