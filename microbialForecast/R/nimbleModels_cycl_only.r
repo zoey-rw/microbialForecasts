@@ -1,5 +1,8 @@
-#' @title nimbleModTaxa_cycl_only
-#' @description nimbleModTaxa_cycl_only
+#' NIMBLE model for taxonomic data with cyclic covariates only
+#'
+#' A NIMBLE model code object for fitting taxonomic abundance data using only cyclic covariates
+#'
+#' @format An object of class \code{list} containing NIMBLE model code
 #' @export
 #'
 nimbleModTaxa_cycl_only <- nimble::nimbleCode({
@@ -55,8 +58,11 @@ nimbleModTaxa_cycl_only <- nimble::nimbleCode({
 
 
 
-#' @title nimbleModFunctional_cycl_only
-#' @description nimbleModFunctional_cycl_only
+#' NIMBLE model for functional group data with cyclic covariates only
+#'
+#' A NIMBLE model code object for fitting functional group abundance data using only cyclic covariates
+#'
+#' @format An object of class \code{list} containing NIMBLE model code
 #' @export
 #'
 nimbleModFunctional_cycl_only <- nimble::nimbleCode({
@@ -108,8 +114,11 @@ nimbleModFunctional_cycl_only <- nimble::nimbleCode({
 
 
 
-#' @title nimbleMod_shannon_cycl_only
-#' @description nimbleMod_shannon_cycl_only
+#' NIMBLE model for Shannon diversity with cyclic covariates only
+#'
+#' A NIMBLE model code object for fitting Shannon diversity data using only cyclic covariates
+#'
+#' @format An object of class \code{list} containing NIMBLE model code
 #' @export
 #'
 nimbleMod_shannon_cycl_only <- nimble::nimbleCode({
