@@ -7,5 +7,5 @@
 \method{rbind}{named.dfs}(df.list)
 }
 \description{
-rbind.named.dfs
+Combine multiple data frames with row names
 }

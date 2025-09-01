@@ -218,7 +218,3 @@ saveRDS(list(dredged_predictor_importance,pred_sites,pred_sites_plsr,plsr_model_
 saveRDS(list(unobs_sites,unobs_sites_plsr), here("data/summary/site_effects_unobserved.rds"))
 
 
-
-read_in = readRDS(here("data/summary/site_effects_dredged.rds"))
-read_in[[1]]
-

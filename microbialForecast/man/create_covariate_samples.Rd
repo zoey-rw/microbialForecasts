@@ -12,9 +12,10 @@ create_covariate_samples(
   Nmc,
   N.beta = 8,
   prev_samples = NULL,
+  model_type = NULL,
   ...
 )
 }
 \description{
-samples covariate values
+samples covariate values with strict data validation - fails fast when data is missing
 }

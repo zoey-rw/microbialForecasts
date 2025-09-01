@@ -7,5 +7,5 @@
 window_chain(chain, thin = 1, max_size = 10000)
 }
 \description{
-Shorten chain if it contains more than a certain number of samples
+Shorten chain to a specific size, taking the last samples
 }
