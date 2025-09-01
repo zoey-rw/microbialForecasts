@@ -1,15 +1,18 @@
 #!/bin/bash
 
 # HPC VERSION: Run unconverged models with 28 cores for maximum efficiency
-echo "=== LOCAL MODE: UNCONVERGED MODELS WITH 3 CORES ==="
-echo "Target: Sequential processing with 3 cores"
-echo "Chains per model: 3"
-echo "Models per batch: 1 (3 chains × 1 model = 3 cores)"
+# Usage: 
+#   ./run_unconverged_models_hpc.sh          - Run all unconverged models
+#   ./run_unconverged_models_hpc.sh priority - Run only high-priority models (have chain 1)
+echo "=== LOCAL MODE: UNCONVERGED MODELS WITH 4 CORES ==="
+echo "Target: Sequential processing with 4 cores"
+echo "Chains per model: 4"
+echo "Models per batch: 1 (4 chains × 1 model = 4 cores)"
 echo ""
 
 # Configuration
-MAX_CORES=3
-CHAINS_PER_MODEL=3
+MAX_CORES=4
+CHAINS_PER_MODEL=4
 MODELS_PER_BATCH=1
 LOG_DIR="logs_hpc"
 
@@ -44,11 +47,12 @@ run_model_with_chains() {
         echo "  Chain $chain PID: $!"
     }
     
-    # Start all 3 chains simultaneously
-    echo "  Starting all 3 chains simultaneously..."
+    # Start all 4 chains simultaneously
+    echo "  Starting all 4 chains simultaneously..."
     run_chain "1"
     run_chain "2"
     run_chain "3"
+    run_chain "4"
     
     echo "  All chains started for $model_name"
 }
@@ -66,18 +70,20 @@ check_model_convergence() {
     local chain1_file="$species_dir/checkpoint_${model_name}_chain1_loop*.rds"
     local chain2_file="$species_dir/checkpoint_${model_name}_chain2_loop*.rds"
     local chain3_file="$species_dir/checkpoint_${model_name}_chain3_loop*.rds"
+    local chain4_file="$species_dir/checkpoint_${model_name}_chain4_loop*.rds"
     
     # Count how many chains have checkpoint files
     local chain_count=0
     ls $chain1_file >/dev/null 2>&1 && ((chain_count++))
     ls $chain2_file >/dev/null 2>&1 && ((chain_count++))
     ls $chain3_file >/dev/null 2>&1 && ((chain_count++))
+    ls $chain4_file >/dev/null 2>&1 && ((chain_count++))
     
-    if [ $chain_count -eq 3 ]; then
-        echo "  ✓ All 3 chains completed for $model_name"
+    if [ $chain_count -eq 4 ]; then
+        echo "  ✓ All 4 chains completed for $model_name"
         return 0
     elif [ $chain_count -gt 0 ]; then
-        echo "  ⚠ $chain_count/3 chains completed for $model_name (looking in $species_dir)"
+        echo "  ⚠ $chain_count/4 chains completed for $model_name (looking in $species_dir)"
         return 1
     else
         echo "  ❌ No chains completed for $model_name (looking in $species_dir)"
@@ -102,8 +108,23 @@ wait_for_batch() {
 }
 
 # Main execution
-echo "Loading unconverged taxa list..."
-unconverged_models=$(R --slave -e "cat(paste(readRDS('data/summary/unconverged_taxa_list.rds'), collapse='\n'))")
+# Check for command line argument to use priority list
+USE_PRIORITY_LIST=${1:-"false"}
+
+if [ "$USE_PRIORITY_LIST" = "priority" ] || [ "$USE_PRIORITY_LIST" = "--priority" ]; then
+    echo "Loading PRIORITY unconverged taxa list (models with existing progress)..."
+    if [ -f "data/summary/priority_rerun_list.rds" ]; then
+        unconverged_models=$(R --slave -e "cat(paste(readRDS('data/summary/priority_rerun_list.rds'), collapse='\n'))")
+        echo "Using priority list: models with chain 1 already completed"
+    else
+        echo "Priority list not found! Falling back to standard unconverged list..."
+        unconverged_models=$(R --slave -e "cat(paste(readRDS('data/summary/unconverged_taxa_list.rds'), collapse='\n'))")
+    fi
+else
+    echo "Loading ALL unconverged taxa list..."
+    unconverged_models=$(R --slave -e "cat(paste(readRDS('data/summary/unconverged_taxa_list.rds'), collapse='\n'))")
+    echo "Tip: Use './run_unconverged_models_hpc.sh priority' to run only high-priority models with existing progress"
+fi
 
 if [ -z "$unconverged_models" ]; then
     echo "Error: No unconverged models found!"
@@ -119,7 +140,12 @@ for i in "${!model_array[@]}"; do
 done
 
 echo ""
-echo "LOCAL MODE: Processing all models sequentially (1 at a time)"
+if [ "$USE_PRIORITY_LIST" = "priority" ] || [ "$USE_PRIORITY_LIST" = "--priority" ]; then
+    echo "PRIORITY MODE: Processing high-priority models sequentially (1 at a time)"
+    echo "Focus: Models with chain 1 already completed (build on existing progress)"
+else
+    echo "STANDARD MODE: Processing all models sequentially (1 at a time)"
+fi
 echo "Each model will run with $CHAINS_PER_MODEL chains simultaneously"
 echo "Total cores utilized: $MAX_CORES"
 echo ""
