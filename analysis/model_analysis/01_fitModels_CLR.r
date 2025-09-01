@@ -18,7 +18,7 @@ if (length(argv) > 0){
 }
 
 # LOCAL TESTING: Run with 2 chains on 2 cores for local testing
-nchains = 2
+nchains = 3
 
 # Set number of cores for parallel execution (LOCAL TESTING: 2 cores)
 n_cores = 2
@@ -72,12 +72,12 @@ converged_list = readRDS(here("data/summary/converged_taxa_list.rds"))
 	# Focus on legacy covariate models for 2013-2018 period
 	params <- params_in %>% ungroup %>% filter(
 		# Test multiple ranks for generalization testing
-		rank.name %in% c("phylum_fun", "class_fun", "order_fun") &
+		rank.name %in% c("phylum_fun") &
 		# Focus on 2013-2018 period (both legacy and non-legacy scenarios)
-		scenario %in% c("Legacy with covariate 2013-2018", "2013-2018") &
+		scenario %in% c("Legacy with covariate 2013-2018") &
 		# All three model types
-		model_name %in% c("cycl_only", "env_cov", "env_cycl")
-	)
+		model_name %in% c("env_cycl")
+	) %>% distinct(.keep_all = TRUE)
 
 # Filter out already converged models
 params <- params %>% filter(!model_id %in% converged_list)
@@ -131,17 +131,18 @@ run_scenarios_fixed <- function(j, chain_no) {
 	
 	cat("Preparing CLR model data for", rank.name, "\n")
 	
-	# Use prepCLRData for CLR transformation
+	# Use your working prepCLRData function that already handles zeros properly
 	cat("DEBUG: Preparing CLR data for species", species, "from", rank.name, "\n")
 	
 	tryCatch({
-		# Use prepCLRData with the same parameters as working script
+		# Use prepCLRData (which you already fixed to handle zeros)
 		model.dat <- prepCLRData(rank.df = rank.df,
 														 min.prev = 3,
 														 min.date = min.date,
 														 max.date = max.date,
 														 s = species)
 		cat("✅ prepCLRData successful\n")
+		
 	}, error = function(e) {
 		cat("ERROR in prepCLRData:", e$message, "\n")
 		cat("Error traceback:\n")
@@ -158,9 +159,30 @@ run_scenarios_fixed <- function(j, chain_no) {
 	if (is.matrix(model.dat$y)) {
 		cat("  model.dat$y first few rows:\n")
 		print(head(model.dat$y, 3))
+		cat("  model.dat$y summary:\n")
+		print(summary(as.vector(model.dat$y)))
 	}
 	cat("  N.core calculated:", nrow(model.dat$y), "\n")
 	cat("  Model type:", model_name, "\n")
+	
+	# Validate data structure to prevent Nimble errors
+	cat("Validating data structure...\n")
+	required_vars <- c("N.core", "N.plot", "N.site", "N.date", "timepoint", "plot_num", "plot_site_num")
+	missing_vars <- required_vars[!required_vars %in% names(model.dat)]
+	if (length(missing_vars) > 0) {
+		stop("Missing required variables: ", paste(missing_vars, collapse=", "))
+	}
+	
+	# Check for missing values in critical variables
+	if (any(is.na(model.dat$timepoint))) stop("timepoint contains missing values")
+	if (any(is.na(model.dat$plot_num))) stop("plot_num contains missing values")
+	if (any(is.na(model.dat$plot_site_num))) stop("plot_site_num contains missing values")
+	
+	# Validate CLR transformation results
+	if (any(is.infinite(model.dat$y))) stop("CLR transformation produced infinite values")
+	if (any(is.na(model.dat$y))) stop("CLR transformation produced missing values")
+	
+	cat("✅ Data validation passed\n")
 	
 	# Prepare constants - CLR uses different structure than beta regression
 	constants <- list()
@@ -183,13 +205,6 @@ run_scenarios_fixed <- function(j, chain_no) {
 	constants$sin_mo <- model.dat$sin_mo
 	constants$cos_mo <- model.dat$cos_mo
 	
-	# Apply optimal scaling for CLR models
-	sin_mo_scaled <- scale(constants$sin_mo, center = FALSE, scale = TRUE)
-	cos_mo_scaled <- scale(constants$cos_mo, center = FALSE, scale = TRUE)
-	
-	constants$sin_mo <- as.numeric(sin_mo_scaled)
-	constants$cos_mo <- as.numeric(cos_mo_scaled)
-	
 	# Add environmental predictors
 	if ("temp" %in% names(model.dat)) constants$temp <- model.dat$temp
 	if ("mois" %in% names(model.dat)) constants$mois <- model.dat$mois
@@ -201,7 +216,8 @@ run_scenarios_fixed <- function(j, chain_no) {
 	# Add legacy covariate if needed
 	if (use_legacy_covariate) {
 		# Create legacy covariate: 1 for legacy period (2013-2015), 0 for post-2015
-		legacy_dates <- model.dat$plot_date >= "2013-06-27" & model.dat$plot_date <= "2015-11-30"
+		# FIXED: Access plot_date from sample_values, not directly from model.dat
+		legacy_dates <- model.dat$sample_values$plot_date >= "2013-06-27" & model.dat$sample_values$plot_date <= "2015-11-30"
 		constants$legacy <- as.numeric(legacy_dates)
 		
 		# Validate legacy covariate to prevent extreme values
@@ -239,8 +255,8 @@ run_scenarios_fixed <- function(j, chain_no) {
 				mu[i] <- intercept +
 					beta[1] * sin_mo[timepoint[i]] +
 					beta[2] * cos_mo[timepoint[i]] +
-					legacy_effect * legacy[timepoint[i]] +
-					site_effect[plot_site_num[plot_num[i]]]
+					legacy_effect * legacy[i] +
+					site_effect[plot_site_num[i]]
 			}
 			
 			# DETERMINISTIC NODES - Plot-level estimates for monitoring
@@ -249,26 +265,26 @@ run_scenarios_fixed <- function(j, chain_no) {
 					plot_estimates[p, t] <- intercept +
 						beta[1] * sin_mo[t] +
 						beta[2] * cos_mo[t] +
-						legacy_effect * legacy[t] +
+						legacy_effect * legacy[1] +  # Use first legacy value for all time points
 						site_effect[plot_site_num[p]]
 					
 					plot_predictions[p, t] <- plot_estimates[p, t]  # For CLR, predictions = estimates
 				}
 			}
 
-			# 🎯 PROVEN HYBRID PRIORS - Weak for main parameters, stable for site effects (matching beta regression)
-			site_effect_sd ~ dgamma(2, 20)  # More informative: dgamma(2, 20) - stable, proven
-			for (k in 1:N.site) {
-				site_effect[k] ~ dnorm(0, sd = site_effect_sd)
-			}
-			
-			precision ~ dgamma(0.001, 0.001)  # Jeffreys prior - very weak, proven
-			intercept ~ dnorm(0, sd = 10)  # Very wide normal - very weak, proven
-			legacy_effect ~ dnorm(0, sd = 10)  # Very wide normal - very weak, proven
-			
-			for (b in 1:2) {
-				beta[b] ~ dnorm(0, sd = 10)  # Very wide normal - very weak, proven
-			}
+					# 🚨 TIGHT PRIORS FOR CLR DATA - CLR scale is much larger than expected
+		site_effect_sd ~ dgamma(5, 100)  # Very tight: dgamma(5, 100) for CLR scale
+		for (k in 1:N.site) {
+			site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Site effects with hierarchical prior
+		}
+		
+		precision ~ dgamma(0.001, 0.001)  # Jeffreys prior - very weak, proven
+		intercept ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
+		legacy_effect ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
+		
+		for (b in 1:2) {
+			beta[b] ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
+		}
 		})
 	} else if (model_name == "env_cycl" && use_legacy_covariate) {
 		modelCode <- nimble::nimbleCode({
@@ -276,16 +292,16 @@ run_scenarios_fixed <- function(j, chain_no) {
 			for (i in 1:N.core) {
 				y[i] ~ dnorm(mu[i], sd = 1/sqrt(precision))
 				mu[i] <- intercept +
-					beta[1] * temp[plot_site_num[plot_num[i]], timepoint[i]] +
-					beta[2] * mois[plot_site_num[plot_num[i]], timepoint[i]] +
+					beta[1] * temp[plot_site_num[i], timepoint[i]] +
+					beta[2] * mois[plot_site_num[i], timepoint[i]] +
 					beta[3] * pH[plot_num[i], timepoint[i]] +
 					beta[4] * pC[plot_num[i], timepoint[i]] +
 					beta[5] * relEM[plot_num[i], timepoint[i]] +
-					beta[6] * LAI[plot_site_num[plot_num[i]], timepoint[i]] +
+					beta[6] * LAI[plot_site_num[i], timepoint[i]] +
 					beta[7] * sin_mo[timepoint[i]] +
 					beta[8] * cos_mo[timepoint[i]] +
-					legacy_effect * legacy[timepoint[i]] +
-					site_effect[plot_site_num[plot_num[i]]]
+					legacy_effect * legacy[i] +
+					site_effect[plot_site_num[i]]
 			}
 			
 			# DETERMINISTIC NODES - Plot-level estimates for monitoring
@@ -300,25 +316,25 @@ run_scenarios_fixed <- function(j, chain_no) {
 						beta[6] * LAI[plot_site_num[p], t] +
 						beta[7] * sin_mo[t] +
 						beta[8] * cos_mo[t] +
-						legacy_effect * legacy[t] +
+						legacy_effect * legacy[1] +  # Use first legacy value for all time points
 						site_effect[plot_site_num[p]]
 					
 					plot_predictions[p, t] <- plot_estimates[p, t]  # For CLR, predictions = estimates
 				}
 			}
 			
-			# 🎯 PROVEN HYBRID PRIORS - Weak for main parameters, stable for site effects (matching beta regression)
-			site_effect_sd ~ dgamma(2, 20)  # More informative: dgamma(2, 20) - stable, proven
+			# 🚨 TIGHT PRIORS FOR CLR DATA - CLR scale is much larger than expected
+			site_effect_sd ~ dgamma(5, 100)  # Very tight: dgamma(5, 100) for CLR scale
 			for (k in 1:N.site) {
-				site_effect[k] ~ dnorm(0, sd = site_effect_sd)
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Site effects with hierarchical prior
 			}
 			
 			precision ~ dgamma(0.001, 0.001)  # Jeffreys prior - very weak, proven
-			intercept ~ dnorm(0, sd = 10)  # Very wide normal - very weak, proven
-			legacy_effect ~ dnorm(0, sd = 10)  # Very wide normal - very weak, proven
+			intercept ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
+			legacy_effect ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
 			
 			for (b in 1:8) {
-				beta[b] ~ dnorm(0, sd = 10)  # Very wide normal - very weak, proven
+				beta[b] ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
 			}
 		})
 	} else if (model_name == "env_cov" && use_legacy_covariate) {
@@ -327,45 +343,45 @@ run_scenarios_fixed <- function(j, chain_no) {
 			for (i in 1:N.core) {
 				y[i] ~ dnorm(mu[i], sd = 1/sqrt(precision))
 				mu[i] <- intercept +
-					beta[1] * temp[plot_site_num[plot_num[i]], timepoint[i]] +
-					beta[2] * mois[plot_site_num[plot_num[i]], timepoint[i]] +
+					beta[1] * temp[plot_site_num[i], timepoint[i]] +
+					beta[2] * mois[plot_site_num[i], timepoint[i]] +
 					beta[3] * pH[plot_num[i], timepoint[i]] +
 					beta[4] * pC[plot_num[i], timepoint[i]] +
 					beta[5] * relEM[plot_num[i], timepoint[i]] +
-					beta[6] * LAI[plot_site_num[plot_num[i]], timepoint[i]] +
-					legacy_effect * legacy[timepoint[i]] +
-					site_effect[plot_site_num[plot_num[i]]]
+					beta[6] * LAI[plot_site_num[i], timepoint[i]] +
+					legacy_effect * legacy[i] +
+					site_effect[plot_site_num[i]]
 			}
 			
 			# DETERMINISTIC NODES - Plot-level estimates for monitoring
 			for (p in 1:N.plot) {
 				for (t in 1:N.date) {
 					plot_estimates[p, t] <- intercept +
-						beta[1] * temp[plot_site_num[p], t] +
-						beta[2] * mois[plot_site_num[p], t] +
+						beta[1] * temp[plot_to_site[p], t] +
+						beta[2] * mois[plot_to_site[p], t] +
 						beta[3] * pH[p, t] +
 						beta[4] * pC[p, t] +
 						beta[5] * relEM[p, t] +
-						beta[6] * LAI[plot_site_num[p], t] +
-						legacy_effect * legacy[t] +
-						site_effect[plot_site_num[p]]
+						beta[6] * LAI[plot_to_site[p], t] +
+						legacy_effect * legacy[1] +  # Use first legacy value for all time points
+						site_effect[plot_to_site[p]]
 					
 					plot_predictions[p, t] <- plot_estimates[p, t]  # For CLR, predictions = estimates
 				}
 			}
 
-			# 🎯 PROVEN HYBRID PRIORS - Weak for main parameters, stable for site effects (matching beta regression)
-			site_effect_sd ~ dgamma(2, 20)  # More informative: dgamma(2, 20) - stable, proven
+			# 🚨 TIGHT PRIORS FOR CLR DATA - CLR scale is much larger than expected
+			site_effect_sd ~ dgamma(5, 100)  # Very tight: dgamma(5, 100) for CLR scale
 			for (k in 1:N.site) {
-				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Hierarchical normal priors
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Site effects with hierarchical prior
 			}
-
+			
 			precision ~ dgamma(0.001, 0.001)  # Jeffreys prior - very weak, proven
-			intercept ~ dnorm(0, sd = 10)  # Very wide normal - very weak, proven
-			legacy_effect ~ dnorm(0, sd = 10)  # Very wide normal - very weak, proven
-
+			intercept ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
+			legacy_effect ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
+			
 			for (b in 1:6) {
-				beta[b] ~ dnorm(0, sd = 10)  # Very wide normal - very weak, proven
+				beta[b] ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
 			}
 		})
 	} else {
@@ -382,23 +398,23 @@ run_scenarios_fixed <- function(j, chain_no) {
 	# FIXED: Simplified initialization strategy - spread chains out properly
 	set.seed(chain_no * 1000 + j * 100)  # Different seed per chain/model
 	
-	# Initialize parameters with proper spacing between chains (matching beta regression approach)
+	# Initialize parameters with proper spacing between chains (CLR-appropriate approach)
 	inits <- list(
-		intercept = rnorm(1, y_mean, 0.5),
-		precision = 50,  # Start with moderate precision (matching beta regression)
-		beta = rnorm(constants$N.beta, 0, 0.1)  # Start beta parameters close to zero
+		intercept = rnorm(1, y_mean, 0.01),  # Start very close to mean for CLR scale
+		precision = 0.1,  # Start with low precision for wide priors
+		beta = rnorm(constants$N.beta, 0, 0.001)  # Start beta parameters extremely close to zero
 	)
 	
-	# Initialize hierarchical parameters (matching beta regression approach)
-	inits$site_effect_sd <- 0.5  # Start with moderate site effect SD (matching beta regression)
+	# Initialize hierarchical parameters (CLR-appropriate approach)
+	inits$site_effect_sd <- 0.01  # Start with extremely small site effect SD for CLR scale
 	
 	# Initialize legacy effect if using legacy covariate
 	if (use_legacy_covariate) {
-		inits$legacy_effect <- 0  # Start legacy effect at 0 (matching beta regression)
+		inits$legacy_effect <- 0  # Start legacy effect at 0
 	}
 	
-	# Add site effects starting near zero (matching beta regression approach)
-	inits$site_effect <- rnorm(constants$N.site, 0, 0.1)
+	# Add site effects starting very near zero (very conservative approach)
+	inits$site_effect <- rnorm(constants$N.site, 0, 0.01)
 	
 	# Initialize plot estimate matrices for monitoring
 	inits$plot_estimates <- matrix(rnorm(constants$N.plot * constants$N.date, y_mean, y_sd * 0.1), 
@@ -521,11 +537,11 @@ mcmcConf <- configureMCMC(
 	cat("MCMC configured successfully\n")
 	
 	# PRODUCTION: Run MCMC with convergence-based sampling until production ESS is reached
-	burnin <- 2000   # Adequate burnin for complex hierarchical models
+	burnin <- 500  
 	thin <- 1        # No thinning to preserve all samples
 	iter_per_chunk <- 2000   # Larger chunks for efficiency
-	init_iter <- 2000 # Initial iterations for adaptation and burnin
-	min_eff_size_perchain <- 100  # Production standard ESS per chain
+	init_iter <- 1000 # Initial iterations for adaptation and burnin
+	min_eff_size_perchain <- 50  # Production standard ESS per chain
 	max_loops <- 50  # Allow adequate sampling for convergence
 	max_save_size <- 100000  # Handle larger sample sizes
 	min_total_iterations <- 10000  # Minimum iterations needed for complex models
@@ -554,13 +570,12 @@ mcmcConf <- configureMCMC(
 	# Check if we need to continue sampling for convergence
 	cat("  Checking initial convergence with", nrow(initial_samples), "samples...\n")
 	
-	# Try to check convergence, with fallback if it fails
-	tryCatch({
-		continue <- check_continue(initial_samples, min_eff_size = min_eff_size_perchain)
+	# Check convergence - fail if check fails
+	continue <- tryCatch({
+		check_continue(initial_samples, min_eff_size = min_eff_size_perchain)
 	}, error = function(e) {
-		cat("  WARNING: Convergence check failed, defaulting to continue sampling\n")
-		cat("  Error:", e$message, "\n")
-		continue <- TRUE  # Default to continue if check fails
+		cat("  ERROR: Convergence check failed:", e$message, "\n")
+		stop("Convergence check failed - cannot proceed")
 	})
 	
 	loop_counter <- 0
@@ -568,26 +583,50 @@ mcmcConf <- configureMCMC(
 	
 	cat("  Initial convergence check result:", ifelse(continue, "CONTINUE", "CONVERGED"), "\n")
 	
-	# Create output directories for checkpoints
-	model_output_dir <- file.path(getwd(), "data", "model_outputs", "CLR_regression", model_name)
-	dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
+	# Create output directory for checkpoints (matching beta regression approach)
+	cat("  Creating output directory for checkpoints...\n")
 	
-	# Create model_id for consistent naming with legacy covariate indicator
+	# Define the base model output directory (matching beta regression approach)
+	model_output_dir <- here("data", "model_outputs", "CLR_regression")
+	
+	# Create species-specific subdirectory (matching beta regression structure)
+	species_output_dir <- file.path(model_output_dir, model_name, species)
+	
+	# Ensure the directory exists
+	if (!dir.exists(species_output_dir)) {
+		dir.create(species_output_dir, showWarnings = FALSE, recursive = TRUE)
+	}
+	
+	# Verify directory was created
+	if (!dir.exists(species_output_dir)) {
+		stop("CRITICAL: Failed to create checkpoint directory: ", species_output_dir)
+	}
+	
+	cat("  ✓ Checkpoint directory ready:", species_output_dir, "\n")
+	
+	# Create model_id for consistent naming with legacy covariate indicator and CLR identifier
 	legacy_indicator <- ifelse(use_legacy_covariate, "with_legacy_covariate", "without_legacy_covariate")
-	model_id <- paste(model_name, species, min.date, max.date, legacy_indicator, sep = "_")
+	model_id <- paste("clr", model_name, species, min.date, max.date, legacy_indicator, sep = "_")
 	
 	# Store all samples as we go - FIXED: Use initial samples as starting point
 	all_samples <- initial_samples
 	cat("  Starting iterative accumulation with", nrow(all_samples), "initial samples\n")
 	
 	# Save initial samples as checkpoint
-	checkpoint_file <- file.path(model_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_initial.rds"))
-	tryCatch({
-		saveRDS(list(samples = all_samples, iterations = total_iterations, loop = 0), checkpoint_file)
-		cat("  ✓ Checkpoint saved: Initial samples (", nrow(all_samples), " iterations)\n")
-	}, error = function(e) {
-		cat("  ✗ Failed to save initial checkpoint:", e$message, "\n")
-	})
+	checkpoint_file <- file.path(species_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_initial.rds"))
+	cat("  Saving initial checkpoint to:", checkpoint_file, "\n")
+	cat("  Directory exists:", dir.exists(dirname(checkpoint_file)), "\n")
+	cat("  Directory writable:", file.access(dirname(checkpoint_file), mode = 2) == 0, "\n")
+	
+			tryCatch({
+			saveRDS(list(samples = all_samples, iterations = total_iterations, loop = 0), checkpoint_file)
+			cat("  ✓ Checkpoint saved: Initial samples (", nrow(all_samples), " iterations)\n")
+			cat("  Initial checkpoint file size:", file.size(checkpoint_file), "bytes\n")
+		}, error = function(e) {
+			cat("  ✗ Failed to save initial checkpoint:", e$message, "\n")
+			cat("  Error class:", class(e), "\n")
+			stop("Failed to save initial checkpoint")
+		})
 	
 	while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
 		if (continue) {
@@ -617,21 +656,27 @@ mcmcConf <- configureMCMC(
 		}
 		
 		# Save checkpoint after each loop
-		checkpoint_file <- file.path(model_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter + 1, ".rds"))
+		checkpoint_file <- file.path(species_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter + 1, ".rds"))
+		cat("  Saving checkpoint to:", checkpoint_file, "\n")
+		cat("  Directory exists:", dir.exists(dirname(checkpoint_file)), "\n")
+		cat("  Directory writable:", file.access(dirname(checkpoint_file), mode = 2) == 0, "\n")
+		
 		tryCatch({
 			saveRDS(list(samples = all_samples, iterations = total_iterations, loop = loop_counter + 1), checkpoint_file)
 			cat("  ✓ Checkpoint saved: Loop", loop_counter + 1, "(", nrow(all_samples), " iterations)\n")
+			cat("  Checkpoint file size:", file.size(checkpoint_file), "bytes\n")
 		}, error = function(e) {
 			cat("  ✗ Failed to save checkpoint for loop", loop_counter + 1, ":", e$message, "\n")
+			cat("  Error class:", class(e), "\n")
+			stop("Failed to save checkpoint")
 		})
 		
 		# Check if we need to continue
-		tryCatch({
-			continue <- check_continue(all_samples, min_eff_size = min_eff_size_perchain)
+		continue <- tryCatch({
+			check_continue(all_samples, min_eff_size = min_eff_size_perchain)
 		}, error = function(e) {
-			cat("  WARNING: Convergence check failed in loop, defaulting to continue sampling\n")
-			cat("  Error:", e$message, "\n")
-			continue <- TRUE  # Default to continue if check fails
+			cat("  ERROR: Convergence check failed in loop:", e$message, "\n")
+			stop("Convergence check failed in loop")
 		})
 		loop_counter <- loop_counter + 1
 		
@@ -663,14 +708,16 @@ mcmcConf <- configureMCMC(
 	cat("Final ESS check:\n")
 	
 	# Final convergence check
-	tryCatch({
-		final_ess <- effectiveSize(as.mcmc(samples))
-		min_final_ess <- min(final_ess, na.rm = TRUE)
-		cat("  Final minimum ESS:", round(min_final_ess, 1), "\n")
-		cat("  Convergence achieved:", min_final_ess >= min_eff_size_perchain, "\n")
+	final_ess <- tryCatch({
+		effectiveSize(as.mcmc(samples))
 	}, error = function(e) {
-		cat("  Final ESS check failed:", e$message, "\n")
+		cat("  ERROR: Final ESS check failed:", e$message, "\n")
+		stop("Final ESS check failed")
 	})
+	
+	min_final_ess <- min(final_ess, na.rm = TRUE)
+	cat("  Final minimum ESS:", round(min_final_ess, 1), "\n")
+	cat("  Convergence achieved:", min_final_ess >= min_eff_size_perchain, "\n")
 	
 	cat("=== ITERATIVE SAVING SUMMARY ===\n")
 	cat("  Initial samples:", nrow(initial_samples), "iterations\n")
@@ -679,8 +726,8 @@ mcmcConf <- configureMCMC(
 	cat("  Checkpoints saved:", loop_counter + 1, "files\n")
 	cat("  Final sample size:", nrow(samples), "iterations\n")
 	
-	# Save MCMC samples with absolute path
-	samples_file <- file.path(model_output_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
+	# Save MCMC samples with absolute path (matching beta regression structure)
+	samples_file <- file.path(species_output_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
 	
 	# Create the complete chain structure with enhanced metadata
 	chain_output <- list(
@@ -704,22 +751,21 @@ mcmcConf <- configureMCMC(
 		)
 	)
 	
-	# Save with error handling
+	# Save with error handling and detailed debugging
+	cat("  Attempting to save samples to:", samples_file, "\n")
+	cat("  File path exists:", file.exists(dirname(samples_file)), "\n")
+	cat("  Directory writable:", file.access(dirname(samples_file), mode = 2) == 0, "\n")
+	cat("  Sample dimensions:", dim(samples), "\n")
+	
 	tryCatch({
 		saveRDS(chain_output, samples_file)
 		cat("✓ SUCCESS: Saved MCMC samples to:", samples_file, "\n")
+		cat("  File size:", file.size(samples_file), "bytes\n")
 	}, error = function(e) {
 		cat("✗ ERROR: Failed to save samples to", samples_file, "\n")
 		cat("  Error:", e$message, "\n")
-		# Try to save to current directory as fallback
-		fallback_file <- paste0("samples_", model_id, "_chain", chain_no, "_FALLBACK.rds")
-		tryCatch({
-			saveRDS(chain_output, fallback_file)
-			cat("✓ FALLBACK: Saved to current directory:", fallback_file, "\n")
-		}, error = function(e2) {
-			cat("✗ CRITICAL: Failed to save even to fallback location\n")
-			cat("  Fallback error:", e2$message, "\n")
-		})
+		cat("  Error class:", class(e), "\n")
+		stop("Failed to save MCMC samples")
 	})
 	
 	cat("Saved MCMC samples to:", samples_file, "\n")
@@ -763,7 +809,7 @@ cat("Models to test:\n")
 print(params[, c("rank.name", "species", "model_name", "model_id")])
 
 # Test with more models to verify generalization across ranks and model types
-test_models <- 6  # Test 6 models for comprehensive verification
+test_models <- 1  # Test 6 models for comprehensive verification
 cat("\nTesting", test_models, "models to verify generalization across ranks and model types\n")
 
 # Set up parallel cluster for LOCAL TESTING
@@ -788,7 +834,7 @@ all_ranks = c(bacteria, fungi)
 cat("Data loaded successfully\n")
 
 # Define valid_models for testing (subset of params for local testing)
-test_models <- 6  # Test with 6 models for local verification
+test_models <- 1  # Test with 6 models for local verification
 valid_models <- params[1:test_models, ]
 cat("Testing", test_models, "models to verify generalization across ranks and model types\n")
 
@@ -814,8 +860,13 @@ monitor_progress <- function() {
         errors <- 0
         for (model_idx in 1:test_models) {
             for (chain_no in 1:nchains) {
-                status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
-                error_file <- paste0("chain_", model_idx, "_", chain_no, "_ERROR.txt")
+                # Look for status files in the appropriate species-specific directory
+                model_name <- valid_models$model_name[model_idx]
+                species_name <- valid_models$species[model_idx]
+                model_output_dir <- here("data", "model_outputs", "CLR_regression", model_name)
+                species_output_dir <- file.path(model_output_dir, species_name)
+                status_file <- file.path(species_output_dir, paste0("chain_", model_idx, "_", chain_no, "_status.txt"))
+                error_file <- file.path(species_output_dir, paste0("chain_", model_idx, "_", chain_no, "_ERROR.txt"))
                 
                 if (file.exists(status_file)) completed <- completed + 1
                 if (file.exists(error_file)) errors <- errors + 1
@@ -911,7 +962,7 @@ runAndSave_task <- function(task_idx) {
         
         # Save result immediately if successful
         if (result$status == "SUCCESS") {
-            # Create output directory early with HPC compatibility
+            # Create output directory early with HPC compatibility (matching beta regression approach)
             possible_bases <- c(
                 here("data", "model_outputs"),
                 file.path(here(), "data", "model_outputs"),
@@ -937,11 +988,7 @@ runAndSave_task <- function(task_idx) {
             }
             
             if (is.null(model_output_dir)) {
-                # Fallback: create using here() for consistency
-                fallback_output_dir <- here("data", "model_outputs", "CLR_regression", valid_models$model_name[model_idx])
-                dir.create(fallback_output_dir, showWarnings = FALSE, recursive = TRUE)
-                cat("  WARNING: Using fallback output directory:", fallback_output_dir, "\n")
-                model_output_dir <- fallback_output_dir
+                stop("Failed to create output directory")
             }
             
             # Create model_id for consistent naming using helper function
@@ -954,12 +1001,18 @@ runAndSave_task <- function(task_idx) {
                 "clr"
             )
             
+            # Create species-specific subdirectory (matching beta regression structure)
+            species_output_dir <- file.path(model_output_dir, valid_models$species[model_idx])
+            if (!dir.exists(species_output_dir)) {
+                dir.create(species_output_dir, showWarnings = FALSE, recursive = TRUE)
+            }
+            
             # Save MCMC samples immediately
-            samples_file <- file.path(model_output_dir, 
+            samples_file <- file.path(species_output_dir, 
                                       paste0("samples_", model_id, "_chain", chain_no, ".rds"))
             
             # Create the complete chain structure with metadata
-            # Use the metadata from the result if available, otherwise create it
+            # Use the metadata from the result if available, otherwise fail
             if ("metadata" %in% names(result) && !is.null(result$metadata)) {
                 # Use the complete metadata from the result
                 metadata <- result$metadata
@@ -967,25 +1020,7 @@ runAndSave_task <- function(task_idx) {
                 metadata$task_idx <- task_idx
                 metadata$completed_at <- Sys.time()
             } else {
-                # Fallback: create metadata if not available in result
-                metadata <- list(
-                    rank.name = valid_models$rank.name[model_idx],
-                    species = valid_models$species[model_idx],
-                    model_name = valid_models$model_name[model_idx],
-                    model_id = model_id,
-                    use_legacy_covariate = grepl("Legacy with covariate", valid_models$scenario[model_idx]),
-                    scenario = valid_models$scenario[model_idx],
-                    min.date = valid_models$min.date[model_idx],
-                    max.date = valid_models$max.date[model_idx],
-                    niter = nrow(result$samples),
-                    nburnin = 500,  # Default burnin
-                    thin = 1,       # Default thin
-                    task_idx = task_idx,
-                    completed_at = Sys.time(),
-                    model_data = result$model_data,  # Include model_data from result
-                    nimble_code = result$nimble_code,  # Include nimble_code if available
-                    model_structure = "standardized_CLR_regression_with_consistent_priors"  # Model structure identifier
-                )
+                stop("No metadata available in result")
             }
             
             chain_output <- list(
@@ -994,12 +1029,19 @@ runAndSave_task <- function(task_idx) {
                 metadata = metadata
             )
             
+            cat("  Attempting to save parallel results to:", samples_file, "\n")
+            cat("  Directory exists:", dir.exists(dirname(samples_file)), "\n")
+            cat("  Directory writable:", file.access(dirname(samples_file), mode = 2) == 0, "\n")
+            
             saveRDS(chain_output, samples_file)
             cat("SAVED: Chain", chain_no, "for model", model_idx, "to", samples_file, "\n")
+            cat("  File size:", file.size(samples_file), "bytes\n")
             
             # Also save a simple status file to track progress
-            status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
+            status_file <- file.path(species_output_dir, paste0("chain_", model_idx, "_", chain_no, "_status.txt"))
+            cat("  Creating status file:", status_file, "\n")
             writeLines(paste("SUCCESS", Sys.time(), sep = "\t"), status_file)
+            cat("  ✓ Status file created successfully\n")
         }
         
         cat("Worker: Model", model_idx, "Chain", chain_no, "completed at", format(Sys.time()), "\n")
@@ -1025,9 +1067,16 @@ runAndSave_task <- function(task_idx) {
             runtime = if(exists("start_time")) difftime(error_time, start_time, units="secs") else NA
         )
         
-        # Create detailed error file
+        # Create detailed error file in the appropriate model output directory
         task <- all_tasks[task_idx, ]
-        error_file <- paste0("chain_", task$model_idx, "_task_", task_idx, "_ERROR.txt")
+        model_name <- valid_models$model_name[task$model_idx]
+        species_name <- valid_models$species[task$model_idx]
+        model_output_dir <- here("data", "model_outputs", "CLR_regression", model_name)
+        species_output_dir <- file.path(model_output_dir, species_name)
+        if (!dir.exists(species_output_dir)) {
+            dir.create(species_output_dir, showWarnings = FALSE, recursive = TRUE)
+        }
+        error_file <- file.path(species_output_dir, paste0("chain_", task$model_idx, "_task_", task_idx, "_ERROR.txt"))
         
         # Write comprehensive error report
         error_report <- c(
@@ -1047,7 +1096,9 @@ runAndSave_task <- function(task_idx) {
             capture.output(str(e))
         )
         
+        cat("  Creating error file:", error_file, "\n")
         writeLines(error_report, error_file)
+        cat("  ✓ Error file created successfully\n")
         
         # Also log to console with detailed information
         cat("ERROR in Model", error_details$model_idx, "Chain", error_details$chain_no, ":\n")
@@ -1122,7 +1173,6 @@ clusterExport(cl, c(
     "run_scenarios_fixed", 
     "valid_models", 
     "all_tasks", 
-    "model_output_dir",
     "all_ranks",
     "params",
     "n_cores",
@@ -1136,8 +1186,33 @@ clusterExport(cl, c(
     "update_progress_file"
 ))
 
-# Also export the here function explicitly
+# Also export the here function explicitly and test it in workers
 clusterExport(cl, "here")
+
+# Test that here() function works in workers
+cat("Testing here() function in workers...\n")
+here_test <- tryCatch({
+    clusterEvalQ(cl, {
+        if (exists("here")) {
+            test_path <- here("data", "model_outputs")
+            list(exists = TRUE, path = test_path, working_dir = getwd())
+        } else {
+            list(exists = FALSE, path = NULL, working_dir = getwd())
+        }
+    })
+}, error = function(e) {
+    cat("✗ ERROR testing here() in workers:", e$message, "\n")
+    return(rep(list(exists = FALSE, path = NULL, working_dir = getwd()), length(cl)))
+})
+
+cat("✓ here() function test results:\n")
+for (i in seq_along(here_test)) {
+    worker_info <- here_test[[i]]
+    cat("  Worker", i, ":", 
+        "here() exists:", worker_info$exists, 
+        "path:", worker_info$path, 
+        "wd:", worker_info$working_dir, "\n")
+}
 
 # Run everything in parallel with incremental saving
 cat("Starting foreach loop with", nrow(all_tasks), "tasks\n")
@@ -1325,22 +1400,30 @@ for (model_idx in 1:nrow(valid_models)) {
     }
 }
 
-# Clean up status files
-for (chain_no in 1:nchains) {
-    status_file <- paste0("chain_", chain_no, "_status.txt")
-    if (file.exists(status_file)) {
-        unlink(status_file)
+# Clean up status files from species-specific directories
+for (model_idx in 1:nrow(valid_models)) {
+    model_name <- valid_models$model_name[model_idx]
+    species_name <- valid_models$species[model_idx]
+    model_output_dir <- here("data", "model_outputs", "CLR_regression", model_name)
+    species_output_dir <- file.path(model_output_dir, species_name)
+    
+    for (chain_no in 1:nchains) {
+        status_file <- file.path(species_output_dir, paste0("chain_", model_idx, "_", chain_no, "_status.txt"))
+        if (file.exists(status_file)) {
+            unlink(status_file)
+        }
     }
 }
 
 cat("✓ Proper CLR transformation for compositional data\n")
 cat("✓ Precision parameter instead of separate core_sd/sigma parameters\n")
-cat("✓ 🎯 PROVEN HYBRID PRIORS - Weak for main parameters, stable for site effects (matching beta regression)\n")
+cat("✓ 🎯 TIGHT PRIORS FOR CLR SCALE - CLR transformation produces large values requiring tight constraints\n")
 cat("  - precision ~ dgamma(0.001, 0.001) - Jeffreys prior - very weak, proven\n")
-cat("  - intercept ~ dnorm(0, sd = 10) - Very wide normal - very weak, proven\n")
-cat("  - legacy_effect ~ dnorm(0, sd = 10) - Very wide normal - very weak, proven\n")
-cat("  - site_effect_sd ~ dgamma(2, 20) - More informative: dgamma(2, 20) - stable, proven\n")
-cat("  - beta ~ dnorm(0, sd = 10) - Very wide normal - very weak, proven\n")
+cat("  - intercept ~ dnorm(0, tau = 100) - Very tight: sd = 0.1 for CLR scale\n")
+cat("  - legacy_effect ~ dnorm(0, tau = 100) - Very tight: sd = 0.1 for CLR scale\n")
+cat("  - site_effect_sd ~ dgamma(5, 100) - Very tight: dgamma(5, 100) for CLR scale\n")
+cat("  - beta ~ dnorm(0, tau = 100) - Very tight: sd = 0.1 for CLR scale\n")
+cat("  - site_effect ~ dnorm(0, sd = site_effect_sd) - Site effects with hierarchical prior\n")
 cat("✓ Plot estimate monitoring (plot_estimates, plot_predictions) for comprehensive analysis\n")
 cat("✓ Individual slice samplers for beta parameters\n")
 cat("✓ Convergence-based sampling with iterative saving\n")

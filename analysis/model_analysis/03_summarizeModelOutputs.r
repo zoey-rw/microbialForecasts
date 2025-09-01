@@ -5,8 +5,8 @@ source("source.R")
 
 # Get all available logit beta regression models with legacy effects
 # Look for models from 2013-2018 and 2013-2020 time periods
-file.list = intersect(list.files(here("data/model_outputs/logit_beta_regression/env_cycl"),recursive = F,pattern = "20130601_20151101|20151101_20180101|20130601_20180101|20130601_20200101", full.names = T),
-											list.files(here("data/model_outputs/logit_beta_regression/env_cycl"), recursive = F,
+file.list = intersect(list.files(here("data/model_outputs/logit_beta_fixed_priors/env_cycl"),recursive = F,pattern = "20130601_20151101|20151101_20180101|20130601_20180101|20130601_20200101", full.names = T),
+											list.files(here("data/model_outputs/logit_beta_fixed_priors/env_cycl"), recursive = F,
 																 pattern = "samples", full.names = T))
 
 # Remove any files with only one chain
@@ -33,7 +33,7 @@ file_summaries = foreach(f=file.list, .errorhandling = "pass") %dopar% {
 stopCluster(cl)
 
 
-summary_file_list = list.files(here("data/model_outputs/logit_beta_regression/"), recursive = T,
+summary_file_list = list.files(here("data/model_outputs/logit_beta_fixed_priors/"), recursive = T,
 															 pattern = "summary", full.names = T)
 
 # Subset to newest output files
@@ -113,10 +113,143 @@ rerun_list <- unique(rerun$model_id)
 
 #rerun %>% ungroup %>% select(c(12:21)) %>% as.matrix %>% pairs
 
+# ================================
+# MISSING CHAIN DETECTION & PRIORITY SYSTEM
+# ================================
+
+cat("Analyzing missing chains for env_cycl models...\n")
+
+# Define the base directory for env_cycl models
+env_cycl_dir <- here("data/model_outputs/logit_beta_fixed_priors/env_cycl")
+
+# Get all model directories (species/functional groups)
+model_dirs <- list.dirs(env_cycl_dir, full.names = FALSE, recursive = FALSE)
+model_dirs <- model_dirs[model_dirs != ""]  # Remove empty strings
+
+# Expected chains (4 chains per model)
+expected_chains <- 1:4
+
+# Initialize results
+missing_chains <- data.frame(
+  model = character(),
+  missing_chain = integer(),
+  existing_chains = character(),
+  priority = character(),
+  stringsAsFactors = FALSE
+)
+
+cat("Checking for missing chains in", length(model_dirs), "models...\n")
+
+# Check each model directory
+for (model in model_dirs) {
+  # Look for sample files in two possible locations:
+  # 1. In the model subdirectory
+  # 2. In the root env_cycl directory (some files are stored there)
+  
+  model_subdir <- file.path(env_cycl_dir, model)
+  found_chains <- c()
+  
+  # Check in model subdirectory
+  if (dir.exists(model_subdir)) {
+    pattern1 <- paste0("samples_env_cycl_", model, "_20130601_20180101_with_legacy_covariate_chain([1-4])\\.rds")
+    files_in_subdir <- list.files(model_subdir, pattern = pattern1, full.names = FALSE)
+    
+    if (length(files_in_subdir) > 0) {
+      chains_in_subdir <- as.integer(gsub(".*_chain([1-4])\\.rds", "\\1", files_in_subdir))
+      found_chains <- c(found_chains, chains_in_subdir)
+    }
+  }
+  
+  # Check in root env_cycl directory
+  pattern2 <- paste0("samples_env_cycl_", model, "_20130601_20180101_with_legacy_covariate_chain([1-4])\\.rds")
+  files_in_root <- list.files(env_cycl_dir, pattern = pattern2, full.names = FALSE)
+  
+  if (length(files_in_root) > 0) {
+    chains_in_root <- as.integer(gsub(".*_chain([1-4])\\.rds", "\\1", files_in_root))
+    found_chains <- c(found_chains, chains_in_root)
+  }
+  
+  # Remove duplicates and sort
+  found_chains <- sort(unique(found_chains))
+  
+  # Find missing chains
+  missing <- setdiff(expected_chains, found_chains)
+  
+  if (length(missing) > 0) {
+    # Determine priority based on existing progress
+    if (length(found_chains) == 0) {
+      priority <- "Low (No chains)"
+    } else if (1 %in% found_chains && length(found_chains) < 4) {
+      priority <- "High (Has chain 1)"
+    } else if (length(found_chains) > 0 && length(found_chains) < 4) {
+      priority <- "Medium (Partial progress)"
+    } else {
+      priority <- "Low (Incomplete)"
+    }
+    
+    existing_chains_str <- if(length(found_chains) > 0) paste(found_chains, collapse = ",") else "none"
+    
+    for (chain in missing) {
+      missing_chains <- rbind(missing_chains, data.frame(
+        model = model,
+        missing_chain = chain,
+        existing_chains = existing_chains_str,
+        priority = priority,
+        stringsAsFactors = FALSE
+      ))
+    }
+  }
+}
+
+# Create priority-based rerun lists
+cat("Creating priority-based rerun lists...\n")
+
+# Priority 1: Models with chain 1 completed (build on existing progress)
+priority_models <- missing_chains %>%
+  filter(priority == "High (Has chain 1)") %>%
+  distinct(model) %>%
+  pull(model)
+
+priority_rerun_list <- paste0("env_cycl_", priority_models, "_20130601_20180101_with_legacy_covariate")
+
+# All missing models for complete list
+all_missing_models <- missing_chains %>%
+  distinct(model) %>%
+  pull(model)
+
+all_missing_rerun_list <- paste0("env_cycl_", all_missing_models, "_20130601_20180101_with_legacy_covariate")
+
+# Create summary for reporting
+missing_summary <- missing_chains %>%
+  group_by(model, priority, existing_chains) %>%
+  summarise(missing_chains = paste(sort(missing_chain), collapse = ","), .groups = 'drop') %>%
+  arrange(priority, model)
+
+cat("Missing chain analysis complete:\n")
+cat("  Total models with missing chains:", length(all_missing_models), "\n")
+cat("  High priority models (have chain 1):", length(priority_models), "\n")
+cat("  Total missing chains:", nrow(missing_chains), "\n")
+
+# Save detailed missing chains analysis
+saveRDS(list(
+  missing_chains = missing_chains,
+  missing_summary = missing_summary,
+  priority_models = priority_models,
+  all_missing_models = all_missing_models
+), here("data/summary/missing_chains_analysis.rds"))
+
+# Save priority rerun list (main target for scripts)
+saveRDS(priority_rerun_list, here("data/summary/priority_rerun_list.rds"))
+
+# Update the main unconverged list to prioritize models with existing progress
+# Combine priority models first, then others
+rerun_list_prioritized <- c(priority_rerun_list, setdiff(all_missing_rerun_list, priority_rerun_list))
+
+# Save standard lists
 saveRDS(keep_list, here("data/summary/converged_taxa_list.rds"))
 saveRDS(keep_list_stricter, here("data/summary/stricter_converged_taxa_list.rds"))
 saveRDS(keep_list_weak, here("data/summary/weak_converged_taxa_list.rds"))
-saveRDS(rerun_list, here("data/summary/unconverged_taxa_list.rds"))
+saveRDS(rerun_list_prioritized, here("data/summary/unconverged_taxa_list.rds"))
 
 
 saveRDS(list(summary_df = summary_df,
@@ -126,8 +259,15 @@ saveRDS(list(summary_df = summary_df,
 						 keep_list = keep_list,
 						 keep_list_weak = keep_list_weak,
 						 keep_list_stricter = keep_list_stricter,
-						 rerun_list = rerun_list),
-				here("data/summary/logit_beta_regression_summaries.rds"))
+						 rerun_list = rerun_list,
+						 priority_rerun_list = priority_rerun_list,
+						 missing_chains_analysis = list(
+						   missing_chains = missing_chains,
+						   missing_summary = missing_summary,
+						   priority_models = priority_models,
+						   all_missing_models = all_missing_models
+						 )),
+				here("data/summary/logit_beta_fixed_priors_summaries.rds"))
 
 
 
