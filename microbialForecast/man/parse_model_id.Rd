@@ -7,5 +7,5 @@
 parse_model_id(model_id)
 }
 \description{
-parse_model_id
+Parse model ID to extract components including enhanced metadata structure
 }

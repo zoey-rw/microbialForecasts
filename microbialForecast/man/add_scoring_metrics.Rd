@@ -6,10 +6,12 @@
 \usage{
 add_scoring_metrics(
   observed,
+  median_predicted,
   mean_predicted,
   sd_predicted,
-  type = c("RMSE", "BIAS", "MAE", "CRPS", "RSQ", "RSQ.1", "RMSE.norm",
-    "residual_variance", "predictive_variance", "total_PL", "CRPS_truncated")
+  type = c("RMSE", "BIAS", "MAE", "CRPS", "RSQ", "RSQ.1", "RMSE.norm", "RMSE.norm.orig",
+    "RMSE.iqr", "residual_variance", "predictive_variance", "total_PL", "CRPS_truncated"),
+  use_median = TRUE
 )
 }
 \description{

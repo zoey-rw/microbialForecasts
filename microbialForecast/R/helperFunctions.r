@@ -1,5 +1,16 @@
 # Helper functions and global variables for soil microbial forecasts
 
+# Load required packages for restart functionality
+if (!require(coda, quietly = TRUE)) {
+  install.packages("coda")
+  library(coda)
+}
+
+if (!require(here, quietly = TRUE)) {
+  install.packages("here")
+  library(here)
+}
+
 
 
 
@@ -499,7 +510,7 @@ parseNEONsampleIDs <- function(sampleID){
 
 
 #' @title rbind.named.dfs
-#' @description
+#' @description Combine multiple data frames with row names
 #' @export
 rbind.named.dfs <- function(df.list){
   # solution from https://stackoverflow.com/questions/15162197/combine-rbind-data-frames-and-create-column-with-name-of-original-data-frames
@@ -590,7 +601,8 @@ pacman::p_load(tidyverse, anytime)
 #'
 create_covariate_samples <- function(model.inputs, plotID = NULL, siteID,
 																		 Nmc_large, Nmc,
-																		 N.beta = 8, prev_samples = NULL, ...) {
+																		 N.beta = 8, prev_samples = NULL, 
+																		 model_type = NULL, ...) {
 	
 	# STRICT VERSION: This function fails fast when data is missing - no fallbacks!
 	
@@ -688,9 +700,33 @@ create_covariate_samples <- function(model.inputs, plotID = NULL, siteID,
 			 " - investigate calibration vs validation period mismatch")
 	}
 	
-	# Validate all required data structures - fail fast if missing
-	required_arrays <- c("temp", "temp_sd", "mois", "mois_sd", "pH", "pH_sd", "pC", "pC_sd", "relEM", "LAI")
-	required_vectors <- c("sin_mo", "cos_mo")
+	# Determine required covariates based on model type
+	if (is.null(model_type)) {
+		# Default to requiring all covariates if model_type not specified
+		required_arrays <- c("temp", "temp_sd", "mois", "mois_sd", "pH", "pH_sd", "pC", "pC_sd", "relEM", "LAI")
+		required_vectors <- c("sin_mo", "cos_mo")
+		N.beta <- 8
+	} else if (model_type == "cycl_only") {
+		# For cycl_only models, only require seasonal covariates
+		required_arrays <- character(0)  # No environmental arrays needed
+		required_vectors <- c("sin_mo", "cos_mo")
+		N.beta <- 2
+	} else if (model_type == "env_cov") {
+		# For env_cov models, require environmental covariates but not seasonal
+		required_arrays <- c("temp", "temp_sd", "mois", "mois_sd", "pH", "pH_sd", "pC", "pC_sd", "relEM", "LAI")
+		required_vectors <- character(0)  # No seasonal vectors needed
+		N.beta <- 6
+	} else if (model_type == "env_cycl") {
+		# For env_cycl models, require both environmental and seasonal covariates
+		required_arrays <- c("temp", "temp_sd", "mois", "mois_sd", "pH", "pH_sd", "pC", "pC_sd", "relEM", "LAI")
+		required_vectors <- c("sin_mo", "cos_mo")
+		N.beta <- 8
+	} else {
+		# Unknown model type, default to requiring all covariates
+		required_arrays <- c("temp", "temp_sd", "mois", "mois_sd", "pH", "pH_sd", "pC", "pC_sd", "relEM", "LAI")
+		required_vectors <- c("sin_mo", "cos_mo")
+		N.beta <- 8
+	}
 	
 	# Check arrays
 	for (array_name in required_arrays) {
@@ -711,163 +747,211 @@ create_covariate_samples <- function(model.inputs, plotID = NULL, siteID,
 	
 	# STRICT ARRAY ACCESS: Fail fast if data is missing or out of bounds
 	for (time in 1:NT) {
+		col_index <- 1  # Track which column we're filling
 		
-		# Temperature - fail fast if missing
-		if (!siteID %in% rownames(model.inputs$temp)) {
-			stop("Site ", siteID, " not found in temperature data rownames - investigate site mapping")
-		}
-		if (time > ncol(model.inputs$temp)) {
-			stop("Time ", time, " exceeds temperature data columns (", ncol(model.inputs$temp), ") - investigate time dimension")
-		}
-		
-		temp_mean <- model.inputs$temp[siteID, time]
-		if (is.na(temp_mean) || is.infinite(temp_mean)) {
-			stop("Temperature value is NA or infinite for site ", siteID, " time ", time, " - investigate data quality")
-		}
-		
-		temp_sd <- model.inputs$temp_sd[siteID, time]
-		if (is.na(temp_sd) || is.infinite(temp_sd) || temp_sd <= 0) {
-			stop("Temperature SD is NA, infinite, or <= 0 for site ", siteID, " time ", time, " - investigate data quality")
-		}
-		
-		# Moisture - fail fast if missing
-		if (!siteID %in% rownames(model.inputs$mois)) {
-			stop("Site ", siteID, " not found in moisture data rownames - investigate site mapping")
-		}
-		if (time > ncol(model.inputs$mois)) {
-			stop("Time ", time, " exceeds moisture data columns (", ncol(model.inputs$mois), ") - investigate time dimension")
-		}
-		
-		mois_mean <- model.inputs$mois[siteID, time]
-		if (is.na(mois_mean) || is.infinite(mois_mean)) {
-			stop("Moisture value is NA or infinite for site ", siteID, " time ", time, " - investigate data quality")
-		}
-		
-		mois_sd <- model.inputs$mois_sd[siteID, time]
-		if (is.na(mois_sd) || is.infinite(mois_sd) || mois_sd <= 0) {
-			stop("Moisture SD is NA, infinite, or <= 0 for site ", siteID, " time ", time, " - investigate data quality")
+		# Temperature - only if required
+		if ("temp" %in% required_arrays) {
+			if (!siteID %in% rownames(model.inputs$temp)) {
+				stop("Site ", siteID, " not found in temperature data rownames - investigate site mapping")
+			}
+			if (time > ncol(model.inputs$temp)) {
+				stop("Time ", time, " exceeds temperature data columns (", ncol(model.inputs$temp), ") - investigate time dimension")
+			}
+			
+			temp_mean <- model.inputs$temp[siteID, time]
+			if (is.na(temp_mean) || is.infinite(temp_mean)) {
+				stop("Temperature value is NA or infinite for site ", siteID, " time ", time, " - investigate data quality")
+			}
+			
+			temp_sd <- model.inputs$temp_sd[siteID, time]
+			if (is.na(temp_sd) || is.infinite(temp_sd) || temp_sd <= 0) {
+				stop("Temperature SD is NA, infinite, or <= 0 for site ", siteID, " time ", time, " - investigate data quality")
+			}
+			
+			# Generate samples - fail fast if sampling fails
+			temp_samples <- rnorm(Nmc_large, temp_mean, temp_sd)
+			if (any(is.na(temp_samples)) || any(is.infinite(temp_samples))) {
+				stop("Temperature sampling produced NA or infinite values - investigate parameters")
+			}
+			
+			# Assign to array
+			covar_full[, col_index, time] <- temp_samples
+			col_index <- col_index + 1
 		}
 		
-		# pH - fail fast if missing
-		if (is.null(plotID)) {
-			stop("plotID is NULL but required for pH data - investigate plot mapping")
-		}
-		if (!plotID %in% rownames(model.inputs$pH)) {
-			stop("Plot ", plotID, " not found in pH data rownames - investigate plot mapping")
-		}
-		if (time > ncol(model.inputs$pH)) {
-			stop("Time ", time, " exceeds pH data columns (", ncol(model.inputs$pH), ") - investigate time dimension")
-		}
-		
-		pH_value <- model.inputs$pH[plotID, time]
-		if (is.na(pH_value) || is.infinite(pH_value)) {
-			stop("pH value is NA or infinite for plot ", plotID, " time ", time, " - investigate data quality")
-		}
-		
-		pH_sd_value <- model.inputs$pH_sd[plotID, time]
-		if (is.na(pH_sd_value) || is.infinite(pH_sd_value) || pH_sd_value <= 0) {
-			stop("pH SD is NA, infinite, or <= 0 for plot ", plotID, " time ", time, " - investigate data quality")
-		}
-		
-		# pC - fail fast if missing
-		if (!plotID %in% rownames(model.inputs$pC)) {
-			stop("Plot ", plotID, " not found in pC data rownames - investigate plot mapping")
-		}
-		if (time > ncol(model.inputs$pC)) {
-			stop("Time ", time, " exceeds pC data columns (", ncol(model.inputs$pC), ") - investigate time dimension")
-		}
-		
-		pC_value <- model.inputs$pC[plotID, time]
-		if (is.na(pC_value) || is.infinite(pC_value)) {
-			stop("pC value is NA or infinite for plot ", plotID, " time ", time, " - investigate data quality")
+		# Moisture - only if required
+		if ("mois" %in% required_arrays) {
+			if (!siteID %in% rownames(model.inputs$mois)) {
+				stop("Site ", siteID, " not found in moisture data rownames - investigate site mapping")
+			}
+			if (time > ncol(model.inputs$mois)) {
+				stop("Time ", time, " exceeds moisture data columns (", ncol(model.inputs$mois), ") - investigate time dimension")
+			}
+			
+			mois_mean <- model.inputs$mois[siteID, time]
+			if (is.na(mois_mean) || is.infinite(mois_mean)) {
+				stop("Moisture value is NA or infinite for site ", siteID, " time ", time, " - investigate data quality")
+			}
+			
+			mois_sd <- model.inputs$mois_sd[siteID, time]
+			if (is.na(mois_sd) || is.infinite(mois_sd) || mois_sd <= 0) {
+				stop("Moisture SD is NA, infinite, or <= 0 for site ", siteID, " time ", time, " - investigate data quality")
+			}
+			
+			# Generate samples - fail fast if sampling fails
+			mois_samples <- rnorm(Nmc_large, mois_mean, mois_sd)
+			if (any(is.na(mois_samples)) || any(is.infinite(mois_samples))) {
+				stop("Moisture sampling produced NA or infinite values - investigate parameters")
+			}
+			
+			# Assign to array
+			covar_full[, col_index, time] <- mois_samples
+			col_index <- col_index + 1
 		}
 		
-		pC_sd_value <- model.inputs$pC_sd[plotID, time]
-		if (is.na(pC_sd_value) || is.infinite(pC_sd_value) || pC_sd_value <= 0) {
-			stop("pC SD is NA, infinite, or <= 0 for plot ", plotID, " time ", time, " - investigate data quality")
+		# pH - only if required
+		if ("pH" %in% required_arrays) {
+			if (is.null(plotID)) {
+				stop("plotID is NULL but required for pH data - investigate plot mapping")
+			}
+			if (!plotID %in% rownames(model.inputs$pH)) {
+				stop("Plot ", plotID, " not found in pH data rownames - investigate plot mapping")
+			}
+			if (time > ncol(model.inputs$pH)) {
+				stop("Time ", time, " exceeds pH data columns (", ncol(model.inputs$pH), ") - investigate time dimension")
+			}
+			
+			pH_value <- model.inputs$pH[plotID, time]
+			if (is.na(pH_value) || is.infinite(pH_value)) {
+				stop("pH value is NA or infinite for plot ", plotID, " time ", time, " - investigate data quality")
+			}
+			
+			pH_sd_value <- model.inputs$pH_sd[plotID, time]
+			if (is.na(pH_sd_value) || is.infinite(pH_sd_value) || pH_sd_value <= 0) {
+				stop("pH SD is NA, infinite, or <= 0 for plot ", plotID, " time ", time, " - investigate data quality")
+			}
+			
+			# Generate samples - fail fast if sampling fails
+			pH_samples <- rnorm(Nmc_large, pH_value, pH_sd_value)
+			if (any(is.na(pH_samples)) || any(is.infinite(pH_samples))) {
+				stop("pH sampling produced NA or infinite values - investigate parameters")
+			}
+			
+			# Assign to array
+			covar_full[, col_index, time] <- pH_samples
+			col_index <- col_index + 1
 		}
 		
-		# relEM - fail fast if missing
-		if (!plotID %in% rownames(model.inputs$relEM)) {
-			stop("Plot ", plotID, " not found in relEM data rownames - investigate plot mapping")
-		}
-		if (time > ncol(model.inputs$relEM)) {
-			stop("Time ", time, " exceeds relEM data columns (", ncol(model.inputs$relEM), ") - investigate time dimension")
-		}
-		
-		relEM_value <- model.inputs$relEM[plotID, time]
-		if (is.na(relEM_value) || is.infinite(relEM_value)) {
-			stop("relEM value is NA or infinite for plot ", plotID, " time ", time, " - investigate data quality")
-		}
-		
-		# LAI - fail fast if missing
-		if (!siteID %in% rownames(model.inputs$LAI)) {
-			stop("Site ", siteID, " not found in LAI data rownames - investigate site mapping")
-		}
-		if (time > ncol(model.inputs$LAI)) {
-			stop("Time ", time, " exceeds LAI data columns (", ncol(model.inputs$LAI), ") - investigate time dimension")
-		}
-		
-		lai_value <- model.inputs$LAI[siteID, time]
-		if (is.na(lai_value) || is.infinite(lai_value)) {
-			stop("LAI value is NA or infinite for site ", siteID, " time ", time, " - investigate data quality")
-		}
-		
-		# Seasonal predictors - fail fast if missing
-		if (time > length(model.inputs$sin_mo)) {
-			stop("Time ", time, " exceeds sin_mo length (", length(model.inputs$sin_mo), ") - investigate seasonal data")
-		}
-		
-		sin_mo_value <- model.inputs$sin_mo[time]
-		if (is.na(sin_mo_value) || is.infinite(sin_mo_value)) {
-			stop("sin_mo value is NA or infinite for time ", time, " - investigate seasonal data quality")
+		# pC - only if required
+		if ("pC" %in% required_arrays) {
+			if (!plotID %in% rownames(model.inputs$pC)) {
+				stop("Plot ", plotID, " not found in pC data rownames - investigate plot mapping")
+			}
+			if (time > ncol(model.inputs$pC)) {
+				stop("Time ", time, " exceeds pC data columns (", ncol(model.inputs$pC), ") - investigate time dimension")
+			}
+			
+			pC_value <- model.inputs$pC[plotID, time]
+			if (is.na(pC_value) || is.infinite(pC_value)) {
+				stop("pC value is NA or infinite for plot ", plotID, " time ", time, " - investigate data quality")
+			}
+			
+			pC_sd_value <- model.inputs$pC_sd[plotID, time]
+			if (is.na(pC_sd_value) || is.infinite(pC_sd_value) || pC_sd_value <= 0) {
+				stop("pC SD is NA, infinite, or <= 0 for plot ", plotID, " time ", time, " - investigate data quality")
+			}
+			
+			# Generate samples - fail fast if sampling fails
+			pC_samples <- rnorm(Nmc_large, pC_value, pC_sd_value)
+			if (any(is.na(pC_samples)) || any(is.infinite(pC_samples))) {
+				stop("pC sampling produced NA or infinite values - investigate parameters")
+			}
+			
+			# Assign to array
+			covar_full[, col_index, time] <- pC_samples
+			col_index <- col_index + 1
 		}
 		
-		if (time > length(model.inputs$cos_mo)) {
-			stop("Time ", time, " exceeds cos_mo length (", length(model.inputs$cos_mo), ") - investigate seasonal data")
+		# relEM - only if required
+		if ("relEM" %in% required_arrays) {
+			if (!plotID %in% rownames(model.inputs$relEM)) {
+				stop("Plot ", plotID, " not found in relEM data rownames - investigate plot mapping")
+			}
+			if (time > ncol(model.inputs$relEM)) {
+				stop("Time ", time, " exceeds relEM data columns (", ncol(model.inputs$relEM), ") - investigate time dimension")
+			}
+			
+			relEM_value <- model.inputs$relEM[plotID, time]
+			if (is.na(relEM_value) || is.infinite(relEM_value)) {
+				stop("relEM value is NA or infinite for plot ", plotID, " time ", time, " - investigate data quality")
+			}
+			
+			# These are deterministic, so just repeat the values
+			relEM_samples <- rep(relEM_value, Nmc_large)
+			
+			# Assign to array
+			covar_full[, col_index, time] <- relEM_samples
+			col_index <- col_index + 1
 		}
 		
-		cos_mo_value <- model.inputs$cos_mo[time]
-		if (is.na(cos_mo_value) || is.infinite(cos_mo_value)) {
-			stop("cos_mo value is NA or infinite for time ", time, " - investigate seasonal data quality")
+		# LAI - only if required
+		if ("LAI" %in% required_arrays) {
+			if (!siteID %in% rownames(model.inputs$LAI)) {
+				stop("Site ", siteID, " not found in LAI data rownames - investigate site mapping")
+			}
+			if (time > ncol(model.inputs$LAI)) {
+				stop("Time ", time, " exceeds LAI data columns (", ncol(model.inputs$LAI), ") - investigate time dimension")
+			}
+			
+			lai_value <- model.inputs$LAI[siteID, time]
+			if (is.na(lai_value) || is.infinite(lai_value)) {
+				stop("LAI value is NA or infinite for site ", siteID, " time ", time, " - investigate data quality")
+			}
+			
+			# These are deterministic, so just repeat the values
+			LAI_samples <- rep(lai_value, Nmc_large)
+			
+			# Assign to array
+			covar_full[, col_index, time] <- LAI_samples
+			col_index <- col_index + 1
 		}
 		
-		# Generate samples - fail fast if sampling fails
-		temp_samples <- rnorm(Nmc_large, temp_mean, temp_sd)
-		if (any(is.na(temp_samples)) || any(is.infinite(temp_samples))) {
-			stop("Temperature sampling produced NA or infinite values - investigate parameters")
+		# Seasonal predictors - only if required
+		if ("sin_mo" %in% required_vectors) {
+			if (time > length(model.inputs$sin_mo)) {
+				stop("Time ", time, " exceeds sin_mo length (", length(model.inputs$sin_mo), ") - investigate seasonal data")
+			}
+			
+			sin_mo_value <- model.inputs$sin_mo[time]
+			if (is.na(sin_mo_value) || is.infinite(sin_mo_value)) {
+				stop("sin_mo value is NA or infinite for time ", time, " - investigate seasonal data quality")
+			}
+			
+			# These are deterministic, so just repeat the values
+			sin_mo_samples <- rep(sin_mo_value, Nmc_large)
+			
+			# Assign to array
+			covar_full[, col_index, time] <- sin_mo_samples
+			col_index <- col_index + 1
 		}
 		
-		mois_samples <- rnorm(Nmc_large, mois_mean, mois_sd)
-		if (any(is.na(mois_samples)) || any(is.infinite(mois_samples))) {
-			stop("Moisture sampling produced NA or infinite values - investigate parameters")
+		if ("cos_mo" %in% required_vectors) {
+			if (time > length(model.inputs$cos_mo)) {
+				stop("Time ", time, " exceeds cos_mo length (", length(model.inputs$cos_mo), ") - investigate seasonal data")
+			}
+			
+			cos_mo_value <- model.inputs$cos_mo[time]
+			if (is.na(cos_mo_value) || is.infinite(cos_mo_value)) {
+				stop("cos_mo value is NA or infinite for time ", time, " - investigate seasonal data quality")
+			}
+			
+			# These are deterministic, so just repeat the values
+			cos_mo_samples <- rep(cos_mo_value, Nmc_large)
+			
+			# Assign to array
+			covar_full[, col_index, time] <- cos_mo_samples
+			col_index <- col_index + 1
 		}
-		
-		pH_samples <- rnorm(Nmc_large, pH_value, pH_sd_value)
-		if (any(is.na(pH_samples)) || any(is.infinite(pH_samples))) {
-			stop("pH sampling produced NA or infinite values - investigate parameters")
-		}
-		
-		pC_samples <- rnorm(Nmc_large, pC_value, pC_sd_value)
-		if (any(is.na(pC_samples)) || any(is.infinite(pC_samples))) {
-			stop("pC sampling produced NA or infinite values - investigate parameters")
-		}
-		
-		# These are deterministic, so just repeat the values
-		relEM_samples <- rep(relEM_value, Nmc_large)
-		LAI_samples <- rep(lai_value, Nmc_large)
-		sin_mo_samples <- rep(sin_mo_value, Nmc_large)
-		cos_mo_samples <- rep(cos_mo_value, Nmc_large)
-		
-		# Assign to array
-		covar_full[, 1, time] <- temp_samples
-		covar_full[, 2, time] <- mois_samples
-		covar_full[, 3, time] <- pH_samples
-		covar_full[, 4, time] <- pC_samples
-		covar_full[, 5, time] <- relEM_samples
-		covar_full[, 6, time] <- LAI_samples
-		covar_full[, 7, time] <- sin_mo_samples
-		covar_full[, 8, time] <- cos_mo_samples
 	}
 	
 	# Sample and return
@@ -1183,6 +1267,692 @@ parse_model_id = function(model_id){
 # 	types    = c("value=double(0)"), ## , "para=double(0)"
 # 	pqAvail  = FALSE)))
 #
+
+# =============================================================================
+# RESTART FUNCTIONS FOR MCMC CONTINUATION
+# =============================================================================
+
+#' Find existing chain files for a specific model
+#' 
+#' @param model_name The name of the model (e.g., "cycl_only", "env_cycl")
+#' @param species The species name
+#' @param min_date The minimum date
+#' @param max_date The maximum date
+#' @param use_legacy_covariate Whether the model uses legacy covariate
+#' @return Vector of file paths to existing chain files
+#' @export
+find_chain_files <- function(model_name, species, min_date, max_date, use_legacy_covariate = TRUE) {
+  # Create model ID for file matching
+  legacy_indicator <- ifelse(use_legacy_covariate, "with_legacy_covariate", "without_legacy_covariate")
+  model_id <- paste(model_name, species, min_date, max_date, legacy_indicator, sep = "_")
+  
+  # Look for chain files in the expected output directory
+  output_dir <- here("data", "model_outputs", "logit_beta_regression", model_name)
+  
+  # Pattern to match chain files for this model
+  pattern <- paste0("samples_", model_id, "_chain[0-9]+\\.rds")
+  
+  # Find matching files
+  chain_files <- list.files(output_dir, pattern = pattern, full.names = TRUE, recursive = TRUE)
+  
+  # Also check for samples files without chain numbers
+  alt_pattern <- paste0("samples_", model_id, "\\.rds")
+  alt_files <- list.files(output_dir, pattern = alt_pattern, full.names = TRUE, recursive = TRUE)
+  
+  # Combine and return unique files
+  all_files <- unique(c(chain_files, alt_files))
+  
+  cat("Found", length(all_files), "chain files for model:", model_id, "\n")
+  if (length(all_files) > 0) {
+    cat("Files:", paste(basename(all_files), collapse = ", "), "\n")
+  }
+  
+  return(all_files)
+}
+
+#' Extract final values from existing MCMC chains
+#' 
+#' @param chain_files Vector of file paths to chain files
+#' @param min_ess Minimum effective sample size for parameter inclusion
+#' @param max_rhat Maximum R-hat value for parameter inclusion
+#' @param burnin_proportion Proportion of samples to discard as burnin
+#' @return List containing extracted values and diagnostics
+#' @export
+extract_final_values_from_chains <- function(chain_files, min_ess = 100, max_rhat = 1.1, burnin_proportion = 0.5) {
+  if (length(chain_files) == 0) {
+    stop("No chain files provided")
+  }
+  
+  cat("Extracting final values from", length(chain_files), "chain files\n")
+  
+  # Load and process each chain
+  all_chains <- list()
+  chain_summaries <- list()
+  
+  for (i in seq_along(chain_files)) {
+    file_path <- chain_files[i]
+    cat("  Processing chain file:", basename(file_path), "\n")
+    
+    tryCatch({
+      # Load the chain data
+      chain_data <- readRDS(file_path)
+      
+      # Extract samples matrix
+      if ("samples" %in% names(chain_data)) {
+        samples <- chain_data$samples
+      } else if (is.matrix(chain_data)) {
+        samples <- chain_data
+      } else {
+        cat("    WARNING: Unexpected chain data structure, skipping\n")
+        next
+      }
+      
+      # Apply burnin
+      burnin_samples <- floor(nrow(samples) * burnin_proportion)
+      if (burnin_samples > 0) {
+        samples <- samples[(burnin_samples + 1):nrow(samples), , drop = FALSE]
+        cat("    Applied burnin:", burnin_samples, "samples removed\n")
+      }
+      
+      # Store samples and calculate diagnostics
+      all_chains[[i]] <- samples
+      
+      # Calculate effective sample sizes
+      ess_values <- effectiveSize(as.mcmc(samples))
+      chain_summaries[[i]] <- list(
+        n_samples = nrow(samples),
+        ess_values = ess_values,
+        min_ess = min(ess_values, na.rm = TRUE)
+      )
+      
+      cat("    Samples:", nrow(samples), "ESS range:", round(range(ess_values, na.rm = TRUE), 1), "\n")
+      
+    }, error = function(e) {
+      cat("    ERROR processing chain file:", e$message, "\n")
+    })
+  }
+  
+  if (length(all_chains) == 0) {
+    stop("No valid chains could be processed")
+  }
+  
+  # Combine chains and calculate overall diagnostics
+  combined_samples <- do.call(rbind, all_chains)
+  
+  # Calculate overall ESS and R-hat if multiple chains
+  if (length(all_chains) > 1) {
+    # Convert to mcmc.list for R-hat calculation
+    mcmc_list <- mcmc.list(lapply(all_chains, as.mcmc))
+    rhat_values <- gelman.diag(mcmc_list, multivariate = FALSE)$psrf[, 1]
+    
+    cat("Multiple chains detected, calculating R-hat values\n")
+    cat("R-hat range:", round(range(rhat_values, na.rm = TRUE), 3), "\n")
+  } else {
+    rhat_values <- rep(1.0, ncol(combined_samples))
+    names(rhat_values) <- colnames(combined_samples)
+  }
+  
+  # Extract final values from the last samples
+  final_values <- as.list(combined_samples[nrow(combined_samples), ])
+  
+  # Create result structure
+  result <- list(
+    final_values = final_values,
+    combined_samples = combined_samples,
+    chain_summaries = chain_summaries,
+    diagnostics = list(
+      n_chains = length(all_chains),
+      total_samples = nrow(combined_samples),
+      ess_values = effectiveSize(as.mcmc(combined_samples)),
+      rhat_values = rhat_values,
+      min_ess = min(effectiveSize(as.mcmc(combined_samples)), na.rm = TRUE),
+      max_rhat = max(rhat_values, na.rm = TRUE)
+    )
+  )
+  
+  cat("Extraction complete:\n")
+  cat("  Total samples:", nrow(combined_samples), "\n")
+  cat("  Min ESS:", round(result$diagnostics$min_ess, 1), "\n")
+  cat("  Max R-hat:", round(result$diagnostics$max_rhat, 3), "\n")
+  
+  return(result)
+}
+
+#' Create restart initial values from extracted chain data
+#' 
+#' @param extraction_result Result from extract_final_values_from_chains
+#' @param use_fallback_for_extreme Whether to use fallback values for extreme parameters
+#' @param fallback_strategy Strategy for fallback values ("random", "prior_mean", "conservative")
+#' @return List containing initial values and diagnostic flags
+#' @export
+create_restart_inits <- function(extraction_result, use_fallback_for_extreme = TRUE, fallback_strategy = "conservative") {
+  if (!is.list(extraction_result) || !("final_values" %in% names(extraction_result))) {
+    stop("Invalid extraction_result structure")
+  }
+  
+  cat("Creating restart initial values\n")
+  
+  final_values <- extraction_result$final_values
+  diagnostics <- extraction_result$diagnostics
+  
+  # Define reasonable bounds for each parameter type
+  param_bounds <- list(
+    precision = c(0.1, 1000),      # Gamma distribution bounds
+    rho = c(0.01, 0.99),           # Beta distribution bounds
+    beta = c(-10, 10),              # Normal distribution bounds
+    intercept = c(-10, 10),         # Normal distribution bounds
+    site_effect_sd = c(0.01, 10),  # Gamma distribution bounds
+    legacy_effect = c(-5, 5)        # Normal distribution bounds
+  )
+  
+  # Initialize result structures
+  initial_values <- list()
+  extreme_flags <- logical(0)
+  fallback_used <- logical(0)
+  
+  # Process each parameter
+  for (param_name in names(final_values)) {
+    param_value <- final_values[[param_name]]
+    
+    # Determine parameter type for bounds checking
+    param_type <- "unknown"
+    if (param_name == "precision") param_type <- "precision"
+    else if (param_name == "rho") param_type <- "rho"
+    else if (grepl("^beta\\[", param_name)) param_type <- "beta"
+    else if (param_name == "intercept") param_type <- "intercept"
+    else if (param_name == "site_effect_sd") param_type <- "site_effect_sd"
+    else if (param_name == "legacy_effect") param_type <- "legacy_effect"
+    else if (grepl("^site_effect\\[", param_name)) param_type <- "site_effect"
+    else if (grepl("^Ex\\[", param_name) || grepl("^mu\\[", param_name)) param_type <- "latent"
+    
+    # Check if value is extreme
+    is_extreme <- FALSE
+    if (param_type %in% names(param_bounds)) {
+      bounds <- param_bounds[[param_type]]
+      is_extreme <- param_value < bounds[1] || param_value > bounds[2]
+    } else if (param_type == "latent") {
+      # Latent variables should be between 0 and 1
+      is_extreme <- param_value < 0 || param_value > 1
+    }
+    
+    extreme_flags[param_name] <- is_extreme
+    
+    if (is_extreme && use_fallback_for_extreme) {
+      cat("  WARNING: Parameter", param_name, "has extreme value:", param_value, "\n")
+      
+      # Generate fallback value based on strategy
+      fallback_value <- switch(fallback_strategy,
+        "random" = {
+          if (param_type == "precision") rgamma(1, 2, 0.1)
+          else if (param_type == "rho") runif(1, 0.1, 0.9)
+          else if (param_type == "beta") rnorm(1, 0, 0.1)
+          else if (param_type == "intercept") rnorm(1, -2, 0.5)
+          else if (param_type == "site_effect_sd") runif(1, 0.1, 1)
+          else if (param_type == "legacy_effect") rnorm(1, 0, 0.1)
+          else if (param_type == "site_effect") rnorm(1, 0, 0.1)
+          else if (param_type == "latent") runif(1, 0.1, 0.9)
+          else param_value  # Keep original if unknown type
+        },
+        "prior_mean" = {
+          if (param_type == "precision") 50
+          else if (param_type == "rho") 0.5
+          else if (param_type == "beta") 0
+          else if (param_type == "intercept") -2
+          else if (param_type == "site_effect_sd") 0.5
+          else if (param_type == "legacy_effect") 0
+          else if (param_type == "site_effect") 0
+          else if (param_type == "latent") 0.3
+          else param_value
+        },
+        "conservative" = {
+          if (param_type == "precision") 50
+          else if (param_type == "rho") 0.3
+          else if (param_type == "beta") 0.01
+          else if (param_type == "intercept") -2
+          else if (param_type == "site_effect_sd") 0.5
+          else if (param_type == "legacy_effect") 0
+          else if (param_type == "site_effect") 0
+          else if (param_type == "latent") 0.3
+          else param_value
+        }
+      )
+      
+      cat("    Using fallback value:", fallback_value, "(", fallback_strategy, "strategy)\n")
+      initial_values[[param_name]] <- fallback_value
+      fallback_used[param_name] <- TRUE
+      
+    } else {
+      # Use the original value
+      initial_values[[param_name]] <- param_value
+      fallback_used[param_name] <- FALSE
+    }
+  }
+  
+  # Create result
+  result <- list(
+    initial_values = initial_values,
+    extreme_flags = extreme_flags,
+    fallback_used = fallback_used,
+    summary = list(
+      n_parameters = length(initial_values),
+      n_extreme = sum(extreme_flags),
+      n_fallback = sum(fallback_used),
+      fallback_strategy = fallback_strategy
+    )
+  )
+  
+  cat("Restart initial values created successfully:\n")
+  cat("  Parameters:", result$summary$n_parameters, "\n")
+  cat("  Extreme values detected:", result$summary$n_extreme, "\n")
+  cat("  Fallback values used:", result$summary$n_fallback, "\n")
+  
+  return(result)
+}
+
+# =============================================================================
+# CORE INFRASTRUCTURE HELPER FUNCTIONS
+# Universal functions for all microbial forecasting model types
+# =============================================================================
+
+#' @title Load Required Packages
+#' @description Load all required packages for microbial forecasting models
+#' @export
+load_required_packages <- function() {
+    cat("Loading required packages...\n")
+    required_packages <- c("nimble", "parallel", "foreach", "doParallel", "here", "tidyverse", "coda", "devtools")
+    for (pkg in required_packages) {
+        if (!require(pkg, character.only = TRUE)) {
+            install.packages(pkg)
+            library(pkg, character.only = TRUE)
+        }
+    }
+    
+    # Load microbialForecast package
+    if (!require(microbialForecast)) {
+        devtools::load_all("microbialForecast")
+        cat("microbialForecast package loaded from library\n")
+    } else {
+        cat("microbialForecast package loaded from library\n")
+    }
+    cat("All required packages loaded successfully\n")
+}
+
+#' @title Create Directories Safely
+#' @description Create directories with error handling and fallback options
+#' @param base_path Base directory path to create
+#' @param subdirs Optional vector of subdirectories to create
+#' @export
+create_directories_safe <- function(base_path, subdirs = NULL) {
+    tryCatch({
+        if (!dir.exists(base_path)) {
+            dir.create(base_path, recursive = TRUE)
+            cat("✓ Created directory:", base_path, "\n")
+        }
+        
+        if (!is.null(subdirs)) {
+            for (subdir in subdirs) {
+                full_path <- file.path(base_path, subdir)
+                if (!dir.exists(full_path)) {
+                    dir.create(full_path, recursive = TRUE)
+                    cat("✓ Created subdirectory:", full_path, "\n")
+                }
+            }
+        }
+    }, error = function(e) {
+        cat("✗ Failed to create directories:", e$message, "\n")
+        stop("Directory creation failed")
+    })
+}
+
+#' @title Create Consistent Model IDs
+#' @description Create consistent model IDs across all model types
+#' @param model_name Name of the model (e.g., "cycl_only", "env_cycl", "clr", "dirichlet")
+#' @param species Species name
+#' @param min_date Minimum date in format YYYYMMDD
+#' @param max_date Maximum date in format YYYYMMDD
+#' @param use_legacy_covariate Whether legacy covariate is used
+#' @param model_type Type of model (default: "beta_regression", also supports "clr", "dirichlet")
+#' @export
+create_model_id <- function(model_name, species, min_date, max_date, use_legacy_covariate, model_type = "beta_regression") {
+    legacy_indicator <- ifelse(use_legacy_covariate, "with_legacy_covariate", "without_legacy_covariate")
+    paste(model_name, species, min_date, max_date, legacy_indicator, model_type, sep = "_")
+}
+
+#' @title Save Checkpoints Safely
+#' @description Save checkpoints with fallback handling for all model types
+#' @param samples MCMC samples to save
+#' @param iterations Number of iterations completed
+#' @param loop Loop number
+#' @param output_dir Output directory path
+#' @param model_id Model identifier
+#' @param chain_no Chain number
+#' @param checkpoint_type Type of checkpoint (e.g., "initial", "loop1", "final")
+#' @param model_type Type of model (default: "beta_regression")
+#' @export
+save_checkpoint_safe <- function(samples, iterations, loop, output_dir, model_id, chain_no, checkpoint_type, model_type = "beta_regression") {
+    checkpoint_file <- file.path(output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_", checkpoint_type, ".rds"))
+    
+    tryCatch({
+        saveRDS(list(samples = samples, iterations = iterations, loop = loop), checkpoint_file)
+        cat("  ✓ Checkpoint saved:", checkpoint_type, "(", nrow(samples), " iterations)\n")
+        cat("  ✓ Checkpoint file:", checkpoint_file, "\n")
+    }, error = function(e) {
+        cat("  ✗ Failed to save checkpoint:", e$message, "\n")
+        cat("  Attempting to save to current directory as fallback...\n")
+        
+        # Fallback: save to current directory
+        fallback_checkpoint <- paste0("checkpoint_", model_id, "_chain", chain_no, "_", checkpoint_type, "_FALLBACK.rds")
+        tryCatch({
+            saveRDS(list(samples = samples, iterations = iterations, loop = loop), fallback_checkpoint)
+            cat("  ✓ Fallback checkpoint saved:", fallback_checkpoint, "\n")
+        }, error = function(e2) {
+            cat("  ✗ CRITICAL: Failed to save even fallback checkpoint:", e2$message, "\n")
+        })
+    })
+}
+
+#' @title Create Progress Files
+#' @description Create progress files with error handling for all model types
+#' @param output_dir Output directory path
+#' @param model_id Model identifier
+#' @param chain_no Chain number
+#' @param init_iter Initial iterations completed
+#' @param model_type Type of model (default: "beta_regression")
+#' @return Path to the created progress file
+#' @export
+create_progress_file <- function(output_dir, model_id, chain_no, init_iter, model_type = "beta_regression") {
+    progress_file <- file.path(output_dir, paste0("progress_", model_id, "_chain", chain_no, ".txt"))
+    tryCatch({
+        writeLines(paste("Started at:", Sys.time(), "\nInitial iterations:", init_iter, "\nStatus: Running"), progress_file)
+        cat("  ✓ Progress file created:", progress_file, "\n")
+    }, error = function(e) {
+        cat("  ✗ Failed to create progress file:", e$message, "\n")
+    })
+    return(progress_file)  # Return the path for later use
+}
+
+#' @title Update Progress Files
+#' @description Update progress files with error handling for all model types
+#' @param progress_file Path to the progress file
+#' @param total_iterations Total iterations completed
+#' @param loop_counter Current loop number
+#' @export
+update_progress_file <- function(progress_file, total_iterations, loop_counter) {
+    tryCatch({
+        writeLines(paste("Updated at:", Sys.time(), "\nTotal iterations:", total_iterations, "\nLoop:", loop_counter, "\nStatus: Running"), progress_file)
+    }, error = function(e) {
+        cat("  ✗ Failed to update progress file:", e$message, "\n")
+    })
+}
+
+#' @title Create Stable Beta Regression Models
+#' @description Create stable Nimble models for beta regression with proper priors and structure
+#' @param model_name Name of the model ("cycl_only", "env_cycl", "env_cov")
+#' @param use_legacy_covariate Whether to include legacy covariate
+#' @return Nimble model code
+#' @export
+create_stable_model <- function(model_name, use_legacy_covariate = TRUE) {
+    cat("Building Nimble model:", model_name, "\n")
+    
+    if (model_name == "cycl_only" && use_legacy_covariate) {
+        modelCode <- nimble::nimbleCode({
+            # PRIORS - Weak for main parameters, more informative for site effects
+            precision ~ dgamma(0.001, 0.001)        # Jeffreys prior - very weak
+            rho ~ dbeta(1, 1)                       # Uniform prior - very weak
+            intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak
+            legacy_effect ~ dnorm(0, sd = 10)       # Very wide normal - very weak
+            
+            # More informative priors for site effects
+            site_effect_sd ~ dgamma(2, 20)
+            for (k in 1:N.site) {
+                site_effect[k] ~ dnorm(0, sd = site_effect_sd)
+            }
+            
+            # Beta parameters for seasonal predictors - weak priors
+            for (b in 1:2) {
+                beta[b] ~ dnorm(0, sd = 10)         # Very wide normal - very weak
+            }
+            
+            # PROCESS MODEL - LOG transformation approach
+            for (p in 1:N.plot) {
+                # Initial condition - Single time point
+                for (t in plot_start[p]) {
+                    Ex[p, t] ~ dunif(0.1, 0.9)
+                    mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+                }
+                
+                # Dynamic evolution - LOG transformation for numerical stability
+                for (t in plot_index[p]:N.date) {
+                    # Use log transformation for numerical stability
+                    log_Ex_prev[p, t] <- log(max(0.001, mu[p, t - 1]))  # Safe log with bounds
+                    
+                    # Direct linear predictor with seasonal terms only
+                    log_Ex_mean[p, t] <- rho * log_Ex_prev[p, t] +
+                        beta[1] * sin_mo[t] + beta[2] * cos_mo[t] +
+                        site_effect[plot_site_num[p]] +
+                        legacy_effect * legacy[p, t] +
+                        intercept
+                    
+                    # Use exp() instead of ilogit()
+                    Ex[p, t] <- max(0.001, min(0.999, exp(log_Ex_mean[p, t])))
+                    mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+                }
+            }
+            
+            # OBSERVATION MODEL
+            for (i in 1:N.core) {
+                y[i, 1] ~ dbeta(shape1 = mu[plot_num[i], timepoint[i]] * precision, 
+                                shape2 = (1 - mu[plot_num[i], timepoint[i]]) * precision)
+            }
+        })
+    } else if (model_name == "env_cycl" && use_legacy_covariate) {
+        modelCode <- nimble::nimbleCode({
+            # 🎯 PROVEN HYBRID PRIORS - Weak for main parameters, stable for site effects
+            precision ~ dgamma(0.001, 0.001)        # Jeffreys prior - very weak
+            rho ~ dbeta(1, 1)                       # Uniform prior - very weak
+            intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak
+            legacy_effect ~ dnorm(0, sd = 10)       # Very wide normal - very weak
+            
+            # STABLE PRIORS for site effects
+            site_effect_sd ~ dgamma(2, 20)     # More informative: dgamma(2, 20)
+            for (k in 1:N.site) {
+                site_effect[k] ~ dnorm(0, sd = site_effect_sd)
+            }
+            
+            # Beta parameters for environmental and seasonal predictors - weak priors
+            for (b in 1:8) {
+                beta[b] ~ dnorm(0, sd = 10)         # Very wide normal - very weak
+            }
+            
+            # PROCESS MODEL - LOG transformation approach 
+            for (p in 1:N.plot) {
+                # Initial condition - Single time point
+                for (t in plot_start[p]) {
+                    Ex[p, t] ~ dunif(0.1, 0.9)
+                    mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+                }
+                
+                # Dynamic evolution - LOG transformation for numerical stability
+                for (t in plot_index[p]:N.date) {
+                    # Use log transformation
+                    log_Ex_prev[p, t] <- log(max(0.001, mu[p, t - 1]))  # Safe log with bounds
+                    
+                    # Direct linear predictor with all 6 environmental predictors
+                    log_Ex_mean[p, t] <- rho * log_Ex_prev[p, t] +
+                        beta[1] * sin_mo[t] + beta[2] * cos_mo[t] +  # Seasonal terms
+                        beta[3] * temp[plot_site_num[p], t] + beta[4] * mois[plot_site_num[p], t] +  # Site-level environmental terms
+                        beta[5] * pH[p, t] + beta[6] * pC[p, t] +  # Plot-level environmental terms
+                        beta[7] * relEM[p, t] + beta[8] * LAI[plot_site_num[p], t] +  # Mixed level terms
+                        site_effect[plot_site_num[p]] +  # Site effects
+                        legacy_effect * legacy[p, t] +  # Legacy covariate
+                        intercept  # Baseline abundance
+                    
+                    # Use exp() instead of ilogit()
+                    Ex[p, t] <- max(0.001, min(0.999, exp(log_Ex_mean[p, t])))
+                    mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+                }
+            }
+            
+            # OBSERVATION MODEL
+            for (i in 1:N.core) {
+                y[i, 1] ~ dbeta(shape1 = mu[plot_num[i], timepoint[i]] * precision, 
+                                shape2 = (1 - mu[plot_num[i], timepoint[i]]) * precision)
+            }
+        })
+    } else if (model_name == "env_cov" && use_legacy_covariate) {
+        modelCode <- nimble::nimbleCode({
+            # 🎯 PROVEN HYBRID PRIORS - Weak for main parameters, stable for site effects
+            precision ~ dgamma(0.001, 0.001)        # Jeffreys prior - very weak, proven
+            rho ~ dbeta(1, 1)                       # Uniform prior - very weak, proven
+            intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak, proven
+            legacy_effect ~ dnorm(0, sd = 10)       # Very wide normal - very weak, proven
+            
+            # STABLE PRIORS for site effects (proven to work)
+            site_effect_sd ~ dgamma(2, 20)          # Original: dgamma(2, 20) - stable, proven
+            for (k in 1:N.site) {
+                site_effect[k] ~ dnorm(0, sd = site_effect_sd)
+            }
+            
+            # Beta parameters for environmental predictors only - weak priors
+            for (b in 1:6) {
+                beta[b] ~ dnorm(0, sd = 10)         # Very wide normal - very weak, proven
+            }
+            
+            # PROCESS MODEL - LOG transformation approach 
+            for (p in 1:N.plot) {
+                # Initial condition - Single time point
+                for (t in plot_start[p]) {
+                    Ex[p, t] ~ dunif(0.1, 0.9)
+                    mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+                }
+                
+                # Dynamic evolution - LOG transformation for numerical stability
+                for (t in plot_index[p]:N.date) {
+                    # Use log transformation for numerical stability
+                    log_Ex_prev[p, t] <- log(max(0.001, mu[p, t - 1]))  # Safe log with bounds
+                    
+                    # Direct linear predictor with environmental covariates only (no seasonal)
+                    log_Ex_mean[p, t] <- rho * log_Ex_prev[p, t] +
+                        beta[1] * temp[plot_site_num[p], t] +
+                        beta[2] * mois[plot_site_num[p], t] +
+                        beta[3] * pH[p, t] +
+                        beta[4] * pC[p, t] +
+                        beta[5] * relEM[p, t] +
+                        beta[6] * LAI[p, t] +
+                        site_effect[plot_site_num[p]] +  # Site effects
+                        legacy_effect * legacy[p, t] +  # Legacy covariate
+                        intercept  # Baseline abundance
+                    
+                    # Use exp() instead of ilogit()
+                    Ex[p, t] <- max(0.001, min(0.999, exp(log_Ex_mean[p, t])))
+                    mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+                }
+            }
+            
+            # OBSERVATION MODEL
+            for (i in 1:N.core) {
+                y[i, 1] ~ dbeta(shape1 = mu[plot_num[i], timepoint[i]] * precision, 
+                                shape2 = (1 - mu[plot_num[i], timepoint[i]]) * precision)
+            }
+        })
+    } else {
+        stop("Unsupported model combination: ", model_name, " with use_legacy_covariate=", use_legacy_covariate)
+    }
+    
+    return(modelCode)
+}
+
+#' @title Create Stable Initial Values for Beta Regression
+#' @description Create stable initial values for beta regression models with proper parameter structure
+#' @param constants Model constants including N.plot, N.date, N.site
+#' @param model_name Name of the model ("cycl_only", "env_cycl", "env_cov")
+#' @param model_data Optional model data (not used in current implementation)
+#' @return List of initial values for all model parameters
+#' @export
+create_stable_inits <- function(constants, model_name, model_data = NULL) {
+    cat("Creating STABLE initial values for", model_name, "...\n")
+    
+    # Determine number of beta parameters based on model type
+    if (model_name == "env_cycl") {
+        n_beta <- 8
+    } else if (model_name == "env_cov") {
+        n_beta <- 6
+    } else {
+        n_beta <- 2  # cycl_only
+    }
+    
+    # Create initial beta values (matching working approach exactly)
+    beta_init <- c(0.01, 0.01)  # Start with seasonal coefficients very close to zero
+    if (n_beta > 2) {
+        for (i in 1:(n_beta - 2)) {  # Additional environmental coefficients
+            beta_init <- c(beta_init, 0.01)  # Start environmental coefficients very close to zero
+        }
+    }
+
+    inits <- list(
+        precision = 50,  # Start with moderate precision
+        rho = 0.3,      # Start rho at 0.3 (moderate persistence)
+        beta = beta_init,  # Seasonal + environmental coefficients
+        site_effect_sd = 0.5,  # Start with moderate site effect SD
+        site_effect = rnorm(constants$N.site, 0, 0.1),  # Small random initial values
+        intercept = -2,  # Start intercept at -2
+        legacy_effect = 0,  # Start legacy effect at 0
+        Ex = matrix(0.3, nrow = constants$N.plot, ncol = constants$N.date),  # Start with moderate abundance
+        mu = matrix(0.3, nrow = constants$N.plot, ncol = constants$N.date)   # Start with moderate abundance
+    )
+    
+    cat("  ✓ Initial values created successfully (matching working approach exactly)\n")
+    cat("    precision:", inits$precision, "\n")
+    cat("    rho:", inits$rho, "\n")
+    cat("    beta parameters:", n_beta, "\n")
+    cat("    site effects:", constants$N.site, "\n")
+    cat("    Ex matrix dimensions:", dim(inits$Ex), "\n")
+    cat("    mu matrix dimensions:", dim(inits$mu), "\n")
+    
+    return(inits)
+}
+
+#' @title Check for Extreme Parameter Values
+#' @description Check if parameter values are extreme or outside reasonable bounds
+#' @param param_values Named vector of parameter values to check
+#' @return Logical vector indicating which values are extreme
+#' @export
+check_extreme_values <- function(param_values) {
+  if (is.null(param_values) || length(param_values) == 0) {
+    return(logical(0))
+  }
+  
+  # Check for NA, NaN, Inf values
+  extreme_flags <- is.na(param_values) | is.nan(param_values) | is.infinite(param_values)
+  
+  # Check for extreme parameter-specific values
+  param_names <- names(param_values)
+  
+  for (i in seq_along(param_names)) {
+    param_name <- param_names[i]
+    param_value <- param_values[i]
+    
+    if (!extreme_flags[i]) {  # Only check if not already flagged
+      if (grepl("precision", param_name)) {
+        extreme_flags[i] <- param_value < 0.001 || param_value > 1000
+      } else if (grepl("rho", param_name)) {
+        extreme_flags[i] <- param_value < 0.001 || param_value > 0.999
+      } else if (grepl("beta", param_name)) {
+        extreme_flags[i] <- param_value < -50 || param_value > 50
+      } else if (grepl("site_effect", param_name)) {
+        extreme_flags[i] <- param_value < -10 || param_value > 10
+      } else if (grepl("intercept", param_name)) {
+        extreme_flags[i] <- param_value < -20 || param_value > 20
+      } else if (grepl("legacy_effect", param_name)) {
+        extreme_flags[i] <- param_value < -20 || param_value > 20
+      } else if (grepl("site_effect_sd", param_name)) {
+        extreme_flags[i] <- param_value < 0.001 || param_value > 10
+      }
+    }
+  }
+  
+  return(extreme_flags)
+}
 
 
 

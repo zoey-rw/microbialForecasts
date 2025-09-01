@@ -1,6 +1,8 @@
 # Combine chains from each taxon model, and create basic summary stats
-#source("../../source.R")
-source("source.R")
+setwd("/Users/zoeywerbin/Documents/microbialForecasts/analysis/model_analysis/")
+
+source("../../source.R")
+#source("source.R")
 
 # Define model types and time periods for logit beta regression
 model_types <- c("cycl_only", "env_cycl", "env_cov")
@@ -11,10 +13,10 @@ cat("Model types:", paste(model_types, collapse = ", "), "\n")
 cat("Time periods:", paste(time_periods, collapse = ", "), "\n\n")
 
 # Get all available model outputs from logit_beta_regression directory
-base_path <- here("data/model_outputs/logit_beta_regression")
+base_path <- here("data/model_outputs/logit_beta_regression/env_cycl")
 file.list <- list.files(path = base_path,
                        pattern = "_chain",
-                       recursive = TRUE,
+                       recursive = FALSE,
                        full.names = TRUE)
 
 # Subset to files larger than 100KB

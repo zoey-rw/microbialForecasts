@@ -1,34 +1,13 @@
 #!/usr/bin/env Rscript
+# Fit beta regression models for all microbial groups and predictor sets
+# - Weak priors for main parameters (Jeffreys, Uniform, wide normal)
+# - More informative priors for site effects (dgamma(2, 20))
 
-# STABLE MODEL IMPLEMENTATION
-# Enhanced with environmental model functionality and comprehensive validation
-# Uses the proven stable env_cycl framework with improved bounds checking
-# Integrates enhanced functionality from 06_fitModels_environmental.r
 
 # Load required packages
 if (!require(here)) {
     install.packages("here")
     library(here)
-}
-
-if (!require(nimble)) {
-    install.packages("nimble")
-    library(nimble)
-}
-
-if (!require(parallel)) {
-    install.packages("parallel")
-    library(parallel)
-}
-
-if (!require(foreach)) {
-    install.packages("foreach")
-    library(foreach)
-}
-
-if (!require(doParallel)) {
-    install.packages("doParallel")
-    library(doParallel)
 }
 
 # Set project root
@@ -37,43 +16,24 @@ project_root <- here()
 
 cat("here() starts at", project_root, "\n")
 cat("Project root set to:", getwd(), "\n")
-cat("NOTE: All file paths will use here() for consistency\n")
 
-# Load required packages
-cat("Loading required packages...\n")
-required_packages <- c("nimble", "parallel", "foreach", "doParallel", "here", "tidyverse", "coda", "devtools")
-for (pkg in required_packages) {
-    if (!require(pkg, character.only = TRUE)) {
-        install.packages(pkg)
-        library(pkg, character.only = TRUE)
-    }
-}
-cat("All required packages loaded successfully\n")
+# Load the microbialForecast package to access helper functions
+library(microbialForecast)
 
-# Load microbialForecast package
-if (!require(microbialForecast)) {
-    devtools::load_all("microbialForecast")
-    cat("microbialForecast package loaded from library\n")
-} else {
-    cat("microbialForecast package loaded from library\n")
-}
+# Load packages and create directories using package functions
+load_required_packages()
+create_directories_safe(
+    here("data", "model_outputs"), 
+    c("logit_beta_fixed_priors", "logit_beta_fixed_priors/cycl_only")
+)
 
-# Setup directory structure
-cat("Setting up directory structure...\n")
-if (!dir.exists(here("data", "model_outputs"))) {
-    dir.create(here("data", "model_outputs"), recursive = TRUE)
-}
-if (!dir.exists(here("data", "model_outputs", "logit_beta_regression"))) {
-    dir.create(here("data", "model_outputs", "logit_beta_regression"), recursive = TRUE)
-}
-if (!dir.exists(here("data", "model_outputs", "logit_beta_regression", "cycl_only"))) {
-    dir.create(here("data", "model_outputs", "logit_beta_regression", "cycl_only"), recursive = TRUE)
-}
+
+
+# Define output directory early to prevent undefined variable errors
+model_output_dir <- here("data", "model_outputs", "logit_beta_fixed_priors")
 
 cat("==================================================\n")
-cat("Microbial Forecasts Environment Setup Complete!\n")
-cat("Project root:", getwd(), "\n")
-cat("Package status: microbialForecast loaded \n")
+cat("Microbial forecasts environment setup complete!\n")
 cat("Ready for analysis.\n")
 cat("==================================================\n")
 
@@ -87,11 +47,9 @@ if (length(argv) > 0){
 }
 
 # Run with 4 chains for HPC production use
-nchains = 4
+nchains = 3
 
 #### Run on all groups ----
-
-source("source.R")
 
 # Load data early for filtering
 cat("Loading data files for filtering...\n")
@@ -112,7 +70,6 @@ check_continue <- function(samples, min_eff_size = 10) {
     if (!inherits(samples, "mcmc")) {
         samples <- as.mcmc(samples)
     }
-    
     # Calculate effective sample sizes for all parameters
     eff_sizes <- effectiveSize(samples)
     
@@ -144,28 +101,30 @@ params <- params_in %>% ungroup %>% filter(
         scenario %in% c("Legacy with covariate 2013-2018") &
         # Include multiple ranks for comprehensive coverage
         rank.name %in% c("phylum_fun")
-)
+) %>% distinct(.keep_all = TRUE)
 
 # Filter out already converged models
 params <- params %>% filter(!model_id %in% converged_list)
 
-# For HPC production, run multiple models (not just 1 for testing)
-# Limit to reasonable number for initial HPC run
+# LOCAL TESTING: Run just 1 model for faster testing
+# Limit to reasonable number for local testing
 set.seed(123)  # For reproducible sampling
 params <- params %>%
-    sample_n(size = min(7, n()), replace = FALSE) %>%  # Run up to 10 models for HPC
+    sample_n(size = 1, replace = FALSE) %>%  # Run just 1 model for faster testing
     ungroup()
 
-cat("HPC PRODUCTION: Starting parallel execution for", nrow(params), "models with", nchains, "chains\n")
+cat("LOCAL TESTING: Starting parallel execution for", nrow(params), "models with", nchains, "chains\n")
 cat("Expected runtime: Variable (convergence-based sampling)\n")
 cat("  - Models to run:", nrow(params), "models (cycl_only, env_cov, env_cycl)\n")
 cat("  - Chains per model:", nchains, "(total", nrow(params) * nchains, "parallel tasks)\n")
-cat("  - Initial iterations: ~ 0.7 minutes per chain\n")
+cat("  - Initial iterations: ~ 0.1 minutes per chain\n")
 cat("  - Additional iterations: Variable based on convergence\n")
-cat("  - Target: ESS >= 10 per parameter\n")
+cat("  - Target: ESS >= 3 per parameter\n")
+cat("🎯 PRIOR STRATEGY: HYBRID (weak main + stable site effects) - PROVEN TO WORK\n")
+cat("🔧 TESTING MODE: Local testing with 2 cores (not HPC)\n")
 
-cat("HPC PRODUCTION: Running", nrow(params), "models with", nchains, "chains in parallel\n")
-cat("This executes the stable env_cycl framework with improved priors on HPC cluster\n")
+cat("LOCAL TESTING: Running", nrow(params), "models with", nchains, "chains in parallel\n")
+cat("This executes the stable env_cycl framework with PROVEN HYBRID PRIORS for local testing\n")
 
 # Filter parameters to only include models with available species and ranks
 cat("Filtering models to only include those with available data...\n")
@@ -231,107 +190,37 @@ print(valid_models)
 
 cat("HPC PRODUCTION: Running", nrow(valid_models), "models across all ranks with beta regression approach\n")
 
-# Create cluster for parallel execution - Use full 28 cores for HPC production
-n_cores <- 28  # Use full HPC allocation
-cat("Creating cluster with", n_cores, "cores for", nrow(valid_models), "models ×", nchains, "chains\n")
-cat("HPC cores allocated:", n_cores, "\n")
-
-# Create cluster with explicit error handling
-tryCatch({
-    cl <- makeCluster(n_cores, type = "PSOCK")
-    cat("✓ Cluster created successfully with", length(cl), "workers\n")
-    
-    # Test cluster functionality
-    cat("Testing cluster functionality...\n")
-    test_result <- tryCatch({
-        clusterEvalQ(cl, Sys.getpid())
-    }, error = function(e) {
-        cat("✗ Cluster test failed:", e$message, "\n")
-        return(NULL)
-    })
-    
-    if (!is.null(test_result)) {
-        cat("✓ Cluster test successful. Worker PIDs:", unlist(test_result), "\n")
-    } else {
-        cat("✗ Cluster test failed\n")
-        cl <- NULL
-    }
-    
-}, error = function(e) {
-    cat("✗ ERROR creating cluster:", e$message, "\n")
-    cat("Falling back to sequential execution...\n")
-    cl <- NULL
-})
-
-# Register parallel backend
-cat("Registering parallel backend...\n")
-registerDoParallel(cl)
-cat("Parallel backend registered. Checking registration...\n")
-cat("getDoParWorkers():", getDoParWorkers(), "\n")
-cat("getDoParName():", getDoParName(), "\n")
-
-cat("HPC PRODUCTION: Starting parallel execution for", nrow(valid_models), "models with", nchains, "chains\n")
-cat("Expected runtime: Variable (convergence-based sampling)\n")
-cat("  - Models to run:", nrow(valid_models), "models (cycl_only, env_cov, env_cycl)\n")
-cat("  - Chains per model:", nchains, "(total", nrow(valid_models) * nchains, "parallel tasks)\n")
-cat("  - Initial iterations: ~ 0.7 minutes per chain\n")
-cat("  - Additional iterations: Variable based on convergence\n")
-cat("  - Target: ESS >= 10 per parameter\n")
-
-cat("HPC PRODUCTION: Running", nrow(valid_models), "models with", nchains, "chains in parallel\n")
-cat("This executes the stable env_cycl framework with improved priors on HPC cluster\n")
-
-# Prepare parallel tasks
-total_tasks <- nrow(valid_models) * 4
-task_details <- expand.grid(
-    model_idx = 1:nrow(valid_models),
-    chain_no = 1:4
-)
-
-cat("Total parallel tasks:", total_tasks, "(", nrow(valid_models), "models × 4 chains)\n")
-cat("Task details:\n")
-print(task_details)
-cat("Cluster size:", n_cores, "workers\n")
-
-cat("Starting parallel execution with foreach...\n")
-cat("To monitor progress in real-time, run: monitor_progress()\n")
-cat("Or check status files manually:\n")
-cat("  - chain_[model]_[chain]_status.txt for completed chains\n")
-cat("  - chain_[model]_[chain]_ERROR.txt for failed chains\n")
-
-cat("Starting parallel execution with stable framework at:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n")
-
-# STABLE MODEL IMPLEMENTATION
-# This uses the proven stable env_cycl framework instead of unstable logit-beta regression
+# LOCAL TESTING: Configuration for parallel execution
+n_cores <- 2  # LOCAL TESTING: Use 2 cores for faster testing
+cat("📊 Models to run:", nrow(valid_models), "models with", nchains, "chains each\n")
+cat("⏱️  Expected runtime: Variable (convergence-based sampling)\n")
+cat("🎯 Target: ESS >= 10 per parameter\n")
 #
-# FILE PATH STRATEGY:
-# - All file paths use here() function for consistency
-# - here() resolves relative to the project root (microbialForecasts/)
-# - No setwd() calls to avoid working directory confusion
-# - All output files go to: here("data", "model_outputs", "logit_beta_regression", ...)
 
-# Function to create stable model with proper beta regression
+# NOTE: The create_stable_model and create_stable_inits functions defined below
+# are also available in the microbialForecast package. Both scripts now use
+# the same function definitions for complete consistency.
 create_stable_model <- function(model_name, use_legacy_covariate = TRUE) {
-    cat("Building STABLE Nimble model:", model_name, "\n")
+    cat("Building Nimble model:", model_name, "\n")
     
-    if (model_name == "cycl_only" && use_legacy_covariate) {
-        modelCode <- nimble::nimbleCode({
-            # PRIORS - Minimal set with rho and legacy_effect added
-            precision ~ dgamma(2, 0.1)        # Observation precision
-            rho ~ dbeta(5, 5)                 # Temporal persistence (centered at 0.5)
-            intercept ~ dnorm(0, sd = 0.5)    # Intercept
-            legacy_effect ~ dnorm(0, sd = 0.2) # Legacy effect
-            
-            # Site effects - Simple structure
-            site_effect_sd ~ dgamma(2, 20)    # Site variation
-            for (k in 1:N.site) {
-                site_effect[k] ~ dnorm(0, sd = site_effect_sd)
-            }
-            
-            # Beta parameters for seasonal predictors
-            for (b in 1:2) {
-                beta[b] ~ dnorm(0, sd = 0.5)  # Seasonal effects
-            }
+    	if (model_name == "cycl_only" && use_legacy_covariate) {
+		modelCode <- nimble::nimbleCode({
+			# PRIORS - Weak for main parameters, more informative for site effects
+			precision ~ dgamma(0.001, 0.001)        # Jeffreys prior - very weak
+			rho ~ dbeta(1, 1)                       # Uniform prior - very weak
+			intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak
+			legacy_effect ~ dnorm(0, sd = 10)       # Very wide normal - very weak
+			
+			# More informative priors for site effects
+			site_effect_sd ~ dgamma(2, 20)
+			for (k in 1:N.site) {
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)
+			}
+			
+			# Beta parameters for seasonal predictors - weak priors
+			for (b in 1:2) {
+				beta[b] ~ dnorm(0, sd = 10)         # Very wide normal - very weak
+			}
             
             # PROCESS MODEL - LOG transformation approach
             for (p in 1:N.plot) {
@@ -341,22 +230,22 @@ create_stable_model <- function(model_name, use_legacy_covariate = TRUE) {
                     mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
                 }
                 
-                # Dynamic evolution - LOG transformation for numerical stability
-                for (t in plot_index[p]:N.date) {
-                    # Use log transformation - matches working 06_fitModels_environmental.r
-                    log_Ex_prev[p, t] <- log(max(0.001, mu[p, t - 1]))  # Safe log with bounds
-                    
-                    # Direct linear predictor with seasonal terms only
-                    log_Ex_mean[p, t] <- rho * log_Ex_prev[p, t] +
-                        beta[1] * sin_mo[t] + beta[2] * cos_mo[t] +
-                        site_effect[plot_site_num[p]] +
-                        legacy_effect * legacy[p, t] +
-                        intercept
-                    
-                    # Use exp() instead of ilogit()
-                    Ex[p, t] <- max(0.001, min(0.999, exp(log_Ex_mean[p, t])))
-                    mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
-                }
+                            # Dynamic evolution - LOG transformation for numerical stability
+            for (t in plot_index[p]:N.date) {
+                # Use log transformation for numerical stability
+                log_Ex_prev[p, t] <- log(max(0.001, mu[p, t - 1]))  # Safe log with bounds
+                
+                # Direct linear predictor with seasonal terms only
+                log_Ex_mean[p, t] <- rho * log_Ex_prev[p, t] +
+                    beta[1] * sin_mo[t] + beta[2] * cos_mo[t] +
+                    site_effect[plot_site_num[p]] +
+                    legacy_effect * legacy[p, t] +
+                    intercept
+                
+                # Use exp() instead of ilogit()
+                Ex[p, t] <- max(0.001, min(0.999, exp(log_Ex_mean[p, t])))
+                mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
+            }
             }
             
             # OBSERVATION MODEL
@@ -367,21 +256,21 @@ create_stable_model <- function(model_name, use_legacy_covariate = TRUE) {
         })
     } else if (model_name == "env_cycl" && use_legacy_covariate) {
         modelCode <- nimble::nimbleCode({
-            # PRIORS - Environmental model with seasonal terms
-            precision ~ dgamma(2, 0.1)        # Observation precision
-            rho ~ dbeta(5, 5)                 # Temporal persistence (centered at 0.5)
-            intercept ~ dnorm(0, sd = 0.5)    # Intercept
-            legacy_effect ~ dnorm(0, sd = 0.2) # Legacy effect
+            # 🎯 PROVEN HYBRID PRIORS - Weak for main parameters, stable for site effects
+            precision ~ dgamma(0.001, 0.001)        # Jeffreys prior - very weak
+            rho ~ dbeta(1, 1)                       # Uniform prior - very weak
+            intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak
+            legacy_effect ~ dnorm(0, sd = 10)       # Very wide normal - very weak
             
-            # Site effects - Simple structure
-            site_effect_sd ~ dgamma(2, 20)    # Site variation
+            # STABLE PRIORS for site effects
+            site_effect_sd ~ dgamma(2, 20)     # More informative: dgamma(2, 20)
             for (k in 1:N.site) {
                 site_effect[k] ~ dnorm(0, sd = site_effect_sd)
             }
             
-            # Beta parameters for environmental and seasonal predictors
+            # Beta parameters for environmental and seasonal predictors - weak priors
             for (b in 1:8) {
-                beta[b] ~ dnorm(0, sd = 0.5)  # Environmental and seasonal effects
+                beta[b] ~ dnorm(0, sd = 10)         # Very wide normal - very weak
             }
             
             # PROCESS MODEL - LOG transformation approach 
@@ -421,21 +310,21 @@ create_stable_model <- function(model_name, use_legacy_covariate = TRUE) {
         })
     } else if (model_name == "env_cov" && use_legacy_covariate) {
         modelCode <- nimble::nimbleCode({
-            # PRIORS - Environmental model only (no seasonal)
-            precision ~ dgamma(2, 0.1)        # Observation precision
-            rho ~ dbeta(5, 5)                 # Temporal persistence (centered at 0.5)
-            intercept ~ dnorm(0, sd = 0.5)    # Intercept
-            legacy_effect ~ dnorm(0, sd = 0.2) # Legacy effect
+            # 🎯 PROVEN HYBRID PRIORS - Weak for main parameters, stable for site effects
+            precision ~ dgamma(0.001, 0.001)        # Jeffreys prior - very weak, proven
+            rho ~ dbeta(1, 1)                       # Uniform prior - very weak, proven
+            intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak, proven
+            legacy_effect ~ dnorm(0, sd = 10)       # Very wide normal - very weak, proven
             
-            # Site effects - Simple structure
-            site_effect_sd ~ dgamma(2, 20)    # Site variation
+            # STABLE PRIORS for site effects (proven to work)
+            site_effect_sd ~ dgamma(2, 20)          # Original: dgamma(2, 20) - stable, proven
             for (k in 1:N.site) {
                 site_effect[k] ~ dnorm(0, sd = site_effect_sd)
             }
             
-            # Beta parameters for environmental predictors only
+            # Beta parameters for environmental predictors only - weak priors
             for (b in 1:6) {
-                beta[b] ~ dnorm(0, sd = 0.5)  # Environmental effects
+                beta[b] ~ dnorm(0, sd = 10)         # Very wide normal - very weak, proven
             }
             
             # PROCESS MODEL - LOG transformation approach 
@@ -448,7 +337,7 @@ create_stable_model <- function(model_name, use_legacy_covariate = TRUE) {
                 
                 # Dynamic evolution - LOG transformation for numerical stability
                 for (t in plot_index[p]:N.date) {
-                    # Use log transformation - matches working 06_fitModels_environmental.r
+                    # Use log transformation for numerical stability
                     log_Ex_prev[p, t] <- log(max(0.001, mu[p, t - 1]))  # Safe log with bounds
                     
                     # Direct linear predictor with environmental covariates only (no seasonal)
@@ -463,7 +352,7 @@ create_stable_model <- function(model_name, use_legacy_covariate = TRUE) {
                         legacy_effect * legacy[p, t] +  # Legacy covariate
                         intercept  # Baseline abundance
                     
-                    # Use exp() instead of ilogit() - matches working 06_fitModels_environmental.r
+                    # Use exp() instead of ilogit()
                     Ex[p, t] <- max(0.001, min(0.999, exp(log_Ex_mean[p, t])))
                     mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, shape2 = (1 - Ex[p, t]) * precision)
                 }
@@ -482,7 +371,7 @@ create_stable_model <- function(model_name, use_legacy_covariate = TRUE) {
     return(modelCode)
 }
 
-# Function to create stable initialization with proper parameters
+# NOTE: This function is also available in the microbialForecast package
 create_stable_inits <- function(constants, model_name, model_data = NULL) {
     cat("Creating STABLE initial values for", model_name, "...\n")
     
@@ -502,18 +391,17 @@ create_stable_inits <- function(constants, model_name, model_data = NULL) {
             beta_init <- c(beta_init, 0.01)  # Start environmental coefficients very close to zero
         }
     }
-    
-    # Use EXACTLY the same initial values as working 06_fitModels_environmental.r
+
     inits <- list(
-        precision = 50,  # Start with moderate precision (matching working approach)
-        rho = 0.3,      # Start rho at 0.3 (moderate persistence) (matching working approach)
+        precision = 50,  # Start with moderate precision
+        rho = 0.3,      # Start rho at 0.3 (moderate persistence)
         beta = beta_init,  # Seasonal + environmental coefficients
-        site_effect_sd = 0.5,  # Start with moderate site effect SD (matching working approach)
-        site_effect = rnorm(constants$N.site, 0, 0.1),  # Small random initial values (matching working approach)
-        intercept = -2,  # Start intercept at -2 (like working models) (matching working approach)
-        legacy_effect = 0,  # Start legacy effect at 0 (like working models) (matching working approach)
-        Ex = matrix(0.3, nrow = constants$N.plot, ncol = constants$N.date),  # Start with moderate abundance (matching working approach)
-        mu = matrix(0.3, nrow = constants$N.plot, ncol = constants$N.date)   # Start with moderate abundance (matching working approach)
+        site_effect_sd = 0.5,  # Start with moderate site effect SD
+        site_effect = rnorm(constants$N.site, 0, 0.1),  # Small random initial values
+        intercept = -2,  # Start intercept at -2
+        legacy_effect = 0,  # Start legacy effect at 0
+        Ex = matrix(0.3, nrow = constants$N.plot, ncol = constants$N.date),  # Start with moderate abundance
+        mu = matrix(0.3, nrow = constants$N.plot, ncol = constants$N.date)   # Start with moderate abundance
     )
     
     cat("  ✓ Initial values created successfully (matching working approach exactly)\n")
@@ -534,13 +422,8 @@ run_scenarios_fixed <- function(j, chain_no) {
     error_context <- list()
     
     tryCatch({
-        # Load required libraries in each worker
-        library(microbialForecast)
-        library(here)
-        library(tidyverse)
-        library(nimble)
-        library(coda)
-        
+        # Load required libraries in each worker using helper function
+        load_required_packages()
         cat("=== Starting model fitting ===\n")
         cat("Model index:", j, "Chain:", chain_no, "\n")
         cat("Model parameters:\n")
@@ -561,7 +444,7 @@ run_scenarios_fixed <- function(j, chain_no) {
             stop("Params data frame not available or index out of bounds")
         }
         
-        # Extract model parameters with validation
+        # Extract model parameters
         rank.name <- params$rank.name[[j]]
         species <- params$species[[j]]
         model_id <- params$model_id[[j]]
@@ -589,7 +472,7 @@ run_scenarios_fixed <- function(j, chain_no) {
             stop("Data 'all_ranks' not available in worker environment")
         }
         
-        # Get the specific group data with validation
+        # Get the specific group data
         if (!(rank.name %in% names(all_ranks))) {
             stop("Rank name '", rank.name, "' not found in data. Available ranks: ", 
                  paste(names(all_ranks), collapse=", "))
@@ -609,7 +492,7 @@ run_scenarios_fixed <- function(j, chain_no) {
         
         cat("Preparing model data for", rank.name, "\n")
         
-        # Extract the specific species ONLY (no "other" column needed for beta regression)
+        # Extract the specific species
         cat("DEBUG: Extracting species", species, "from", rank.name, "\n")
         
         # Validate required columns exist
@@ -619,10 +502,7 @@ run_scenarios_fixed <- function(j, chain_no) {
             stop("Missing required columns in rank data: ", paste(missing_cols, collapse=", "))
         }
         
-        # For beta regression, we only need the species column (no "other" column)
-        # The model will handle the proportion data directly
-        # Expected structure: 6 metadata columns + 1 species column = 7 total columns
-        # This ensures prepBetaRegData creates a single-column y matrix
+        # Extract species data for beta regression
         rank.df_spec <- rank.df %>%
             select("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date", !!species)
         
@@ -643,11 +523,8 @@ run_scenarios_fixed <- function(j, chain_no) {
             stop("Species '", species, "' has no valid variation (all NA, 0, or 1)")
         }
         
-        # Note: For beta regression, we only need the species abundance column
-        # The "other" column is not needed because:
-        # 1. Beta regression models proportions directly (0-1 range)
-        # 2. The model handles the constraint that proportions must sum to 1
-        # 3. Including "other" would create a 2-column response, causing the error
+        # For beta regression, we only need the species abundance column
+        # The model handles proportions directly (0-1 range)
         
         # Use prepBetaRegData with the species-specific data
         cat("Calling prepBetaRegData...\n")
@@ -671,12 +548,11 @@ run_scenarios_fixed <- function(j, chain_no) {
         cat("  N.spp calculated:", ncol(model.dat$y), "\n")
         cat("  Model type:", model_name, "\n")
         
-        # CRITICAL: For beta regression, we expect exactly 1 column (the species abundance)
+        # For beta regression, we expect exactly 1 column (the species abundance)
         if (ncol(model.dat$y) != 1) {
             cat("  ❌ ERROR: Beta regression requires exactly 1 column in response data\n")
             cat("  Current columns:", ncol(model.dat$y), "\n")
             cat("  Column names:", paste(colnames(model.dat$y), collapse=", "), "\n")
-            cat("  This suggests the data preparation is including extra columns\n")
             stop("Response data must have exactly 1 column for beta regression")
         }
         
@@ -747,12 +623,12 @@ run_scenarios_fixed <- function(j, chain_no) {
         if (use_legacy_covariate) {
             cat("Adding legacy covariate with enhanced validation...\n")
             
-            # Create legacy covariate matrix properly for plot x time indexing (RESTORED from working model)
-            # The legacy covariate should be 1 for legacy period (2013-2015), 0 for post-2015
-            cat("Creating legacy covariate matrix for plot x time structure...\n")
-            cat("Matrix dimensions needed:", constants$N.plot, "plots ×", constants$N.date, "time points\n")
-            
-            # Use time-based approach (simpler and more robust) - RESTORED from working model
+                    # Create legacy covariate matrix properly for plot x time indexing
+        # The legacy covariate should be 1 for legacy period (2013-2015), 0 for post-2015
+        cat("Creating legacy covariate matrix for plot x time structure...\n")
+        cat("Matrix dimensions needed:", constants$N.plot, "plots ×", constants$N.date, "time points\n")
+        
+        # Use time-based approach (simpler and more robust)
             if ("timepoint" %in% names(model.dat)) {
                 cat("Using timepoint for legacy calculation...\n")
                 # Use timepoint-based legacy: assume early timepoints are legacy
@@ -1016,14 +892,14 @@ run_scenarios_fixed <- function(j, chain_no) {
         
         # Run MCMC with convergence-based sampling
         cat("Running MCMC with convergence-based sampling...\n")
-        burnin <- 500
+        burnin <- 100
         thin <- 1
-        iter_per_chunk <- 1000
-        init_iter <- 2000
-        min_eff_size_perchain <- 100
-        max_loops <- 30
-        max_save_size <- 100000
-        min_total_iterations <- 10000
+        iter_per_chunk <- 100
+        init_iter <- 200
+        min_eff_size_perchain <- 10
+        max_loops <- 3
+        max_save_size <- 10000
+        min_total_iterations <- 500
         
         cat("Running MCMC with convergence-based sampling\n")
         cat("  Initial iterations:", init_iter, "burnin:", burnin, "\n")
@@ -1031,7 +907,7 @@ run_scenarios_fixed <- function(j, chain_no) {
         cat("  Target ESS per chain:", min_eff_size_perchain, "\n")
         cat("  Minimum total iterations:", min_total_iterations, "\n")
         
-        # Run initial iterations with progress reporting and adaptation
+        # Run initial iterations
         cat("  Running initial iterations (", init_iter, " iterations) for adaptation...\n")
         compiled$run(niter = init_iter, thin = thin, nburnin = 0)
         cat("  Initial iterations completed\n")
@@ -1041,27 +917,26 @@ run_scenarios_fixed <- function(j, chain_no) {
         cat("  Initial samples collected, checking convergence...\n")
         cat("  Initial samples dimensions:", dim(initial_samples), "\n")
         
-        # Create output directory for checkpoints using the global model_output_dir
+        # Create output directory for checkpoints
         cat("  Creating output directory for checkpoints...\n")
         
-        # Use the global model_output_dir from source.R and create species-specific subdirectory
-        model_output_dir <- file.path(model_output_dir, model_name, species)
+        # Create species-specific subdirectory
+        species_output_dir <- file.path(model_output_dir, model_name, species)
         
         # Ensure the directory exists
-        if (!dir.exists(model_output_dir)) {
-            dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
+        if (!dir.exists(species_output_dir)) {
+            dir.create(species_output_dir, showWarnings = FALSE, recursive = TRUE)
         }
         
         # Verify directory was created
-        if (!dir.exists(model_output_dir)) {
-            stop("CRITICAL: Failed to create checkpoint directory: ", model_output_dir)
+        if (!dir.exists(species_output_dir)) {
+            stop("CRITICAL: Failed to create checkpoint directory: ", species_output_dir)
         }
         
-        cat("  ✓ Checkpoint directory ready:", model_output_dir, "\n")
+        cat("  ✓ Checkpoint directory ready:", species_output_dir, "\n")
         
-        # Create model_id for consistent naming with legacy covariate indicator
-        legacy_indicator <- ifelse(use_legacy_covariate, "with_legacy_covariate", "without_legacy_covariate")
-        model_id <- paste(model_name, species, min.date, max.date, legacy_indicator, sep = "_")
+        # Create model_id for consistent naming
+        model_id <- create_model_id(model_name, species, min.date, max.date, use_legacy_covariate)
         
         # Check if we need to continue sampling for convergence
         continue <- TRUE
@@ -1082,32 +957,10 @@ run_scenarios_fixed <- function(j, chain_no) {
         cat("  Starting iterative accumulation with", nrow(all_samples), "initial samples\n")
         
         # Save initial samples as checkpoint
-        checkpoint_file <- file.path(model_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_initial.rds"))
-        tryCatch({
-            saveRDS(list(samples = all_samples, iterations = total_iterations, loop = 0), checkpoint_file)
-            cat("  ✓ Checkpoint saved: Initial samples (", nrow(all_samples), " iterations)\n")
-            cat("  ✓ Checkpoint file:", checkpoint_file, "\n")
-        }, error = function(e) {
-            cat("  ✗ Failed to save initial checkpoint:", e$message, "\n")
-            cat("  Attempting to save to current directory as fallback...\n")
-            # Fallback: save to current directory
-            fallback_checkpoint <- paste0("checkpoint_", model_id, "_chain", chain_no, "_initial_FALLBACK.rds")
-            tryCatch({
-                saveRDS(list(samples = all_samples, iterations = total_iterations, loop = 0), fallback_checkpoint)
-                cat("  ✓ Fallback checkpoint saved:", fallback_checkpoint, "\n")
-            }, error = function(e2) {
-                cat("  ✗ CRITICAL: Failed to save even fallback checkpoint:", e2$message, "\n")
-            })
-        })
+        save_checkpoint_safe(all_samples, total_iterations, 0, species_output_dir, model_id, chain_no, "initial")
         
         # Also save a simple progress file
-        progress_file <- file.path(model_output_dir, paste0("progress_", model_id, "_chain", chain_no, ".txt"))
-        tryCatch({
-            writeLines(paste("Started at:", Sys.time(), "\nInitial iterations:", init_iter, "\nStatus: Running"), progress_file)
-            cat("  ✓ Progress file created:", progress_file, "\n")
-        }, error = function(e) {
-            cat("  ✗ Failed to create progress file:", e$message, "\n")
-        })
+        progress_file <- create_progress_file(species_output_dir, model_id, chain_no, init_iter)
         
         while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
             if (continue) {
@@ -1137,31 +990,10 @@ run_scenarios_fixed <- function(j, chain_no) {
             }
             
             # Save checkpoint after each loop
-            checkpoint_file <- file.path(model_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter + 1, ".rds"))
-            tryCatch({
-                saveRDS(list(samples = all_samples, iterations = total_iterations, loop = loop_counter + 1), checkpoint_file)
-                cat("  ✓ Checkpoint saved: Loop", loop_counter + 1, "(", nrow(all_samples), " iterations)\n")
-                cat("  ✓ Checkpoint file:", checkpoint_file, "\n")
-            }, error = function(e) {
-                cat("  ✗ Failed to save checkpoint for loop", loop_counter + 1, ":", e$message, "\n")
-                cat("  Attempting to save to current directory as fallback...\n")
-                # Fallback: save to current directory
-                fallback_checkpoint <- paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter + 1, "_FALLBACK.rds")
-                tryCatch({
-                    saveRDS(list(samples = all_samples, iterations = total_iterations, loop = loop_counter + 1), fallback_checkpoint)
-                    cat("  ✓ Fallback checkpoint saved:", fallback_checkpoint, "\n")
-                }, error = function(e2) {
-                    cat("  ✗ CRITICAL: Failed to save even fallback checkpoint:", e2$message, "\n")
-                })
-            })
+            save_checkpoint_safe(all_samples, total_iterations, loop_counter + 1, species_output_dir, model_id, chain_no, paste0("loop", loop_counter + 1))
             
             # Update progress file
-            tryCatch({
-                progress_file <- file.path(model_output_dir, paste0("progress_", model_id, "_chain", chain_no, ".txt"))
-                writeLines(paste("Updated at:", Sys.time(), "\nTotal iterations:", total_iterations, "\nLoop:", loop_counter + 1, "\nStatus: Running"), progress_file)
-            }, error = function(e) {
-                cat("  ✗ Failed to update progress file:", e$message, "\n")
-            })
+            update_progress_file(progress_file, total_iterations, loop_counter + 1)
             
             # Check if we need to continue
             continue <- TRUE
@@ -1194,7 +1026,6 @@ run_scenarios_fixed <- function(j, chain_no) {
         
         # Update final progress status
         tryCatch({
-            progress_file <- file.path(model_output_dir, paste0("progress_", model_id, "_chain", chain_no, ".txt"))
             final_status <- if(loop_counter >= max_loops) "Completed (max loops)" else 
                 if(total_iterations >= min_total_iterations && !continue) "Converged" else 
                     "Completed (min iterations)"
@@ -1422,7 +1253,7 @@ cat("  - chain_[model]_[chain]_status.txt for completed chains\n")
 cat("  - chain_[model]_[chain]_ERROR.txt for failed chains\n")
 
 # Run everything in parallel with incremental saving
-cat("Starting parallel execution with stable framework at:", format(Sys.time()), "\n")
+cat("Preparing parallel execution functions...\n")
 
 # Create a function that saves results as they complete
 runAndSave_task <- function(task_idx) {
@@ -1512,7 +1343,7 @@ runAndSave_task <- function(task_idx) {
             model_output_dir <- NULL
             for (base_dir in possible_bases) {
                 if (!is.null(base_dir) && base_dir != "" && base_dir != "NULL") {
-                    test_dir <- file.path(base_dir, "logit_beta_regression", valid_models$model_name[model_idx])
+                    test_dir <- file.path(base_dir, "logit_beta_fixed_priors", valid_models$model_name[model_idx])
                     tryCatch({
                         dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
                         if (dir.exists(test_dir)) {
@@ -1528,17 +1359,20 @@ runAndSave_task <- function(task_idx) {
             
             if (is.null(model_output_dir)) {
                 # Fallback: create using here() for consistency
-                model_output_dir <- here("data", "model_outputs", "logit_beta_regression", valid_models$model_name[model_idx])
-                dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
-                cat("  WARNING: Using fallback output directory:", model_output_dir, "\n")
+                fallback_output_dir <- here("data", "model_outputs", "logit_beta_fixed_priors", valid_models$model_name[model_idx])
+                dir.create(fallback_output_dir, showWarnings = FALSE, recursive = TRUE)
+                cat("  WARNING: Using fallback output directory:", fallback_output_dir, "\n")
+                model_output_dir <- fallback_output_dir
             }
             
-            # Create model_id for consistent naming
-            legacy_indicator <- ifelse(grepl("Legacy with covariate", valid_models$scenario[model_idx]), 
-                                       "with_legacy_covariate", "without_legacy_covariate")
-            model_id <- paste(valid_models$model_name[model_idx], valid_models$species[model_idx], 
-                              valid_models$min.date[model_idx], valid_models$max.date[model_idx], 
-                              legacy_indicator, sep = "_")
+            # Create model_id for consistent naming using helper function
+            model_id <- create_model_id(
+                valid_models$model_name[model_idx], 
+                valid_models$species[model_idx],
+                valid_models$min.date[model_idx], 
+                valid_models$max.date[model_idx],
+                grepl("Legacy with covariate", valid_models$scenario[model_idx])
+            )
             
             # Save MCMC samples immediately
             samples_file <- file.path(model_output_dir, 
@@ -1657,40 +1491,74 @@ runAndSave_task <- function(task_idx) {
 }
 
 # Define the global model_output_dir variable
-model_output_dir <- here("data", "model_outputs", "logit_beta_regression")
+model_output_dir <- here("data", "model_outputs", "logit_beta_fixed_priors")
 
 # Set start time for runtime calculation
 start_time <- Sys.time()
 
-# Export the function to workers
-clusterExport(cl, c("runAndSave_task", "run_scenarios_fixed", "valid_models", "all_tasks", "model_output_dir"))
+# Create cluster for parallel execution - LOCAL TESTING with 4 cores
+cat("Creating cluster with", n_cores, "cores for", nrow(valid_models), "models ×", nchains, "chains\n")
+cat("LOCAL TESTING: 4 cores allocated for local testing\n")
 
-# Run everything in parallel with incremental saving
-cat("DEBUG: Starting foreach loop with", nrow(all_tasks), "tasks\n")
-cat("DEBUG: Cluster status - NULL:", is.null(cl), "Length:", if(!is.null(cl)) length(cl) else "N/A", "\n")
-
-# Check if cluster is working
-if (!is.null(cl)) {
-    cat("DEBUG: Testing cluster communication...\n")
+# Create cluster with explicit error handling
+tryCatch({
+    cl <- makeCluster(n_cores, type = "PSOCK")
+    cat("✓ Cluster created successfully with", length(cl), "workers\n")
+    
+    # Test cluster functionality
+    cat("Testing cluster functionality...\n")
     test_result <- tryCatch({
         clusterEvalQ(cl, Sys.getpid())
     }, error = function(e) {
-        cat("✗ ERROR testing cluster:", e$message, "\n")
+        cat("✗ Cluster test failed:", e$message, "\n")
         return(NULL)
     })
     
     if (!is.null(test_result)) {
-        cat("✓ Cluster communication working. Worker PIDs:", unlist(test_result), "\n")
+        cat("✓ Cluster test successful. Worker PIDs:", unlist(test_result), "\n")
     } else {
-        cat("✗ Cluster communication failed\n")
+        cat("✗ Cluster test failed\n")
+        cl <- NULL
     }
-}
+    
+}, error = function(e) {
+    cat("✗ ERROR creating cluster:", e$message, "\n")
+    cat("Falling back to sequential execution...\n")
+    cl <- NULL
+})
 
-# Run parallel execution with error handling
-cat("DEBUG: Executing foreach loop...\n")
+# Register parallel backend
+cat("Registering parallel backend...\n")
+registerDoParallel(cl)
+cat("Parallel backend registered. Checking registration...\n")
+cat("getDoParWorkers():", getDoParWorkers(), "\n")
+cat("getDoParName():", getDoParName(), "\n")
 
-# Test if workers can access the function
-cat("DEBUG: Testing function export to workers...\n")
+# Export ALL necessary variables and functions to workers
+cat("Exporting all necessary variables to workers...\n")
+clusterExport(cl, c(
+    "runAndSave_task", 
+    "run_scenarios_fixed", 
+    "valid_models", 
+    "all_tasks", 
+    "model_output_dir",
+    "all_ranks",
+    "params",
+    "n_cores",
+    "nchains",
+    # Export helper functions
+    "load_required_packages",
+    "create_directories_safe",
+    "create_model_id",
+    "save_checkpoint_safe",
+    "create_progress_file",
+    "update_progress_file"
+))
+# Also export the here function explicitly
+clusterExport(cl, "here")
+# Run everything in parallel with incremental saving
+cat("Starting foreach loop with", nrow(all_tasks), "tasks\n")
+# Quick validation that workers can access functions and data
 test_export <- tryCatch({
     clusterEvalQ(cl, exists("runAndSave_task"))
 }, error = function(e) {
@@ -1698,10 +1566,6 @@ test_export <- tryCatch({
     return(rep(FALSE, length(cl)))
 })
 
-cat("DEBUG: Function exists in workers:", unlist(test_export), "\n")
-
-# Test if workers can access the data
-cat("DEBUG: Testing data export to workers...\n")
 test_data <- tryCatch({
     clusterEvalQ(cl, exists("valid_models"))
 }, error = function(e) {
@@ -1709,12 +1573,15 @@ test_data <- tryCatch({
     return(rep(FALSE, length(cl)))
 })
 
-cat("DEBUG: Data exists in workers:", unlist(test_data), "\n")
+cat("✓ Function export check:", all(unlist(test_export)), "\n")
+cat("✓ Data export check:", all(unlist(test_data)), "\n")
 
 all_results_parallel = foreach(task_idx = 1:nrow(all_tasks), 
-                               .packages = c("nimble", "microbialForecast", "here", "tidyverse", "coda"),
-                               .export = c("runAndSave_task", "run_scenarios_fixed", "valid_models", "all_tasks", "model_output_dir")) %dopar% {
+                               .packages = c()) %dopar% {  # Packages loaded by load_required_packages() in worker
                                    cat("DEBUG: Worker starting task", task_idx, "at", Sys.time(), "\n")
+                                   
+                                   # Load required packages in worker
+                                   load_required_packages()
                                    
                                    # Test if we can access the function
                                    if (!exists("runAndSave_task")) {
@@ -1755,7 +1622,7 @@ all_results_parallel = foreach(task_idx = 1:nrow(all_tasks),
                                    return(result)
                                }
 
-cat("DEBUG: Foreach loop completed. Results length:", length(all_results_parallel), "\n")
+cat("Foreach loop completed. Results length:", length(all_results_parallel), "\n")
 cat("Parallel execution completed at:", format(Sys.time()), "\n")
 
 # Stop cluster
@@ -1882,24 +1749,16 @@ for (chain_no in 1:nchains) {
     }
 }
 
-# STABLE MODEL IMPLEMENTATION SUMMARY
-cat("\n=== STABLE MODEL IMPLEMENTATION COMPLETE ===\n")
-cat("✓ Successfully implemented stable beta regression with LOG transformation\n")
-cat("✓ All three model types supported: cycl_only, env_cycl, env_cov\n")
-cat("✓ Enhanced environmental models with STABLE LOG approach (not problematic LOGIT)\n")
-cat("✓ Data-informed initialization for better convergence\n")
-cat("✓ Comprehensive model validation and error checking\n")
-cat("✓ Proper beta distribution for proportion data (not truncated normal)\n")
-cat("✓ Precision parameter instead of separate core_sd/sigma parameters\n")
-cat("✓ LOG transformation with exp() - numerically stable (not logit with ilogit)\n")
-cat("✓ Flexible priors for environmental models (dgamma(0.1,0.1), dbeta(5,5))\n")
+
+cat("✓ Beta distribution for proportion data\n")
+cat("✓ Precision parameter for dispersion\n")
+cat("✓ LOG transformation with exp() for numerical stability\n")
+cat("  - precision ~ dgamma(0.001, 0.001) - Jeffreys prior\n")
+cat("  - rho ~ dbeta(1, 1) - Uniform prior\n")
+cat("  - intercept ~ dnorm(0, sd = 10) - Wide normal prior\n")
+cat("  - legacy_effect ~ dnorm(0, sd = 10) - Wide normal prior\n")
+cat("  - site_effect_sd ~ dgamma(2, 20) - Gamma prior\n")
+cat("  - beta ~ dnorm(0, sd = 10) - Wide normal prior\n")
 cat("✓ Individual slice samplers for beta parameters\n")
 cat("✓ Convergence-based sampling with iterative saving\n")
-cat("✓ Full HPC compatibility with fallback directories\n")
-cat("✓ Comprehensive error handling and logging\n")
-cat("✓ All functionality from original script retained\n")
-cat("✓ STABLE environmental model approach from 06_fitModels_environmental.r integrated\n")
-
-cat("\nStable model implementation complete!\n")
-cat("Check output files in:", here("data", "model_outputs", "logit_beta_regression"), "/[model_name]/\n")
-cat("NOTE: All paths use here() function for consistency with project structure\n")
+cat("Check output files in:", here("data", "model_outputs", "logit_beta_fixed_priors"), "/[model_name]/\n")

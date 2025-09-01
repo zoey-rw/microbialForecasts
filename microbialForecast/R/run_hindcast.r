@@ -72,7 +72,7 @@ fcast_logit_beta <- function(plotID,
 	#Sample covariate data - FAIL FAST: This will stop execution if data is missing
 	tryCatch({
 		covar <- create_covariate_samples(model.inputs, plotID, siteID,
-																		Nmc_large, Nmc)
+																		Nmc_large, Nmc, model_type = model_name)
 	}, error = function(e) {
 		message("ERROR in create_covariate_samples for plot ", plotID, " site ", siteID, ":")
 		message("  ", e$message)
@@ -88,6 +88,38 @@ fcast_logit_beta <- function(plotID,
 	# Validation - covar should always be valid now since function fails fast
 	if (!is.array(covar) || length(dim(covar)) != 3) {
 		stop("CRITICAL ERROR: create_covariate_samples returned invalid array - this should never happen!")
+	}
+	
+	# Parse model_id to determine model type EARLY (moved from later in function)
+	model_info <- tryCatch({
+		parse_model_id(model_id)
+	}, error = function(e) {
+		message("Warning: Error parsing model_id '", model_id, "': ", e$message)
+		# Fallback parsing
+		info <- strsplit(model_id, "_")[[1]]
+		if (length(info) >= 2) {
+			if (info[1] == "cycl" && info[2] == "only") {
+				model_name <- "cycl_only"
+			} else if (info[1] == "env" && info[2] == "cov") {
+				model_name <- "env_cov"
+			} else if (info[1] == "env" && info[2] == "cycl") {
+				model_name <- "env_cycl"
+			} else {
+				model_name <- info[1]
+			}
+		} else {
+			model_name <- "unknown"
+		}
+		list(model_name = model_name)
+	})
+	
+	# Extract model name safely
+	if (is.list(model_info) && length(model_info) >= 6) {
+		model_name <- model_info[[6]]
+	} else if (is.list(model_info) && "model_name" %in% names(model_info)) {
+		model_name <- model_info$model_name
+	} else {
+		model_name <- "unknown"
 	}
 	
 	# Validate we have enough covariates for the model type
@@ -213,38 +245,7 @@ fcast_logit_beta <- function(plotID,
 		return(NULL)
 	}
 
-	# Parse model_id to determine model type and legacy covariate usage
-	model_info <- tryCatch({
-		parse_model_id(model_id)
-	}, error = function(e) {
-		message("Warning: Error parsing model_id '", model_id, "': ", e$message)
-		# Fallback parsing
-		info <- strsplit(model_id, "_")[[1]]
-		if (length(info) >= 2) {
-			if (info[1] == "cycl" && info[2] == "only") {
-				model_name <- "cycl_only"
-			} else if (info[1] == "env" && info[2] == "cov") {
-				model_name <- "env_cov"
-			} else if (info[1] == "env" && info[2] == "cycl") {
-				model_name <- "env_cycl"
-			} else {
-				model_name <- info[1]
-			}
-		} else {
-			model_name <- "unknown"
-		}
-		list(model_name = model_name)
-	})
-	
-	# Extract model name safely
-	if (is.list(model_info) && length(model_info) >= 6) {
-		model_name <- model_info[[6]]
-	} else if (is.list(model_info) && "model_name" %in% names(model_info)) {
-		model_name <- model_info$model_name
-	} else {
-		model_name <- "unknown"
-	}
-	
+	# Legacy covariate usage (model_name already parsed earlier)
 	use_legacy_covariate <- grepl("with_legacy_covariate", model_id)
 	
 	# Handle covariate selection based on model type
@@ -373,9 +374,11 @@ fcast_logit_beta <- function(plotID,
 
 	# Add on truth values and/or model estimates
 	if (!is_new_site){
+		# Map the correct column names from the plot_summary data
 		plot_obs_simple = plot_obs %>%
 			select(siteID,plotID, dateID,species,
-							 truth,lo,lo_25,med,hi_75,hi,
+							 truth, 
+							 lo = `2.5%`, lo_25 = `25%`, med = `50%`, hi_75 = `75%`, hi = `97.5%`,
 							 mean = Mean, sd = SD) %>% mutate(truth=as.numeric(truth))
 		ci <- full_join(ci, plot_obs_simple, by = intersect(colnames(ci), colnames(plot_obs_simple)))
 		ci = ci %>%

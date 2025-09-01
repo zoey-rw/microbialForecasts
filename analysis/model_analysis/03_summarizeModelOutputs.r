@@ -1,12 +1,12 @@
 # Summarize MCMC output from all single-taxon models
 # Assumes input files have already had MCMC chains combined
-
-source("../../source.R")
+source("source.R")
+#source("../../source.R")
 
 # Get all available logit beta regression models with legacy effects
 # Look for models from 2013-2018 and 2013-2020 time periods
-file.list = intersect(list.files(here("data/model_outputs/logit_beta_regression/"),recursive = T,pattern = "20130601_20151101|20151101_20180101|20130601_20180101|20130601_20200101", full.names = T),
-											list.files(here("data/model_outputs/logit_beta_regression/"), recursive = T,
+file.list = intersect(list.files(here("data/model_outputs/logit_beta_regression/env_cycl"),recursive = F,pattern = "20130601_20151101|20151101_20180101|20130601_20180101|20130601_20200101", full.names = T),
+											list.files(here("data/model_outputs/logit_beta_regression/env_cycl"), recursive = F,
 																 pattern = "samples", full.names = T))
 
 # Remove any files with only one chain
@@ -77,7 +77,7 @@ model_median = by_rank %>% select(c("rank.name", "is_major_param", "rank", "taxo
 model_median = model_median %>% pivot_wider(values_from = c("mean_gbr","median_gbr","quant_95","min_es","median_es","max_gbr"),names_from = is_major_param)
 
 
-ggplot(model_median) + geom_jitter(aes(x = time_period, y = median_gbr_TRUE, color = group)) + ylim(c(0,5)) + geom_hline(yintercept = 1)
+ggplot(model_median) + geom_jitter(aes(x = time_period, y = median_gbr_TRUE, color = group)) + ylim(c(0,2)) + geom_hline(yintercept = 1)
 
 
 
@@ -93,9 +93,9 @@ keep_list <- unique(keep_models$model_id)
 
 keep_models_weak <- model_median %>%
 group_by(model_id) %>%
-	filter(median_gbr_TRUE <= 1.15) %>%
-	filter(mean_gbr_TRUE <= 1.5) %>%
-	filter(mean_gbr_FALSE <= 2) %>%
+	filter(median_gbr_TRUE <= 1.25) %>%
+	filter(mean_gbr_TRUE <= 1.25) %>%
+	filter(mean_gbr_FALSE <= 1.5) %>%
 	filter(min_es_TRUE > 15)
 keep_list_weak <- unique(keep_models_weak$model_id)
 
