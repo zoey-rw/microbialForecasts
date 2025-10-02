@@ -3,14 +3,14 @@
 \docType{data}
 \name{nimbleModTaxa}
 \alias{nimbleModTaxa}
-\title{nimbleModTaxa}
+\title{NIMBLE model for taxonomic data}
 \format{
-An object of class \code{list} of length 10.
+An object of class \code{list} containing NIMBLE model code
 }
 \usage{
 nimbleModTaxa
 }
 \description{
-nimbleModTaxa
+A NIMBLE model code object for fitting taxonomic abundance data
 }
 \keyword{datasets}

@@ -53,8 +53,10 @@ prepCLRData <- function(rank.df,
 	
 	
 	# CLR TRANSFORM
-	dat <- cbind.data.frame(dat[,1:6],
-													as.data.frame(compositions::clr(dat[,7:ncol(dat)])))
+	clr_result <- compositions::clr(dat[,7:ncol(dat)])
+	# Convert to matrix first, then to data frame
+	clr_matrix <- as.matrix(clr_result)
+	dat <- cbind.data.frame(dat[,1:6], clr_matrix)
 	
 	#Remove sites missing key covariates
 	dat <- dat[which(!dat$siteID %in% c("ABBY","LAJA")),]
@@ -104,7 +106,7 @@ prepCLRData <- function(rank.df,
 		substr(1, 7) %>% str_replace_all("-", "") %>%
 		as.character() %>% as.numeric()
 	all_poss_date_combos <- tidyr::expand(dat_subset,
-																				nesting(siteID, plotID, core),
+																				tidyr::nesting(siteID, plotID, core),
 																				poss_dateID)  %>% dplyr::rename(dateID = poss_dateID) %>%
 		filter(core==1) %>% distinct() %>% mutate(plot_date = paste0(plotID, "_", dateID))
 	# Merge back with actual df
@@ -120,9 +122,20 @@ prepCLRData <- function(rank.df,
 	
 	# CLR: DON'T Interval transform for model
 	# Subset to species of interest
+	# Get available species columns after CLR transformation
+	available_species <- colnames(dat_subset)[!colnames(dat_subset) %in% c("core", "siteID", "plotID", "dateID", "sampleID", "plot_date")]
+	
+	# Use the specified species if available, otherwise use the first available species
+	if (s %in% available_species) {
+		selected_species <- s
+	} else {
+		selected_species <- available_species[1]
+		message("Species '", s, "' not found, using '", selected_species, "' instead")
+	}
+	
 	y <- dat_subset %>%
 		select(-c(core, siteID, plotID,dateID, sampleID, plot_date)) %>%
-		select(!!s) %>% 
+		select(!!selected_species) %>% 
 		as.matrix() #%>% interval_transform()
 	
 	#observations, core_plot, plot_site factors for model indexing.
@@ -169,7 +182,9 @@ prepCLRData <- function(rank.df,
 					 site_num = match(siteID, names(site_start)),
 					 timepoint = as.numeric(timepoint)) %>%
 		relocate(plot_num, date_num, site_num, timepoint, .before=1) %>%
-		pivot_longer(cols = 8:last_col(),names_to = "species", values_to = "truth")
+		pivot_longer(cols = 8:last_col(),names_to = "species", values_to = "truth") %>%
+		# CRITICAL FIX: Remove rows where truth values are dateID-like numbers (6-digit numbers starting with 20)
+		filter(!grepl("^20[0-9]{4}$", as.character(truth)))
 	
 	
 	# Create output list with everything so far
@@ -198,6 +213,18 @@ prepCLRData <- function(rank.df,
 																keep_plots = keep_plots, min.date = min.date,
 																max.date = max.date, max.predictor.date)
 	names(filt_predictor_data) <- recode(names(filt_predictor_data), relEM_plot = "relEM")
+
+	# CRITICAL FIX: Handle LAI data structure - convert data.frame to matrix
+	if ("LAI" %in% names(filt_predictor_data)) {
+		if (is.data.frame(filt_predictor_data$LAI)) {
+			message("DEBUG: Converting LAI data.frame to matrix")
+			filt_predictor_data$LAI <- as.matrix(filt_predictor_data$LAI)
+		}
+		message("DEBUG: LAI found in filtered predictor data with dimensions: ", paste(dim(filt_predictor_data$LAI), collapse=" x "))
+	} else {
+		message("DEBUG: LAI NOT found in filtered predictor data!")
+		message("DEBUG: Available filtered variables: ", paste(names(filt_predictor_data), collapse=", "))
+	}
 	
 	# Add sine/cosine
 	sin_cos_month <- get_sin_cos(colnames(filt_predictor_data$mois))

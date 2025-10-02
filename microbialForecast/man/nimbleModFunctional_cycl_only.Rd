@@ -3,14 +3,14 @@
 \docType{data}
 \name{nimbleModFunctional_cycl_only}
 \alias{nimbleModFunctional_cycl_only}
-\title{nimbleModFunctional_cycl_only}
+\title{NIMBLE model for functional group data with cyclic covariates only}
 \format{
-An object of class \code{list} of length 10.
+An object of class \code{list} containing NIMBLE model code
 }
 \usage{
 nimbleModFunctional_cycl_only
 }
 \description{
-nimbleModFunctional_cycl_only
+A NIMBLE model code object for fitting functional group abundance data using only cyclic covariates
 }
 \keyword{datasets}

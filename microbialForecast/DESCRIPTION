@@ -30,6 +30,7 @@ Imports:
     tibble,
     doParallel,
     data.table,
+    arrow,
     Rfast,
     moments,
     scoringRules,

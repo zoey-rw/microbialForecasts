@@ -164,10 +164,72 @@ combine_chains <- function(chain_paths,
 		message("⚠️  Model code component not found in metadata")
 	}
 	
-	# Create output with both samples and samples2 (compatibility with existing code)
-	out <- list(samples = as.mcmc.list(samples),
-							samples2 = as.mcmc.list(samples),  # Use same samples for samples2
-							metadata = metadata_final)
+	# Handle samples2 properly - it should contain plot-level predictions, not parameter samples
+	samples2_list <- list()
+	for(i in 1:length(chain_paths)){
+		chain <- readInputRdsFile(chain_paths[[i]])
+		if (any(is.na(chain))) {
+			next()
+		}
+		
+		# Extract samples2 if it exists and has proper plot prediction structure
+		if (is.list(chain) && "samples2" %in% names(chain)) {
+			if (is.matrix(chain$samples2) && (any(grepl("plot_mu", colnames(chain$samples2))) || any(grepl("^Ex\\[", colnames(chain$samples2))) || any(grepl("plot_estimates", colnames(chain$samples2))) || any(grepl("plot_predictions", colnames(chain$samples2))))) {
+				# samples2 has proper plot prediction structure (plot_mu, Ex[i,j], plot_estimates, or plot_predictions format)
+				samples2_list[[i]] <- chain$samples2
+				plot_param_type <- if(any(grepl("plot_mu", colnames(chain$samples2)))) "plot_mu" 
+					else if(any(grepl("^Ex\\[", colnames(chain$samples2)))) "Ex[i,j]"
+					else if(any(grepl("plot_estimates", colnames(chain$samples2)))) "plot_estimates"
+					else "plot_predictions"
+				message("Chain ", i, " has proper samples2 with ", plot_param_type, " parameters")
+			} else {
+				# samples2 is malformed - don't use it
+				message("Chain ", i, " has malformed samples2 (", ncol(chain$samples2), " cols, no plot predictions), skipping samples2")
+				samples2_list[[i]] <- NULL
+			}
+		} else if (is.list(chain) && length(chain) >= 2) {
+			# Old format: check if second element is samples2
+			if (is.matrix(chain[[2]]) && (any(grepl("plot_mu", colnames(chain[[2]]))) || any(grepl("^Ex\\[", colnames(chain[[2]]))) || any(grepl("plot_estimates", colnames(chain[[2]]))) || any(grepl("plot_predictions", colnames(chain[[2]]))))) {
+				samples2_list[[i]] <- chain[[2]]
+				plot_param_type <- if(any(grepl("plot_mu", colnames(chain[[2]])))) "plot_mu" 
+					else if(any(grepl("^Ex\\[", colnames(chain[[2]])))) "Ex[i,j]"
+					else if(any(grepl("plot_estimates", colnames(chain[[2]])))) "plot_estimates"
+					else "plot_predictions"
+				message("Chain ", i, " has proper samples2 from old format with ", plot_param_type, " parameters")
+			} else {
+				message("Chain ", i, " has malformed samples2 in old format, skipping")
+				samples2_list[[i]] <- NULL
+			}
+		} else {
+			message("Chain ", i, " has no samples2, skipping")
+			samples2_list[[i]] <- NULL
+		}
+	}
+	
+	# Remove NULL elements from samples2
+	samples2_list <- samples2_list[!sapply(samples2_list, is.null)]
+	
+	# Create output with proper samples and samples2
+	if (length(samples2_list) > 0) {
+		# We have valid samples2 data - convert matrices to mcmc objects
+		message("Using ", length(samples2_list), " valid samples2 chains")
+		samples2_mcmc <- lapply(samples2_list, function(x) {
+			if (is.matrix(x)) {
+				return(mcmc(x))
+			} else {
+				return(x)
+			}
+		})
+		out <- list(samples = as.mcmc.list(samples),
+								samples2 = as.mcmc.list(samples2_mcmc),  # Use actual plot predictions as mcmc.list
+								metadata = metadata_final)
+	} else {
+		# No valid samples2 data - create empty structure
+		message("No valid samples2 data found - creating empty samples2 structure")
+		out <- list(samples = as.mcmc.list(samples),
+								samples2 = list(),  # Empty list instead of wrong data
+								metadata = metadata_final)
+	}
 
 	if(!isFALSE(save)){
 		saveRDS(out, file = save)

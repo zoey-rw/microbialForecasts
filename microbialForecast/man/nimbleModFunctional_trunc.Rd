@@ -3,14 +3,14 @@
 \docType{data}
 \name{nimbleModFunctional_trunc}
 \alias{nimbleModFunctional_trunc}
-\title{nimbleModFunctional_trunc}
+\title{NIMBLE model for functional groups with truncated Normal distribution}
 \format{
-An object of class \code{list} of length 12.
+An object of class \code{list} containing NIMBLE model code
 }
 \usage{
 nimbleModFunctional_trunc
 }
 \description{
-Model version with truncated Normal distribution to prevent negative values
+A NIMBLE model code object for fitting functional group data with truncated Normal distribution to prevent negative values
 }
 \keyword{datasets}

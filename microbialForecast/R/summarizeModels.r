@@ -34,17 +34,55 @@ samples_exists <- function(file_path) {
 #'
 #' @export
 add_gelman <- function(read_in, rank.name) {
-if ("gelman" %in% names(read_in) & !is.null(ncol(read_in$gelman))) {
-	gd <- read_in$gelman %>% cbind.data.frame(effSize = effectiveSize(read_in$samples))
-} else {
-	if (length(read_in$samples)>1) {
-	gd <- cbind.data.frame(gelman.diag(read_in$samples, multivariate = FALSE)[[1]],
-												 effSize = effectiveSize(read_in$samples))
-	} else gd <- cbind.data.frame(effSize = effectiveSize(read_in$samples))
+# Ensure samples is in the correct format for effectiveSize calculation
+samples <- read_in$samples
+if (!is.mcmc.list(samples) && !is.mcmc(samples)) {
+	# Convert to mcmc.list if it's a list of matrices
+	if (is.list(samples) && all(sapply(samples, is.matrix))) {
+		samples <- as.mcmc.list(lapply(samples, as.mcmc))
+	} else if (is.matrix(samples)) {
+		samples <- as.mcmc(samples)
+	} else {
+		# If we can't convert, return empty data frame
+		return(data.frame(parameter = character(0), 
+											`Point est.` = numeric(0), 
+											`Upper C.I.` = numeric(0), 
+											effSize = numeric(0), 
+											rank.name = character(0), 
+											niteration = numeric(0)))
+	}
 }
+
+# Calculate effective sample size safely
+es <- tryCatch({
+	effectiveSize(samples)
+}, error = function(e) {
+	message("Error calculating effective sample size: ", e$message)
+	numeric(0)
+})
+
+if ("gelman" %in% names(read_in) & !is.null(ncol(read_in$gelman))) {
+	gd <- read_in$gelman %>% cbind.data.frame(effSize = es)
+} else {
+	if (length(samples) > 1) {
+		gelman_diag <- tryCatch({
+			gelman.diag(samples, multivariate = FALSE)[[1]]
+		}, error = function(e) {
+			message("Error calculating Gelman diagnostic: ", e$message)
+			matrix(NA, nrow = length(es), ncol = 2, 
+						 dimnames = list(names(es), c("Point est.", "Upper C.I.")))
+		})
+		gd <- cbind.data.frame(gelman_diag, effSize = es)
+	} else {
+		gd <- cbind.data.frame(`Point est.` = NA, `Upper C.I.` = NA, effSize = es)
+	}
+}
+
 gd <- gd %>% mutate(rank.name = !!rank.name,
-										#taxon.name = !!taxon.name,
-										niteration = read_in$metadata$niter) %>% rownames_to_column("parameter")
+									#taxon.name = !!taxon.name,
+									niteration = read_in$metadata$niter)
+gd$parameter <- rownames(gd)
+rownames(gd) <- NULL
 return(gd)
 }
 

@@ -106,11 +106,16 @@ prepBetaRegData <- function(rank.df,
 		substr(1, 7) %>% str_replace_all("-", "") %>%
 		as.character() %>% as.numeric()
 	all_poss_date_combos <- tidyr::expand(dat_subset,
-																				nesting(siteID, plotID, core),
+																				tidyr::nesting(siteID, plotID, core),
 																				poss_dateID)  %>% dplyr::rename(dateID = poss_dateID) %>%
 		filter(core==1) %>% distinct() %>% mutate(plot_date = paste0(plotID, "_", dateID))
 	# Merge back with actual df
 	expanded_dat <- merge(dat_subset, all_poss_date_combos, all = T) %>% arrange(siteID, plotID, dateID)
+	
+	# CRITICAL FIX: Ensure dates column is properly mapped from dateID
+	# Create approximate dates from dateID for all timepoints
+	expanded_dat <- expanded_dat %>%
+		mutate(dates = paste0(substr(dateID, 1, 4), "-", substr(dateID, 5, 6), "-01"))
 
 	# Assign start dates for each site, and indices for looping through
 	not_na <- dat_subset %>% filter(!is.na(sampleID))
@@ -166,18 +171,18 @@ prepBetaRegData <- function(rank.df,
 	# # Create truth outputs
 	truth.plot <- expanded_dat %>% group_by(plot_date) %>%
 		select(-c(core)) %>%
-		summarize(across(where(is.numeric), ~ mean(.x, na.rm=T))) %>% ungroup() %>%
-		as.matrix()
+		summarize(across(where(is.numeric), ~ mean(.x, na.rm=T)),
+						  dates = as.character(dates[1])) %>% ungroup() # Use first date in each group (all dates in month are equivalent)
 	# reorganize truth data
-	truth.plot.long <- truth.plot %>% as.data.frame() %>%
-		separate(plot_date, sep="_", into=c("siteID","plotID","dateID")) %>%
+	truth.plot.long <- truth.plot %>%
+		separate(plot_date, sep="[-_]", into=c("siteID","plotID","dateID")) %>%
 		mutate(plotID = paste0(siteID, "_", plotID),
 					 date_num = as.numeric(as.factor(dateID)),
 					 plot_num = match(plotID, names(plot_start)),
 					 site_num = match(siteID, names(site_start)),
 					 timepoint = as.numeric(timepoint)) %>%
 		relocate(plot_num, date_num, site_num, timepoint, .before=1) %>%
-		pivot_longer(cols = 8:last_col(),names_to = "species", values_to = "truth")
+		pivot_longer(cols = -c(plot_num, date_num, site_num, timepoint, siteID, plotID, dateID, dates), names_to = "species", values_to = "truth")
 
 
 	# Create output list with everything so far
@@ -202,15 +207,47 @@ prepBetaRegData <- function(rank.df,
 	)
 
 	# subset covariates to plots/sites that have been observed for multiple (min.prev) dates, and before the max date
-	filt_predictor_data <- lapply(predictor_data, filter_date_site, keep_sites = keep_sites,
-																keep_plots = keep_plots, min.date = min.date,
-																max.date = max.date, max.predictor.date)
+	# CRITICAL FIX: When full_timeseries=TRUE, use the full environmental data range instead of taxonomic data range
+	if (full_timeseries) {
+		# For full time series, use the full environmental data range
+		env_min_date <- min(colnames(predictor_data$temp))
+		env_max_date <- max(colnames(predictor_data$temp))
+		message("DEBUG: Using full environmental data range: ", env_min_date, " to ", env_max_date)
+		# CRITICAL FIX: Override max.predictor.date to use environmental data range
+		env_max_predictor_date <- paste0(substr(env_max_date, 1, 4), "-", substr(env_max_date, 5, 6), "-01")
+		message("DEBUG: Setting max.predictor.date to: ", env_max_predictor_date)
+		filt_predictor_data <- lapply(predictor_data, filter_date_site, keep_sites = keep_sites,
+																	keep_plots = keep_plots, min.date = env_min_date,
+																	max.date = env_max_date, max.predictor.date = env_max_predictor_date)
+	} else {
+		# For regular processing, use the taxonomic data range
+		filt_predictor_data <- lapply(predictor_data, filter_date_site, keep_sites = keep_sites,
+																	keep_plots = keep_plots, min.date = min.date,
+																	max.date = max.date, max.predictor.date)
+	}
 	names(filt_predictor_data) <- recode(names(filt_predictor_data), relEM_plot = "relEM")
+
+	# CRITICAL FIX: Handle LAI data structure - convert data.frame to matrix
+	if ("LAI" %in% names(filt_predictor_data)) {
+		if (is.data.frame(filt_predictor_data$LAI)) {
+			message("DEBUG: Converting LAI data.frame to matrix")
+			filt_predictor_data$LAI <- as.matrix(filt_predictor_data$LAI)
+		}
+		message("DEBUG: LAI found in filtered predictor data with dimensions: ", paste(dim(filt_predictor_data$LAI), collapse=" x "))
+	} else {
+		message("DEBUG: LAI NOT found in filtered predictor data!")
+		message("DEBUG: Available filtered variables: ", paste(names(filt_predictor_data), collapse=", "))
+	}
 
 	# Add sine/cosine
 	sin_cos_month <- get_sin_cos(colnames(filt_predictor_data$mois))
 	filt_predictor_data$sin_mo = sin_cos_month$sin
 	filt_predictor_data$cos_mo = sin_cos_month$cos
+
+	# CRITICAL FIX: Update N.date for full time series
+	if (full_timeseries) {
+		out.list$N.date <- length(colnames(filt_predictor_data$temp))
+	}
 
 	out.list <- c(out.list, filt_predictor_data)
 

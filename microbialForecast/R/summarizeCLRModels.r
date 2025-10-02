@@ -145,40 +145,57 @@ summarize_clr_model <- function(file_path, save_summary = NULL, overwrite=NULL, 
 	quantiles <- param_summary[[2]]
 	
 	# For CLR models, we have different parameters than beta regression
-	eff_list <- lapply(c("sigma", "site_sd", "intercept"),
+	eff_list <- lapply(c("precision", "site_effect_sd", "intercept"),
 										 function(x) extract_summary_row(means, var = x)) %>%
 		plyr::rbind.fill() %>%
 		mutate(taxon = !!species)
-	eff_list2 <- lapply(c("sigma", "site_sd", "intercept"),
+	eff_list2 <- lapply(c("precision", "site_effect_sd", "intercept"),
 											function(x) extract_summary_row(quantiles, var = x)) %>%
 		plyr::rbind.fill() %>%
 		mutate(taxon = !!species)
 	eff_list$Median = eff_list2[,"50%"]
 
 	# Get site effect sizes
-	site_eff_out <- extract_summary_row(means, var = "site") %>%
+	site_eff_out <- extract_summary_row(means, var = "site_effect") %>%
 		extract_bracketed_vals(varname1 = "site_num")  %>%
 		mutate(taxon = !!species,
 					 siteID = recode(site_num, !!!site_key))
-	site_eff_out2 <- extract_summary_row(quantiles, var = "site") %>%
+	site_eff_out2 <- extract_summary_row(quantiles, var = "site_effect") %>%
 		extract_bracketed_vals(varname1 = "site_num")  %>%
 		mutate(taxon = !!species,
 					 siteID = recode(site_num, !!!site_key))
 	site_eff_out$Median = site_eff_out2[,"50%"]
 
-	# Get beta sizes per rank
-	beta_out <- extract_summary_row(means, var = "beta") %>%
-		extract_bracketed_vals(varname1 = "beta_num")  %>%
-		mutate(beta = recode(beta_num, !!!cov_key),
-					 taxon = !!species)
+	# Get beta sizes per rank (CLR models use beta parameters for coefficients)
+	beta_out <- tryCatch({
+		extract_summary_row(means, var = "beta") %>%
+			extract_bracketed_vals(varname1 = "beta_num")  %>%
+			mutate(beta = recode(beta_num, !!!cov_key),
+						 taxon = !!species)
+	}, error = function(e) {
+		# If beta parameters don't exist, create empty data frame
+		data.frame(taxon = species, stringsAsFactors = FALSE)
+	})
 
 	# Use quantiles to assign significance to beta parameters.
-	beta_ci <- extract_summary_row(param_summary[[2]], var = "beta") %>%
-		extract_bracketed_vals(varname1 = "beta_num")  %>%
-		mutate(beta = recode(beta_num, !!!cov_key),
-					 taxon = !!species)
-	beta_out$significant <- microbialForecast:::is_significant(beta_ci$`2.5%`, beta_ci$`97.5%`)
-	beta_out$effSize <- abs(beta_out$Mean)
+	beta_ci <- tryCatch({
+		extract_summary_row(param_summary[[2]], var = "beta") %>%
+			extract_bracketed_vals(varname1 = "beta_num")  %>%
+			mutate(beta = recode(beta_num, !!!cov_key),
+						 taxon = !!species)
+	}, error = function(e) {
+		# If beta parameters don't exist, create empty data frame
+		data.frame(taxon = species, stringsAsFactors = FALSE)
+	})
+	
+	# Only calculate significance if we have valid data
+	if (nrow(beta_out) > 0 && nrow(beta_ci) > 0 && all(!is.na(beta_ci$`2.5%`)) && all(!is.na(beta_ci$`97.5%`))) {
+		beta_out$significant <- microbialForecast:::is_significant(beta_ci$`2.5%`, beta_ci$`97.5%`)
+		beta_out$effSize <- abs(beta_out$Mean)
+	} else {
+		beta_out$significant <- NA
+		beta_out$effSize <- NA
+	}
 
 	# Combine parameter estimates into summary
 	summary_df <-
@@ -217,9 +234,9 @@ parse_clr_model_id = function(model_id){
 	
 	info <- model_id %>% str_split("_") %>% unlist()
 	
-	# For CLR models, expected format: CLR_model_name_species_date1_date2
-	# Remove "CLR" prefix if present
-	if (info[1] == "CLR") {
+	# For CLR models, expected format: clr_model_name_species_date1_date2
+	# Remove "clr" prefix if present
+	if (info[1] == "clr") {
 		info <- info[-1]
 	}
 	

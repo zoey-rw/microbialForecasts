@@ -3,14 +3,14 @@
 \docType{data}
 \name{nimbleMod_shannon_cycl_only}
 \alias{nimbleMod_shannon_cycl_only}
-\title{nimbleMod_shannon_cycl_only}
+\title{NIMBLE model for Shannon diversity with cyclic covariates only}
 \format{
-An object of class \code{list} of length 10.
+An object of class \code{list} containing NIMBLE model code
 }
 \usage{
 nimbleMod_shannon_cycl_only
 }
 \description{
-nimbleMod_shannon_cycl_only
+A NIMBLE model code object for fitting Shannon diversity data using only cyclic covariates
 }
 \keyword{datasets}

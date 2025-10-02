@@ -3,14 +3,14 @@
 \docType{data}
 \name{nimbleModTaxa_cycl_only}
 \alias{nimbleModTaxa_cycl_only}
-\title{nimbleModTaxa_cycl_only}
+\title{NIMBLE model for taxonomic data with cyclic covariates only}
 \format{
-An object of class \code{list} of length 8.
+An object of class \code{list} containing NIMBLE model code
 }
 \usage{
 nimbleModTaxa_cycl_only
 }
 \description{
-nimbleModTaxa_cycl_only
+A NIMBLE model code object for fitting taxonomic abundance data using only cyclic covariates
 }
 \keyword{datasets}
