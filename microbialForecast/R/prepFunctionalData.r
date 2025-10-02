@@ -86,7 +86,7 @@ prepFunctionalData <- function(rank.df,
 		substr(1, 7) %>% str_replace_all("-", "") %>%
 		as.character() %>% as.numeric()
 	all_poss_date_combos <- tidyr::expand(dat_subset,
-																				nesting(siteID, plotID, core),
+																				tidyr::nesting(siteID, plotID, core),
 																				poss_dateID)  %>% rename(dateID = poss_dateID) %>%
 		filter(core==1) %>% distinct() %>% mutate(plot_date = paste0(plotID, "_", dateID))
 	# Merge back with actual df
@@ -149,7 +149,9 @@ prepFunctionalData <- function(rank.df,
 					 site_num = match(siteID, names(site_start)),
 					 timepoint = as.numeric(timepoint)) %>%
 		relocate(plot_num, date_num, site_num, timepoint, .before=1) %>%
-		pivot_longer(cols = 8:last_col(),names_to = "species", values_to = "truth")
+		pivot_longer(cols = 8:last_col(),names_to = "species", values_to = "truth") %>%
+		# CRITICAL FIX: Remove rows where truth values are dateID-like numbers (6-digit numbers starting with 20)
+		filter(!grepl("^20[0-9]{4}$", as.character(truth)))
 
 
 

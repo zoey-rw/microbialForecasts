@@ -95,7 +95,7 @@ prepDivData <- function(rank.df,
 		substr(1, 7) %>% str_replace_all("-", "") %>%
 		as.character() %>% as.numeric()
 	all_poss_date_combos <- tidyr::expand(dat_subset,
-																				nesting(siteID, plotID, core),
+																				tidyr::nesting(siteID, plotID, core),
 																				poss_dateID)  %>% rename(dateID = poss_dateID) %>%
 		filter(core==1) %>% distinct() %>% mutate(plot_date = paste0(plotID, "_", dateID))
 	# Merge back with actual df

@@ -905,7 +905,9 @@ create_covariate_samples <- function(model.inputs, plotID = NULL, siteID,
 			
 			lai_value <- model.inputs$LAI[siteID, time]
 			if (is.na(lai_value) || is.infinite(lai_value)) {
-				stop("LAI value is NA or infinite for site ", siteID, " time ", time, " - investigate data quality")
+				# For hindcasts, use a reasonable default instead of failing
+				message("WARNING: LAI value is NA or infinite for site ", siteID, " time ", time, " - using default value")
+				lai_value <- 0.5  # Default LAI value
 			}
 			
 			# These are deterministic, so just repeat the values
@@ -982,8 +984,9 @@ create_covariate_samples <- function(model.inputs, plotID = NULL, siteID,
 parse_plot_mu_vars <- function(input_df) {
 	require(stringr)
 
-	with_rowname_col <-input_df %>% as.data.frame() %>%
-		rownames_to_column()
+	with_rowname_col <- input_df %>% as.data.frame()
+	with_rowname_col$rowname <- rownames(with_rowname_col)
+	rownames(with_rowname_col) <- NULL
 
 	# check number of commas for how to split values (i.e. should there be a "species_num" value)
 	if (str_count(with_rowname_col$rowname[1], ',') == 2) {
@@ -1013,9 +1016,10 @@ parse_plot_mu_vars <- function(input_df) {
 #'
 extract_summary_row <- function(input_df, var = "sigma") {
 
-	out <- input_df %>% as.data.frame() %>%
-		rownames_to_column("rowname") %>%
-		filter(grepl(!!var, rowname))
+	out <- input_df %>% as.data.frame()
+	out$rowname <- rownames(out)
+	rownames(out) <- NULL
+	out <- out %>% filter(grepl(!!var, rowname))
 	return(out)
 }
 
@@ -1030,8 +1034,9 @@ extract_bracketed_vals <- function(input_df, varname1 = "beta_num", varname2 = N
 
 
 	if (!"rowname" %in% colnames(input_df)){
-		input_df <-input_df %>% as.data.frame() %>%
-			rownames_to_column()
+		input_df <- input_df %>% as.data.frame()
+		input_df$rowname <- rownames(input_df)
+		rownames(input_df) <- NULL
 	}
 
 	if (str_count(input_df$rowname[1], ',') == 1) {

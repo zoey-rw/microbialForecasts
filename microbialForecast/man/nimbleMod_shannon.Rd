@@ -3,14 +3,14 @@
 \docType{data}
 \name{nimbleMod_shannon}
 \alias{nimbleMod_shannon}
-\title{nimbleMod_shannon}
+\title{NIMBLE model for Shannon diversity}
 \format{
-An object of class \code{list} of length 12.
+An object of class \code{list} containing NIMBLE model code
 }
 \usage{
 nimbleMod_shannon
 }
 \description{
-nimbleMod_shannon
+A NIMBLE model code object for fitting Shannon diversity data
 }
 \keyword{datasets}

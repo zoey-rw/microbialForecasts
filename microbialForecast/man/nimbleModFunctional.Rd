@@ -3,14 +3,14 @@
 \docType{data}
 \name{nimbleModFunctional}
 \alias{nimbleModFunctional}
-\title{nimbleModFunctional}
+\title{NIMBLE model for functional group data}
 \format{
-An object of class \code{list} of length 12.
+An object of class \code{list} containing NIMBLE model code
 }
 \usage{
 nimbleModFunctional
 }
 \description{
-nimbleModFunctional
+A NIMBLE model code object for fitting functional group abundance data
 }
 \keyword{datasets}
