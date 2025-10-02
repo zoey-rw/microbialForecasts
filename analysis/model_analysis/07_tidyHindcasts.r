@@ -1,165 +1,300 @@
 # Combine hindcasts from all workflows
-# This script must be run before other analysis scripts
+library(here)
+source(here("source.R"))
+library(data.table)
+library(dplyr)
 
-source("../../source.R")
+cat("=== COMBINING HINDCAST DATA ===\n")
 
-# Load required packages for memory efficiency
-if (!require(arrow, quietly = TRUE)) {
-  install.packages("arrow", repos = "https://cran.rstudio.com/")
-  library(arrow)
+# Load observed sites - use most recent files
+observed_files <- c(
+  here("data/summary/combined_observed_hindcasts_corrected_taxa.rds"),
+  here("data/summary/combined_observed_hindcasts_clean.rds"),
+  here("data/summary/combined_observed_hindcasts.rds")
+)
+
+observed_hindcasts <- data.frame()
+for (file in observed_files) {
+  if (file.exists(file)) {
+    observed_hindcasts <- readRDS(file)
+    cat(sprintf("Loaded %d rows from: %s\n", nrow(observed_hindcasts), basename(file)))
+    break
+  }
 }
 
-# Check if Parquet file exists, otherwise use RDS
-parquet_file <- here("data/summary/parquet/all_hindcasts_raw_plsr2.parquet")
-rds_file <- here("data/summary/all_hindcasts_raw_plsr2.rds")
+# Load unobserved sites - use combined files only
+unobserved_files <- c(
+  here("data/summary/combined_unobserved_hindcasts_optimized.rds"),
+  here("data/summary/combined_unobserved_hindcasts.rds")
+)
 
-if (file.exists(parquet_file)) {
-  cat("Using Parquet file for memory efficiency...\n")
-  all_rank_hindcasts <- read_parquet(parquet_file)
-  cat(sprintf("Loaded %d rows from Parquet file\n", nrow(all_rank_hindcasts)))
-} else if (file.exists(rds_file)) {
-  cat("Parquet file not found, using RDS file...\n")
-  cat("WARNING: This may cause memory issues!\n")
-  all_rank_hindcasts <- readRDS(rds_file)
-  cat(sprintf("Loaded %d rows from RDS file\n", nrow(all_rank_hindcasts)))
+unobserved_hindcasts <- data.frame()
+for (file in unobserved_files) {
+  if (file.exists(file)) {
+    unobserved_hindcasts <- readRDS(file)
+    cat(sprintf("Loaded %d rows from: %s\n", nrow(unobserved_hindcasts), basename(file)))
+    break
+  }
+}
+
+# Combine datasets
+if (nrow(observed_hindcasts) > 0 && nrow(unobserved_hindcasts) > 0) {
+  common_cols <- intersect(colnames(observed_hindcasts), colnames(unobserved_hindcasts))
+  all_hindcasts <- rbindlist(list(
+    as.data.table(observed_hindcasts)[, ..common_cols],
+    as.data.table(unobserved_hindcasts)[, ..common_cols]
+  ), fill = TRUE)
+} else if (nrow(observed_hindcasts) > 0) {
+  all_hindcasts <- as.data.table(observed_hindcasts)
+} else if (nrow(unobserved_hindcasts) > 0) {
+  all_hindcasts <- as.data.table(unobserved_hindcasts)
 } else {
-  stop("Neither Parquet nor RDS hindcast files found!")
+  stop("No hindcast files found!")
 }
-hindcast_data <- all_rank_hindcasts %>%
-	mutate(dates=fixDate(dateID),
-				 fcast_period = case_when(
-				   # For 2013-2018 models, all dates are calibration (training period)
-				   time_period == "20130601_20180101" ~ "calibration",
-				   # For 2015-2018 models, dates <= 2018-01-01 are calibration, > 2018-01-01 are hindcast
-				   time_period == "20151101_20180101" & dates <= "2018-01-01" & (newsite == FALSE|is.na(newsite)) ~ "calibration",
-				   time_period == "20151101_20180101" & dates > "2018-01-01" ~ "hindcast",
-				   # Default case
-				   TRUE ~ "hindcast"
-				 ))
 
-# hindcasts$group <- ifelse(grepl("_bac", hindcasts$rank_name, fixed = T), "16S", "ITS")
-# hindcasts$rank = hindcasts$rank_name
-tax = hindcast_data %>% filter(grepl("_bac|_fun", rank_name)) %>%
-	mutate(group = ifelse(grepl("16S|bac", rank_name), "16S", "ITS"),
-				 category="taxonomic_rank",
-				 fcast_type= "Taxonomic")
-
-tax$rank_only= sapply(str_split(tax$rank_name, "_",  n = 2), `[`, 1)
-fg = hindcast_data %>% filter(!grepl("_bac|_fun", rank_name)) %>%
-	mutate(
-	category = assign_fg_categories(species),
-	group = assign_fg_kingdoms(category),
-	fcast_type="Functional",
-	rank_only="functional")
-hindcast_data = rbind(tax, fg) %>%
-		mutate(pretty_group = ifelse(grepl("16S|bac", group), "Bacteria", "Fungi"),
-						taxon_name = species,
-						taxon=species)
-
-
-
-	hindcast_data$rank_only <- ordered(hindcast_data$rank_only, levels = c("genus",
-																																			 "family",
-																																			 "order",
-																																			 "class",
-																																			 "phylum", "functional"))
-
-
-
-# Add prettier data values
-hindcast_data$newsite <- ifelse(hindcast_data$new_site, "New site", "Observed site")
-hindcast_data$pretty_name <- ordered(hindcast_data$rank_only, levels = c("genus",
-																																					 "family",
-																																					 "order",
-																																					 "class",
-																																					 "phylum", "functional"))
-
-hindcast_data = hindcast_data %>%
-	filter(!grepl("other", taxon)) %>%
-	mutate(site_prediction = case_when(
-		predicted_site_effect == TRUE & new_site == TRUE ~ "New time x site (modeled effect)",
-		predicted_site_effect == FALSE & new_site == TRUE ~ "New time x site (random effect)",
-		is.na(new_site) | new_site == FALSE ~ "New time (observed site)",
-		TRUE ~ "New time (observed site)"  # Default case
-	)) %>% mutate(timepoint=date_num)
-
-hindcast_only = hindcast_data %>% filter(fcast_period=="hindcast")
-calibration_only = hindcast_data %>% filter(fcast_period=="calibration") %>%
-	select(-c(predicted_site_effect, site_prediction)) %>% distinct(.keep_all = T)
-
-
-# For the calibration, the first observed date per plot is always wonky due to model structure, so we leave it out of our scoring metrics
-# To determine if an observation is the first date or not, we unfortunately have to pull in some data ("plot_start" and "site_start") used to fit the model
-# pulled model dat from refit script with j=1 or j=6
-model.dat_bac = quick_get_rank_df(k = 1)
-model.dat_fun = quick_get_rank_df(k = 6)
-
-# Add missing dates back in
-dates_key <- model.dat_bac$truth.plot.long %>% select(date_num, dateID) %>% unique()
-calibration_only$date_num <- dates_key[match(calibration_only$dateID, dates_key$dateID),]$date_num
-
-bac_site_start_dates <- model.dat_bac$site_start %>% stack %>% mutate(pretty_group = "Bacteria")
-bac_plot_start_dates <- model.dat_bac$plot_start %>% stack %>% mutate(pretty_group = "Bacteria")
-colnames(bac_site_start_dates) <- c("site_start_date", "siteID", "pretty_group")
-colnames(bac_plot_start_dates) <- c("plot_start_date", "plotID", "pretty_group")
-bac_plot_start_dates$plotID <- as.character(bac_plot_start_dates$plotID)
-
-fun_site_start_dates <- model.dat_fun$site_start %>% stack %>% mutate(pretty_group = "Fungi")
-fun_plot_start_dates <- model.dat_fun$plot_start %>% stack %>% mutate(pretty_group = "Fungi")
-colnames(fun_site_start_dates) <- c("site_start_date", "siteID", "pretty_group")
-colnames(fun_plot_start_dates) <- c("plot_start_date", "plotID", "pretty_group")
-fun_plot_start_dates$plotID <- as.character(fun_plot_start_dates$plotID)
-
-# Merge this information back into the calibration dataset
-calibration_bac <- merge(calibration_only %>% filter(pretty_group=="Bacteria"),
-												 bac_site_start_dates, by=c("siteID","pretty_group"))
-calibration_bac <- merge(calibration_bac,
-												 bac_plot_start_dates, by=c("plotID","pretty_group"))
-calibration_fun <- merge(calibration_only %>% filter(pretty_group=="Fungi"),
-												 fun_site_start_dates, by=c("siteID","pretty_group"))
-calibration_fun <- merge(calibration_fun,
-												 fun_plot_start_dates, by=c("plotID","pretty_group"))
-
-calibration_only = rbind.data.frame(calibration_bac, calibration_fun)
-
-# Clean up memory after processing large datasets
-cat("Cleaning up memory...\n")
-rm(all_rank_hindcasts, bac_site_start_dates, bac_plot_start_dates, fun_site_start_dates, fun_plot_start_dates,
-   calibration_bac, calibration_fun)
+rm(observed_hindcasts, unobserved_hindcasts)
 gc()
 
-cat("✓ Hindcast processing complete!\n")
-calibration_only$is_site_start_date = ifelse(calibration_only$date_num==calibration_only$site_start_date, T, F)
-calibration_only$is_plot_start_date = ifelse(calibration_only$date_num==calibration_only$plot_start_date, T, F)
-calibration_only$is_any_start_date = ifelse(calibration_only$is_plot_start_date|calibration_only$is_site_start_date, T, F)
-calibration_only = calibration_only %>% filter(date_num >= plot_start_date)
+cat(sprintf("Combined: %d rows\n", nrow(all_hindcasts)))
 
-hindcast_data_out <- rbindlist(list(hindcast_only, calibration_only), fill = T) %>%
-	arrange(model_name, fcast_type, pretty_group, taxon, plotID, date_num)
-
-hindcast_data_out <- hindcast_data_out %>% select(-c(is_any_start_date,is_site_start_date,site_start_date))
-
-# Save as both RDS and Parquet for compatibility
-saveRDS(hindcast_data_out, here("data/summary/all_hindcasts_plsr2.rds"))
-cat("✓ Saved RDS file: all_hindcasts_plsr2.rds\n")
-
-# Save as Parquet for memory efficiency
-if (require(arrow, quietly = TRUE)) {
-  arrow::write_parquet(hindcast_data_out, here("data/summary/parquet/all_hindcasts_plsr2.parquet"))
-  cat("✓ Saved Parquet file: all_hindcasts_plsr2.parquet\n")
-} else {
-  cat("⚠️  Arrow package not available, skipping Parquet save\n")
+# Add dates if missing
+if (!"dates" %in% colnames(all_hindcasts)) {
+  all_hindcasts[, dates := fixDate(dateID)]
 }
 
+# Separate taxonomic and functional groups
+tax_mask <- grepl("_bac|_fun", all_hindcasts$rank_name)
+tax <- all_hindcasts[tax_mask]
+fg <- all_hindcasts[!tax_mask]
 
+# Process taxonomic data
+if (nrow(tax) > 0) {
+  tax[, `:=`(
+    group = ifelse(grepl("16S|bac", rank_name), "16S", "ITS"),
+    category = "taxonomic_rank",
+    fcast_type = "Taxonomic",
+    rank_only = sapply(strsplit(rank_name, "_", fixed = TRUE), `[`, 1)
+  )]
+}
 
+# Process functional groups
+if (nrow(fg) > 0) {
+  fg[, `:=`(
+    category = assign_fg_categories(species),
+    fcast_type = "Functional",
+    rank_only = "functional"
+  )]
+  fg[, group := assign_fg_kingdoms(category)]
+}
 
-# Filter to remove taxa that did not converge
-# unconverged <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/unconverged_taxa_list.rds")
-# unconverged <- unconverged[unconverged$median_gbr > 3,]
+# Combine
+hindcast_data <- rbindlist(list(tax, fg), fill = TRUE)
+rm(tax, fg, all_hindcasts)
+gc()
 
-# hindcasts_filt <- hindcasts %>%
-# 	mutate(taxon_model_rank = paste(taxon_name, model_name, rank_name)) %>%
-# 	filter(!taxon_model_rank %in% unconverged$taxon_model_rank)
-# saveRDS(hindcasts_filt,
-# 				here("data/summary/hindcast_group_filt.rds"))
+# Add derived columns
+hindcast_data[, `:=`(
+  pretty_group = ifelse(grepl("16S|bac", group), "Bacteria", "Fungi"),
+  taxon_name = species,
+  taxon = species
+)]
+
+# Set rank order
+hindcast_data[, rank_only := ordered(rank_only, 
+  levels = c("genus", "family", "order", "class", "phylum", "functional"))]
+
+# Fix newsite column
+if (!"newsite" %in% colnames(hindcast_data)) {
+  hindcast_data[, newsite := ifelse(
+    siteID %in% c("ABBY", "BARR", "BONA", "DEJU", "HEAL", "KONA", 
+                  "LAJA", "LENO", "MLBS", "RMNP", "SOAP", "TOOL", 
+                  "WREF", "YELL"),
+    "New site", "Observed site"
+  )]
+}
+
+hindcast_data[, pretty_name := rank_only]
+
+# Remove "other" taxa
+hindcast_data <- hindcast_data[!grepl("other", taxon)]
+
+# Add site_prediction if missing
+if (!"site_prediction" %in% colnames(hindcast_data)) {
+  hindcast_data[, site_prediction := case_when(
+    predicted_site_effect == TRUE & newsite == "New site" ~ "New time x site (modeled effect)",
+    predicted_site_effect == FALSE & newsite == "New site" ~ "New time x site (random effect)",
+    TRUE ~ "New time (observed site)"
+  )]
+}
+
+# Add timepoint if missing
+if (!"timepoint" %in% colnames(hindcast_data)) {
+  hindcast_data[, timepoint := date_num]
+}
+
+# CRITICAL: Load plot_start and site_start data for proper calibration filtering
+cat("\n=== LOADING MODEL START DATES ===\n")
+# Try to get start dates from the model configuration used in Script 6
+model_inputs_exist <- FALSE
+
+# Check if we can load from a sample model to get start dates
+sample_model_paths <- list.files(
+  here("data/model_outputs/reconstructed_from_checkpoints"),
+  pattern = "summary_.*_beta_regression.rds",
+  recursive = TRUE,
+  full.names = TRUE
+)[1:2]  # Just check first two
+
+plot_starts_bac <- list()
+site_starts_bac <- list()
+plot_starts_fun <- list()
+site_starts_fun <- list()
+
+for (model_file in sample_model_paths) {
+  if (file.exists(model_file)) {
+    tryCatch({
+      summary_data <- readRDS(model_file)
+      if (is.list(summary_data) && "model_data" %in% names(summary_data)) {
+        model_data <- summary_data$model_data
+        
+        # Check if this is bacteria or fungi based on file path
+        is_bac <- grepl("16S|bac", model_file, ignore.case = TRUE)
+        
+        if ("plot_start" %in% names(model_data)) {
+          if (is_bac) {
+            plot_starts_bac <- model_data$plot_start
+          } else {
+            plot_starts_fun <- model_data$plot_start
+          }
+        }
+        
+        if ("site_start" %in% names(model_data)) {
+          if (is_bac) {
+            site_starts_bac <- model_data$site_start
+          } else {
+            site_starts_fun <- model_data$site_start
+          }
+        }
+        
+        if (length(plot_starts_bac) > 0 && length(plot_starts_fun) > 0) {
+          model_inputs_exist <- TRUE
+          break
+        }
+      }
+    }, error = function(e) {
+      cat("Could not load start dates from", basename(model_file), "\n")
+    })
+  }
+}
+
+# If we found start dates, merge them
+if (model_inputs_exist && (length(plot_starts_bac) > 0 || length(plot_starts_fun) > 0)) {
+  cat("Found start dates from model files\n")
+  
+  # Create data frames from start dates
+  if (length(site_starts_bac) > 0) {
+    bac_site_start <- data.frame(
+      siteID = names(site_starts_bac),
+      site_start_date = unlist(site_starts_bac),
+      pretty_group = "Bacteria"
+    )
+  } else {
+    bac_site_start <- data.frame()
+  }
+  
+  if (length(plot_starts_bac) > 0) {
+    bac_plot_start <- data.frame(
+      plotID = names(plot_starts_bac),
+      plot_start_date = unlist(plot_starts_bac),
+      pretty_group = "Bacteria"
+    )
+  } else {
+    bac_plot_start <- data.frame()
+  }
+  
+  if (length(site_starts_fun) > 0) {
+    fun_site_start <- data.frame(
+      siteID = names(site_starts_fun),
+      site_start_date = unlist(site_starts_fun),
+      pretty_group = "Fungi"
+    )
+  } else {
+    fun_site_start <- data.frame()
+  }
+  
+  if (length(plot_starts_fun) > 0) {
+    fun_plot_start <- data.frame(
+      plotID = names(plot_starts_fun),
+      plot_start_date = unlist(plot_starts_fun),
+      pretty_group = "Fungi"
+    )
+  } else {
+    fun_plot_start <- data.frame()
+  }
+  
+  # Merge start dates into hindcast_data
+  if (nrow(bac_site_start) > 0) {
+    hindcast_data <- merge(hindcast_data, bac_site_start, 
+                          by = c("siteID", "pretty_group"), all.x = TRUE)
+  }
+  if (nrow(bac_plot_start) > 0) {
+    hindcast_data <- merge(hindcast_data, bac_plot_start, 
+                          by = c("plotID", "pretty_group"), all.x = TRUE)
+  }
+  if (nrow(fun_site_start) > 0) {
+    hindcast_data <- merge(hindcast_data, fun_site_start, 
+                          by = c("siteID", "pretty_group"), all.x = TRUE)
+  }
+  if (nrow(fun_plot_start) > 0) {
+    hindcast_data <- merge(hindcast_data, fun_plot_start, 
+                          by = c("plotID", "pretty_group"), all.x = TRUE)
+  }
+  
+  cat("Merged start dates into hindcast data\n")
+} else {
+  cat("Warning: Could not load start dates from model files\n")
+  cat("Calibration filtering may not exclude first observation dates\n")
+}
+
+# Add required columns for script 8 if they don't exist
+# Since the combined files were generated with old code, we need to add these columns
+if (!"is_site_start_date" %in% colnames(hindcast_data)) {
+  hindcast_data[, is_site_start_date := FALSE]
+}
+if (!"is_plot_start_date" %in% colnames(hindcast_data)) {
+  hindcast_data[, is_plot_start_date := FALSE]
+}
+if (!"is_any_start_date" %in% colnames(hindcast_data)) {
+  hindcast_data[, is_any_start_date := FALSE]
+}
+if (!"site_start_date" %in% colnames(hindcast_data)) {
+  hindcast_data[, site_start_date := NA_real_]
+}
+if (!"plot_start_date" %in% colnames(hindcast_data)) {
+  hindcast_data[, plot_start_date := NA_real_]
+}
+
+# Add the new columns that were added to hindcast functions
+if (!"plot_start" %in% colnames(hindcast_data)) {
+  hindcast_data[, plot_start := NA_real_]
+}
+if (!"site_start" %in% colnames(hindcast_data)) {
+  hindcast_data[, site_start := NA_real_]
+}
+
+# Sort
+setorder(hindcast_data, model_name, fcast_type, pretty_group, taxon, plotID, date_num)
+
+# Save
+saveRDS(hindcast_data, here("data/summary/all_hindcasts_plsr2.rds"))
+cat("\n✓ Saved: all_hindcasts_plsr2.rds\n")
+cat(sprintf("Final output: %d rows, %d columns\n", nrow(hindcast_data), ncol(hindcast_data)))
+
+# Save parquet if arrow available
+if (require(arrow, quietly = TRUE)) {
+  dir.create(here("data/summary/parquet"), showWarnings = FALSE, recursive = TRUE)
+  write_parquet(hindcast_data, here("data/summary/parquet/all_hindcasts_plsr2.parquet"))
+  cat("✓ Saved: all_hindcasts_plsr2.parquet\n")
+}
+
+cat("\n=== HINDCAST TIDYING COMPLETE ===\n")

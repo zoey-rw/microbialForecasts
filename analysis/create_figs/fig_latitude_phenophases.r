@@ -3,11 +3,20 @@ library(lubridate)
 library(ggrepel)
 source("source.R")
 source("microbialForecast/R/assignPhenology.r")
+source("microbialForecast/R/load_plot_estimates.r")
 
-sum.in <- readRDS(here("data", "summary/logit_beta_regression_summaries.rds"))
+sum.in <- readRDS(here("data", "summary/logit_beta_fixed_priors_summaries.rds"))
 
-# Read in and split up plot-level estimates
-plot_estimates = sum.in$plot_est %>% filter(model_name != "all_covariates") %>% filter(model_id %in% sum.in$keep_models$model_id)
+# Load plot estimates using new memory-efficient functions
+cat("Loading plot estimates for latitude phenophase analysis...\n")
+plot_estimates_env_cycl <- load_plot_estimates_for_phenology("env_cycl")
+plot_estimates_cycl_only <- load_plot_estimates_for_phenology("cycl_only")
+
+# Combine plot estimates from both model types
+plot_estimates <- rbind(plot_estimates_env_cycl, plot_estimates_cycl_only, fill = TRUE)
+
+# Filter to only converged models
+plot_estimates <- plot_estimates %>% filter(model_name != "all_covariates") %>% filter(model_id %in% sum.in$keep_models)
 plot_estimates$month = lubridate::month(plot_estimates$dates)
 plot_estimates$year = lubridate::year(plot_estimates$dates)
 cycl_only_est = plot_estimates %>% filter(grepl("cycl_only",model_name))

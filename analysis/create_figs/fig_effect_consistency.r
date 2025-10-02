@@ -205,7 +205,7 @@ if ("pH" %in% names(predictor_data)) {
     rownames_to_column("plotID")
   
   # Load summaries for nitrifier analysis
-  sum.in <- readRDS(here("data/summary/logit_beta_regression_summaries.rds"))
+  sum.in <- readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
   
   if ("plot_est" %in% names(sum.in)) {
     calibration_df = sum.in$plot_est %>%

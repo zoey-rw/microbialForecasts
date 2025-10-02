@@ -1,8 +1,9 @@
 # Check for spatial autocorrelation in random effects estimated from Bayesian hierarchical models
 
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+library(here)
+source(here("source.R"))
 
-df_predictors <- readRDS(here("data/summary/site_effect_predictors.rds"))
+df_predictors <- readRDS(here("data/clean/site_effect_predictors.rds"))
 
 site_eff_dredged_in <- readRDS(here("data/summary/site_effects_dredged.rds"))
 unobs_sites <- readRDS(here("data/summary/site_effects_unobserved.rds"))
@@ -11,6 +12,8 @@ converged_strict <- readRDS(here("data/summary/converged_taxa_list.rds"))
 library(gstat)
 library(sp)
 library(variosig)
+library(foreach)
+library(doParallel)
 
 
 ## Get site climate data from NEON
@@ -20,6 +23,21 @@ fieldsites_loc <- fieldsites_raw %>% filter(!grepl("Aquatic", field_site_type)) 
 				 longitude = field_longitude,
 				 siteID = field_site_id)
 
+# Create pred_sites data frame by combining dredged and unobserved site effects
+# Use only a subset to avoid memory issues
+pred_sites <- bind_rows(
+  site_eff_dredged_in[[2]] %>% 
+    select(model_id, siteID, rank_only, taxon, model_name, pred, TargetVar) %>%
+    mutate(Median = TargetVar),  # Use TargetVar as the site effect estimate
+  unobs_sites[[1]] %>% 
+    select(model_id, siteID, rank_only, taxon, model_name, pred = fit) %>%
+    left_join(unobs_sites[[2]] %>% 
+                select(model_id, siteID, Median, LCI, UCI), 
+              by = c("model_id", "siteID"), 
+              relationship = "many-to-many") %>%  # Explicitly allow many-to-many
+    sample_n(min(1000, nrow(.)))  # Limit to 1000 rows to avoid memory issues
+)
+
 out_plots = list()
 out_sig = list()
 
@@ -27,7 +45,7 @@ model_id_list = pred_sites %>% filter(!grepl("other", taxon)) %>%
 	distinct(model_id) %>% unlist()
 
 pacman::p_load(doParallel)
-cl <- makeCluster(27, type="FORK", outfile="")
+cl <- makeCluster(4, type="FORK", outfile="")  # Reduced from 27 to 4 cores to avoid memory issues
 registerDoParallel(cl)
 
 

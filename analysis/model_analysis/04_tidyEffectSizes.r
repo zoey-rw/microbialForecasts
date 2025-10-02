@@ -1,12 +1,12 @@
 # Combine & separately save model parameter and effect size estimates (beta covariates) from all models
 
-source("../../source.R")
+source("source.R")
 pacman::p_load(stringr, forestplot, gridExtra)
 
 # Read in summaries and combine into fewer dfs for parameter effects
 
 # Functional groups
-sum.in <- readRDS(here("data", paste0("summary/logit_beta_regression_summaries.rds")))
+sum.in <- readRDS(here("data", paste0("summary/logit_beta_fixed_priors_summaries.rds")))
 sum.all <- sum.in$summary_df  %>% filter(model_name != "all_covariates") %>% 
 	mutate(tax_rank = rank,
 																				 time_period = recode(time_period, !!!microbialForecast:::date_recode))
@@ -47,7 +47,7 @@ site_effects <- df %>% filter(grepl("site", rowname))
 saveRDS(site_effects, here("data", "summary/site_effects.rds"))
 
 # Linear model beta (covariate) effects
-rho_effects <- df %>% filter(grepl("rho", rowname) | grepl("core_sd", rowname))
+rho_effects <- df %>% filter(grepl("rho", rowname) | grepl("precision", rowname))
 saveRDS(rho_effects, here("data", "summary/rho_core_sd_effects.rds"))
 
 # Seasonality (cos/sin) effects
@@ -57,7 +57,8 @@ if (nrow(seas_params) > 0) {
 																												#"pretty_name","
 																										 "pretty_group","rank","rank_only"),
 																						names_from = beta,
-																						values_from = c("Mean","significant")) %>% rename(sin="Mean_sin", cos = "Mean_cos")
+																						values_from = c("Mean","significant"),
+																						values_fn = mean) %>% rename(sin="Mean_sin", cos = "Mean_cos")
 } else {
   cat("No seasonal parameters found - creating empty seasonal data\n")
   seas_vals <- data.frame()  # Empty dataframe for seasonal values
@@ -65,10 +66,21 @@ if (nrow(seas_params) > 0) {
 
 if (nrow(seas_vals) > 0) {
   # Convert to amplitude and max
-  # Didn't vectorize this function, oops
+  # Handle list columns by taking the first value and ensure single values
   out <- list()
   for (i in 1:nrow(seas_vals)) {
-    out[[i]] <- sin_cos_to_seasonality(seas_vals$sin[[i]], seas_vals$cos[[i]])
+    sin_val <- if(is.list(seas_vals$sin[[i]])) seas_vals$sin[[i]][[1]] else seas_vals$sin[[i]]
+    cos_val <- if(is.list(seas_vals$cos[[i]])) seas_vals$cos[[i]][[1]] else seas_vals$cos[[i]]
+    
+    # Ensure single values (not vectors)
+    if(length(sin_val) > 1) sin_val <- sin_val[1]
+    if(length(cos_val) > 1) cos_val <- cos_val[1]
+    
+    # Handle NA values
+    if(is.na(sin_val)) sin_val <- 0
+    if(is.na(cos_val)) cos_val <- 0
+    
+    out[[i]] <- sin_cos_to_seasonality(sin_val, cos_val)
   }
   out <- rbindlist(out)
   seas_vals <- cbind.data.frame(seas_vals, out)
@@ -93,6 +105,19 @@ if (nrow(seas_vals) > 0) {
   for (row in 1:nrow(seas_vals_only)){
     alpha = seas_vals_only[row,]$sin
     beta = seas_vals_only[row,]$cos
+    
+    # Handle list columns by taking the first value
+    if(is.list(alpha)) alpha <- alpha[[1]]
+    if(is.list(beta)) beta <- beta[[1]]
+    
+    # Ensure single values
+    if(length(alpha) > 1) alpha <- alpha[1]
+    if(length(beta) > 1) beta <- beta[1]
+    
+    # Handle NA values
+    if(is.na(alpha)) alpha <- 0
+    if(is.na(beta)) beta <- 0
+    
     df = input_date_df
     y_cycl = alpha * sin(2*pi*input_date_df$x/12) + beta * cos(2*pi*input_date_df$x/12)
     names(y_cycl) = input_date_df$dates
@@ -159,13 +184,10 @@ if (nrow(seas_vals) > 0) {
 #
 #
 # 	# Check the predicted~observed time series
-# 	ggplot(sum.in$plot_est) +
-# 		geom_point(aes( x = Mean, y = as.numeric(truth),
-# 										color = siteID), show.legend = F, alpha=.5)  +
-# 		ylab("Observed") + xlab("Predicted") +
+ggplot(sum.in$plot_est) +
+geom_point(aes( x = Mean, y = as.numeric(truth),
+										color = siteID), show.legend = F, alpha=.5)  +
+		ylab("Observed") + xlab("Predicted") +
 # 		theme_minimal(base_size = 18) +
-# 		ggtitle("Overestimating plot means") +
-# 		geom_abline(slope=1, intercept = 0) + facet_wrap(~taxon)
-
-
-
+		ggtitle("Overestimating plot means") +
+		geom_abline(slope=1, intercept = 0) + facet_wrap(~taxon)
