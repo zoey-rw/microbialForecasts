@@ -1,20 +1,21 @@
 # Calculate forecast horizons
 
 # Visualize the forecast horizon
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+library(here)
+source(here("source.R"))
 # install.packages('egg', dependencies = TRUE)
 library(egg)
 library(ggpmisc) # for polynomial plotting function
 
 # Check if Parquet file exists, otherwise use RDS
-parquet_file <- here("data/summary/parquet/all_hindcasts.parquet")
-rds_file <- here("data/summary/all_hindcasts.rds")
+parquet_file <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
+rds_file <- here("data/summary/all_hindcasts_plsr2_complete.rds")
 
 if (file.exists(parquet_file)) {
   cat("Using Parquet file for memory efficiency...\n")
   hindcast_in <- arrow::read_parquet(parquet_file)
 } else if (file.exists(rds_file)) {
-  cat("Parquet file not found, using RDS file...\n")
+  cat("Using complete RDS file...\n")
   hindcast_in <- readRDS(rds_file)
 } else {
   stop("Neither Parquet nor RDS hindcast files found!")
@@ -32,7 +33,9 @@ last_obs = hindcast_data %>%
 	filter(fcast_period != "hindcast" & !is.na(truth)) %>%
 	filter(timepoint == max(timepoint, na.rm=T)) %>%
 	mutate(last_obs = timepoint) %>%
-	select(plotID, last_obs) %>% distinct()
+	select(plotID, model_id, last_obs) %>% 
+	mutate(model_id = gsub("_beta_regression$", "", model_id)) %>%  # Remove _beta_regression suffix
+	distinct()
 
 hindcast_data[hindcast_data$truth==0,]$truth <- .0001
 
@@ -40,21 +43,29 @@ hindcast_data[hindcast_data$truth==0,]$truth <- .0001
 # Calculate "time since final observation" for forecasts
 fcast_horizon_df = hindcast_data %>%
 	#filter(model_id %in% converged) %>%
-	filter(!is.na(truth) & fcast_period=="hindcast" & new_site==FALSE) %>%
-	merge(last_obs) %>%
+	filter(!is.na(truth) & fcast_period=="hindcast" & new_site=="Observed site") %>%
+	merge(last_obs, by = c("plotID", "model_id")) %>%
 	group_by(model_id,model_name) %>% 
 	mutate(months_since_obs = timepoint - last_obs)
 
+# CRITICAL FIX: Calculate CRPS scores for each row before summarizing
+fcast_horizon_df$crps <- crps(fcast_horizon_df$truth, family = "tnorm", 
+                              location = fcast_horizon_df$mean, 
+                              scale = fcast_horizon_df$sd,
+                              lower = 0, upper = 1)
 
 # Calculate average scores by model
 fcast_horizon_model_mean = fcast_horizon_df %>%
 	group_by(taxon,model_name,pretty_group, rank_only, model_id, months_since_obs) %>%
-	summarize(mean_crps = mean(crps, na.rm=T),
-						RMSE = rmse(actual = truth, predicted = mean),
-						RSQ.1 = 1 - (RMSE^2)/var(truth),
-						MAPE = mape(actual = truth, predicted = mean),
-						RSQ = summary(lm(truth ~ mean))$r.squared,
-						abundance = mean(truth, na.rm = T), RMSE.norm = RMSE/abundance) %>% distinct()
+	summarize(
+		mean_crps = if(sum(!is.na(truth) & !is.na(mean)) > 0) mean(crps, na.rm=T) else NA,
+		RMSE = if(sum(!is.na(truth) & !is.na(mean)) > 0) rmse(actual = truth, predicted = mean) else NA,
+		RSQ.1 = if(sum(!is.na(truth) & !is.na(mean)) > 0) 1 - (RMSE^2)/var(truth, na.rm=T) else NA,
+		MAPE = if(sum(!is.na(truth) & !is.na(mean)) > 0) mape(actual = truth, predicted = mean) else NA,
+		RSQ = if(sum(!is.na(truth) & !is.na(mean)) > 1) summary(lm(truth ~ mean))$r.squared else NA,
+		abundance = mean(truth, na.rm = T), 
+		RMSE.norm = if(!is.na(RMSE) && abundance > 0) RMSE/abundance else NA
+	) %>% distinct()
 fcast_horizon_model_mean$RSQ.1 = ifelse(fcast_horizon_model_mean$RSQ.1 < 0, 0, fcast_horizon_model_mean$RSQ.1)
 fcast_horizon_model_mean$RMSE.norm = ifelse(fcast_horizon_model_mean$RMSE.norm > 5, 5, fcast_horizon_model_mean$RMSE.norm)
 
@@ -85,16 +96,22 @@ fcast_horizon_df2 <- merge(fcast_horizon_df, historical_mean, by=c("taxon","mode
 fcast_horizon_null_site = fcast_horizon_df2 %>%
 	filter(site_sd != 0) %>% 
 	group_by(taxon,model_name,pretty_group, rank_only, model_id) %>%
-	summarize(null_CRPS = mean(crps_norm(truth, site_mean,
-																			 site_sd)),
-						null_CRPS_truncated = mean(crps(truth, family = "tnorm",
-																						location = site_mean, scale = site_sd,
-																						lower = 0, upper = 1)),
-						null_RMSE = rmse(actual = truth, predicted = site_mean),
-						null_RSQ.1 = 1 - (null_RMSE^2)/var(truth),
-						null_MAPE = mape(actual = truth, predicted = site_mean),
-						null_RSQ = summary(lm(truth ~ site_mean))$r.squared,
-						abundance = mean(truth, na.rm = T), RMSE.norm = null_RMSE/abundance) %>% distinct()
+	summarize(
+		null_CRPS = if(sum(!is.na(truth) & !is.na(site_mean)) > 0) mean(crps_norm(truth, site_mean, site_sd), na.rm=T) else NA,
+		null_CRPS_truncated = if(sum(!is.na(truth) & !is.na(site_mean) & !is.na(site_sd)) > 0) {
+			tryCatch({
+				mean(crps(truth, family = "tnorm", location = site_mean, scale = site_sd, lower = 0, upper = 1), na.rm=T)
+			}, error = function(e) {
+				NA
+			})
+		} else NA,
+		null_RMSE = if(sum(!is.na(truth) & !is.na(site_mean)) > 0) rmse(actual = truth, predicted = site_mean) else NA,
+		null_RSQ.1 = if(sum(!is.na(truth) & !is.na(site_mean)) > 0) 1 - (null_RMSE^2)/var(truth, na.rm=T) else NA,
+		null_MAPE = if(sum(!is.na(truth) & !is.na(site_mean)) > 0) mape(actual = truth, predicted = site_mean) else NA,
+		null_RSQ = if(sum(!is.na(truth) & !is.na(site_mean)) > 1) summary(lm(truth ~ site_mean))$r.squared else NA,
+		abundance = mean(truth, na.rm = T), 
+		RMSE.norm = if(!is.na(null_RMSE) && abundance > 0) null_RMSE/abundance else NA
+	) %>% distinct()
 fcast_horizon_null_site$null_RSQ.1 = ifelse(fcast_horizon_null_site$null_RSQ.1 < 0, 0, fcast_horizon_null_site$null_RSQ.1)
 fcast_horizon_null_site$months_since_obs = Inf
 
@@ -105,16 +122,22 @@ last_obs_values = inner_join(hindcast_data, last_obs %>% mutate(timepoint=last_o
 last_obs_score <- last_obs_values %>%
 	mutate(months_since_obs = 0) %>% 
 	group_by(taxon,model_name,pretty_group, rank_only, model_id, months_since_obs) %>%
-	summarize(CRPS = mean(crps_norm(truth, mean,
-																			 sd)),
-						CRPS_truncated = mean(crps(truth, family = "tnorm",
-																						location = mean, scale = sd,
-																						lower = 0, upper = 1)),
-						RMSE = rmse(actual = truth, predicted = mean),
-						RSQ.1 = 1 - (RMSE^2)/var(truth),
-						MAPE = mape(actual = truth, predicted = mean),
-						RSQ = summary(lm(truth ~ mean))$r.squared,
-						abundance = mean(truth, na.rm = T), RMSE.norm = RMSE/abundance) %>% distinct()
+	summarize(
+		CRPS = if(sum(!is.na(truth) & !is.na(mean) & !is.na(sd)) > 0) mean(crps_norm(truth, mean, sd), na.rm=T) else NA,
+		CRPS_truncated = if(sum(!is.na(truth) & !is.na(mean) & !is.na(sd)) > 0) {
+			tryCatch({
+				mean(crps(truth, family = "tnorm", location = mean, scale = sd, lower = 0, upper = 1), na.rm=T)
+			}, error = function(e) {
+				NA
+			})
+		} else NA,
+		RMSE = if(sum(!is.na(truth) & !is.na(mean)) > 0) rmse(actual = truth, predicted = mean) else NA,
+		RSQ.1 = if(sum(!is.na(truth) & !is.na(mean)) > 0) 1 - (RMSE^2)/var(truth, na.rm=T) else NA,
+		MAPE = if(sum(!is.na(truth) & !is.na(mean)) > 0) mape(actual = truth, predicted = mean) else NA,
+		RSQ = if(sum(!is.na(truth) & !is.na(mean)) > 1) summary(lm(truth ~ mean))$r.squared else NA,
+		abundance = mean(truth, na.rm = T), 
+		RMSE.norm = if(!is.na(RMSE) && abundance > 0) RMSE/abundance else NA
+	) %>% distinct()
 last_obs_score$RSQ.1 = ifelse(last_obs_score$RSQ.1 < 0, 0, last_obs_score$RSQ.1)
 last_obs_score$RMSE.norm = ifelse(last_obs_score$RMSE.norm > 5, 5, last_obs_score$RMSE.norm)
 
@@ -144,14 +167,14 @@ out_figure_list = list()
 
 
 #Run for multiple ranks, in parallel
-cl <- makeCluster(28, type="FORK", 
+cl <- makeCluster(4, type="FORK", 
 									outfile="")
 registerDoParallel(cl)
 
 # for testing
 out_parallel_list = foreach(model_id = model_id_list, 
 														.errorhandling = 'remove') %dopar% {
-															source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+															source(here("source.R"))
 															
 #for(model_id in model_id_list){
 	print(model_id)

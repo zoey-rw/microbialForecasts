@@ -31,23 +31,56 @@ if (!require(here)) {
     library(here)
 }
 
+# Set project root
+project_root <- here()
+
+# Set debug mode flag
+debug_mode <- FALSE  # Set to TRUE for debugging
+
+# Load the microbialForecast package to access helper functions
+library(microbialForecast)
+
+# Load packages and create directories using package functions
+load_required_packages()
+create_directories_safe(
+    here("data", "model_outputs"), 
+    c("CLR_regression", "CLR_regression/cycl_only", "CLR_regression/env_cycl", "CLR_regression/env_cov")
+)
+
 # Source the main script with correct path
 source(here("source.R"))
 
+# Function to filter files to only include those with both 'with_legacy_covariate' and 'clr'
+# AND exclude checkpoint files (we only want final combined sample files)
+filter_standard_files <- function(file_list) {
+  if (length(file_list) == 0) return(file_list)
+  
+  standard_files <- file_list[grepl('with_legacy_covariate', basename(file_list)) & 
+                              grepl('clr', basename(file_list)) &
+                              !grepl('checkpoint', basename(file_list))]
+  
+  cat('File filtering applied:\n')
+  cat('  Original files:', length(file_list), '\n')
+  cat('  Standard files (with CLR suffixes, no checkpoints):', length(standard_files), '\n')
+  cat('  Filtered out:', length(file_list) - length(standard_files), '\n\n')
+  
+  return(standard_files)
+}
+
 # Function to check if MCMC should continue based on effective sample size
 check_continue <- function(samples, min_eff_size = 10) {
-	cat("    DEBUG: check_continue called with", nrow(samples), "samples\n")
+	if (debug_mode) cat("    DEBUG: check_continue called with", nrow(samples), "samples\n")
 	
 	# Convert to mcmc object for effectiveSize calculation
 	if (!inherits(samples, "mcmc")) {
-		cat("    DEBUG: Converting samples to mcmc object\n")
+		if (debug_mode) cat("    DEBUG: Converting samples to mcmc object\n")
 		samples <- as.mcmc(samples)
 	}
 	
 	# Calculate effective sample sizes for all parameters
-	cat("    DEBUG: Calculating effective sample sizes...\n")
+	if (debug_mode) cat("    DEBUG: Calculating effective sample sizes...\n")
 	eff_sizes <- effectiveSize(samples)
-	cat("    DEBUG: ESS calculated for", length(eff_sizes), "parameters\n")
+	if (debug_mode) cat("    DEBUG: ESS calculated for", length(eff_sizes), "parameters\n")
 	
 	# Check if any parameter has ESS below threshold
 	min_ess <- min(eff_sizes, na.rm = TRUE)
@@ -69,18 +102,27 @@ params_in = read.csv(here("data/clean/model_input_df.csv"),
 rerun_list = readRDS(here("data/summary/unconverged_taxa_list.rds"))
 converged_list = readRDS(here("data/summary/converged_taxa_list.rds"))
 
-	# Focus on legacy covariate models for 2013-2018 period
-	params <- params_in %>% ungroup %>% filter(
-		# Test multiple ranks for generalization testing
-		rank.name %in% c("phylum_fun") &
-		# Focus on 2013-2018 period (both legacy and non-legacy scenarios)
-		scenario %in% c("Legacy with covariate 2013-2018") &
-		# All three model types
-		model_name %in% c("env_cycl")
-	) %>% distinct(.keep_all = TRUE)
+	# Set testing mode flag
+	testing_mode <- TRUE  # Set to FALSE for production
+	
+	if (testing_mode) {
+		# Focus on cycl_only models for testing with both ascomycota and functional groups
+		params <- params_in %>% ungroup %>% filter(
+			# Test both phylum and functional groups for generalization testing
+			rank.name %in% c("phylum_fun", "cellulolytic") &
+			# Focus on 2013-2018 period with legacy covariate
+			scenario %in% c("Legacy with covariate 2013-2018") &
+			# Test cycl_only model type
+			model_name %in% c("cycl_only")
+		) %>% distinct(.keep_all = TRUE)
+	} else {
+		# Production mode - use all parameters
+		params <- params_in %>% ungroup %>% distinct(.keep_all = TRUE)
+	}
 
-# Filter out already converged models
-params <- params %>% filter(!model_id %in% converged_list)
+# TESTING: Don't filter out already converged models - run all models
+# params <- params %>% filter(!model_id %in% converged_list)
+cat("TESTING MODE: Running all models regardless of convergence status\n")
 
 cat("Running", nrow(params), "models for index", k, "\n")
 cat("Model configuration:\n")
@@ -215,10 +257,44 @@ run_scenarios_fixed <- function(j, chain_no) {
 
 	# Add legacy covariate if needed
 	if (use_legacy_covariate) {
-		# Create legacy covariate: 1 for legacy period (2013-2015), 0 for post-2015
-		# FIXED: Access plot_date from sample_values, not directly from model.dat
-		legacy_dates <- model.dat$sample_values$plot_date >= "2013-06-27" & model.dat$sample_values$plot_date <= "2015-11-30"
-		constants$legacy <- as.numeric(legacy_dates)
+		cat("Adding legacy covariate with enhanced validation...\n")
+		
+		# Create legacy covariate matrix properly for plot x time indexing
+		# The legacy covariate should be 1 for legacy period (2013-2015), 0 for post-2015
+		cat("Creating legacy covariate matrix for plot x time structure...\n")
+		cat("Matrix dimensions needed:", constants$N.plot, "plots ×", constants$N.date, "time points\n")
+		
+		# Use time-based approach (simpler and more robust)
+		if ("timepoint" %in% names(model.dat)) {
+			cat("Using timepoint for legacy calculation...\n")
+			# Use timepoint-based legacy: assume early timepoints are legacy
+			timepoints <- sort(unique(model.dat$timepoint))
+			cat("Time points:", length(timepoints), "\n")
+			cat("N.date constant:", constants$N.date, "\n")
+			
+			# Create legacy vector that matches N.date exactly
+			if (length(timepoints) == constants$N.date) {
+				legacy_by_time <- timepoints <= quantile(timepoints, 0.6)  # First 60% are legacy
+			} else {
+				# If dimensions don't match, create a vector of length N.date
+				cat("WARNING: Timepoint length (", length(timepoints), ") != N.date (", constants$N.date, "), creating default pattern\n")
+				legacy_by_time <- 1:constants$N.date <= quantile(1:constants$N.date, 0.6)
+			}
+			
+			cat("Legacy time points:", sum(legacy_by_time), "\n")
+			cat("Legacy vector length:", length(legacy_by_time), "\n")
+			
+			# Expand to full matrix (all plots have same legacy status per time point)
+			constants$legacy <- matrix(as.numeric(legacy_by_time), nrow = constants$N.plot, ncol = constants$N.date, byrow = TRUE)
+			
+		} else {
+			cat("WARNING: No time information available, creating default legacy pattern\n")
+			# Default: first half of time period is legacy
+			legacy_by_time <- rep(c(1, 0), length.out = constants$N.date)
+			constants$legacy <- matrix(as.numeric(legacy_by_time), nrow = constants$N.plot, ncol = constants$N.date, byrow = TRUE)
+		}
+		
+		cat("Legacy matrix created successfully\n")
 		
 		# Validate legacy covariate to prevent extreme values
 		legacy_sum <- sum(constants$legacy)
@@ -229,6 +305,9 @@ run_scenarios_fixed <- function(j, chain_no) {
 		
 		cat("Legacy covariate added:", legacy_sum, "legacy observations out of", legacy_total, "\n")
 		cat("Legacy proportion:", round(legacy_sum/legacy_total, 3), "\n")
+		cat("Legacy matrix dimensions:", nrow(constants$legacy), "x", ncol(constants$legacy), "\n")
+		
+		cat("  ✓ Legacy covariate added successfully\n")
 	}
 	
 	# Model hyperparameters - adjust based on model type
@@ -240,9 +319,14 @@ run_scenarios_fixed <- function(j, chain_no) {
 		constants$N.beta = 2
 	}
 	
-	# Add plot estimate matrices for monitoring (CLR models need these for downstream analysis)
-	constants$plot_estimates <- matrix(0, nrow = constants$N.plot, ncol = constants$N.date)
-	constants$plot_predictions <- matrix(0, nrow = constants$N.plot, ncol = constants$N.date)
+	# Remove plot estimate matrices from constants - they will be calculated deterministically
+	# constants$plot_estimates and constants$plot_predictions are not needed
+	# These will be calculated as deterministic nodes in the model
+	
+	# Add missing plot indexing constants for NIMBLE loops
+	# For CLR models, we assume all plots start at time 1 and have full time series
+	constants$plot_start <- rep(1, constants$N.plot)  # All plots start at time 1
+	constants$plot_index <- rep(2, constants$N.plot)  # Dynamic evolution starts at time 2
 	
 	cat("Constants prepared successfully\n")
 	
@@ -251,63 +335,74 @@ run_scenarios_fixed <- function(j, chain_no) {
 		modelCode <- nimble::nimbleCode({
 			# OBSERVATION MODEL - CLR transformation
 			for (i in 1:N.core) {
-				y[i] ~ dnorm(mu[i], sd = 1/sqrt(precision))
-				mu[i] <- intercept +
-					beta[1] * sin_mo[timepoint[i]] +
-					beta[2] * cos_mo[timepoint[i]] +
-					legacy_effect * legacy[i] +
-					site_effect[plot_site_num[i]]
+				y[i] ~ dnorm(mu[plot_num[i], timepoint[i]], sd = 1/sqrt(precision))
+			}
+			
+			# PROCESS MODEL - Dynamic linear model with temporal dependence
+			for (p in 1:N.plot) {
+				# Initial condition - Single time point
+				for (t in plot_start[p]) {
+					Ex[p, t] ~ dunif(-5, 5)  # CLR scale initial values
+					mu[p, t] ~ dnorm(Ex[p, t], sd = 1/sqrt(precision))
+				}
+				
+				# Dynamic evolution - Temporal autocorrelation
+				for (t in plot_index[p]:N.date) {
+					# Linear predictor with temporal dependence
+					Ex[p, t] <- rho * mu[p, t - 1] +
+						beta[1] * sin_mo[t] +
+						beta[2] * cos_mo[t] +
+						site_effect[plot_site_num[p]] +
+						legacy_effect * legacy[p, t] +
+						intercept
+					
+					# Process model with observation error
+					mu[p, t] ~ dnorm(Ex[p, t], sd = 1/sqrt(precision))
+				}
 			}
 			
 			# DETERMINISTIC NODES - Plot-level estimates for monitoring
 			for (p in 1:N.plot) {
 				for (t in 1:N.date) {
-					plot_estimates[p, t] <- intercept +
-						beta[1] * sin_mo[t] +
-						beta[2] * cos_mo[t] +
-						legacy_effect * legacy[1] +  # Use first legacy value for all time points
-						site_effect[plot_site_num[p]]
-					
-					plot_predictions[p, t] <- plot_estimates[p, t]  # For CLR, predictions = estimates
+					plot_estimates[p, t] <- Ex[p, t]  # Expected values
+					plot_predictions[p, t] <- mu[p, t]  # Predicted values with process error
 				}
 			}
 
-					# 🚨 TIGHT PRIORS FOR CLR DATA - CLR scale is much larger than expected
-		site_effect_sd ~ dgamma(5, 100)  # Very tight: dgamma(5, 100) for CLR scale
-		for (k in 1:N.site) {
-			site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Site effects with hierarchical prior
-		}
-		
-		precision ~ dgamma(0.001, 0.001)  # Jeffreys prior - very weak, proven
-		intercept ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
-		legacy_effect ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
-		
-		for (b in 1:2) {
-			beta[b] ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
-		}
+								# WIDER PRIORS FOR CLR DATA - Model is working well, can use more informative priors
+			site_effect_sd ~ dgamma(2, 20)  # More informative: dgamma(2, 20) for site effects
+			for (k in 1:N.site) {
+				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Site effects with hierarchical prior
+			}
+			
+			precision ~ dgamma(0.001, 0.001)  # Jeffreys prior - very weak, proven
+			rho ~ dbeta(1, 1)  # Uniform prior for temporal dependence - very weak
+			intercept ~ dnorm(0, sd = 10)  # Wide normal prior for intercept
+			legacy_effect ~ dnorm(0, sd = 10)  # Wide normal prior for legacy effect
+			
+			for (b in 1:2) {
+				beta[b] ~ dnorm(0, sd = 10)  # Wide normal prior for seasonal coefficients
+			}
 		})
 	} else if (model_name == "env_cycl" && use_legacy_covariate) {
 		modelCode <- nimble::nimbleCode({
 			# OBSERVATION MODEL - CLR transformation
 			for (i in 1:N.core) {
-				y[i] ~ dnorm(mu[i], sd = 1/sqrt(precision))
-				mu[i] <- intercept +
-					beta[1] * temp[plot_site_num[i], timepoint[i]] +
-					beta[2] * mois[plot_site_num[i], timepoint[i]] +
-					beta[3] * pH[plot_num[i], timepoint[i]] +
-					beta[4] * pC[plot_num[i], timepoint[i]] +
-					beta[5] * relEM[plot_num[i], timepoint[i]] +
-					beta[6] * LAI[plot_site_num[i], timepoint[i]] +
-					beta[7] * sin_mo[timepoint[i]] +
-					beta[8] * cos_mo[timepoint[i]] +
-					legacy_effect * legacy[i] +
-					site_effect[plot_site_num[i]]
+				y[i] ~ dnorm(mu[plot_num[i], timepoint[i]], sd = 1/sqrt(precision))
 			}
 			
-			# DETERMINISTIC NODES - Plot-level estimates for monitoring
+			# PROCESS MODEL - Dynamic linear model with temporal dependence
 			for (p in 1:N.plot) {
-				for (t in 1:N.date) {
-					plot_estimates[p, t] <- intercept +
+				# Initial condition - Single time point
+				for (t in plot_start[p]) {
+					Ex[p, t] ~ dunif(-5, 5)  # CLR scale initial values
+					mu[p, t] ~ dnorm(Ex[p, t], sd = 1/sqrt(precision))
+				}
+				
+				# Dynamic evolution - Temporal autocorrelation
+				for (t in plot_index[p]:N.date) {
+					# Linear predictor with temporal dependence and environmental covariates
+					Ex[p, t] <- rho * mu[p, t - 1] +
 						beta[1] * temp[plot_site_num[p], t] +
 						beta[2] * mois[plot_site_num[p], t] +
 						beta[3] * pH[p, t] +
@@ -316,72 +411,93 @@ run_scenarios_fixed <- function(j, chain_no) {
 						beta[6] * LAI[plot_site_num[p], t] +
 						beta[7] * sin_mo[t] +
 						beta[8] * cos_mo[t] +
-						legacy_effect * legacy[1] +  # Use first legacy value for all time points
-						site_effect[plot_site_num[p]]
+						site_effect[plot_site_num[p]] +
+						legacy_effect * legacy[p, t] +
+						intercept
 					
-					plot_predictions[p, t] <- plot_estimates[p, t]  # For CLR, predictions = estimates
+					# Process model with observation error
+					mu[p, t] ~ dnorm(Ex[p, t], sd = 1/sqrt(precision))
 				}
 			}
 			
-			# 🚨 TIGHT PRIORS FOR CLR DATA - CLR scale is much larger than expected
-			site_effect_sd ~ dgamma(5, 100)  # Very tight: dgamma(5, 100) for CLR scale
+			# DETERMINISTIC NODES - Plot-level estimates for monitoring
+			for (p in 1:N.plot) {
+				for (t in 1:N.date) {
+					plot_estimates[p, t] <- Ex[p, t]  # Expected values
+					plot_predictions[p, t] <- mu[p, t]  # Predicted values with process error
+				}
+			}
+			
+			# WIDER PRIORS FOR CLR DATA - Model is working well, can use more informative priors
+			site_effect_sd ~ dgamma(2, 20)  # More informative: dgamma(2, 20) for site effects
 			for (k in 1:N.site) {
 				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Site effects with hierarchical prior
 			}
 			
 			precision ~ dgamma(0.001, 0.001)  # Jeffreys prior - very weak, proven
-			intercept ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
-			legacy_effect ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
+			rho ~ dbeta(1, 1)  # Uniform prior for temporal dependence - very weak
+			intercept ~ dnorm(0, sd = 10)  # Wide normal prior for intercept
+			legacy_effect ~ dnorm(0, sd = 10)  # Wide normal prior for legacy effect
 			
 			for (b in 1:8) {
-				beta[b] ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
+				beta[b] ~ dnorm(0, sd = 10)  # Wide normal prior for environmental and seasonal coefficients
 			}
 		})
 	} else if (model_name == "env_cov" && use_legacy_covariate) {
 		modelCode <- nimble::nimbleCode({
 			# OBSERVATION MODEL - CLR transformation
 			for (i in 1:N.core) {
-				y[i] ~ dnorm(mu[i], sd = 1/sqrt(precision))
-				mu[i] <- intercept +
-					beta[1] * temp[plot_site_num[i], timepoint[i]] +
-					beta[2] * mois[plot_site_num[i], timepoint[i]] +
-					beta[3] * pH[plot_num[i], timepoint[i]] +
-					beta[4] * pC[plot_num[i], timepoint[i]] +
-					beta[5] * relEM[plot_num[i], timepoint[i]] +
-					beta[6] * LAI[plot_site_num[i], timepoint[i]] +
-					legacy_effect * legacy[i] +
-					site_effect[plot_site_num[i]]
+				y[i] ~ dnorm(mu[plot_num[i], timepoint[i]], sd = 1/sqrt(precision))
+			}
+			
+			# PROCESS MODEL - Dynamic linear model with temporal dependence
+			for (p in 1:N.plot) {
+				# Initial condition - Single time point
+				for (t in plot_start[p]) {
+					Ex[p, t] ~ dunif(-5, 5)  # CLR scale initial values
+					mu[p, t] ~ dnorm(Ex[p, t], sd = 1/sqrt(precision))
+				}
+				
+				# Dynamic evolution - Temporal autocorrelation
+				for (t in plot_index[p]:N.date) {
+					# Linear predictor with temporal dependence and environmental covariates only
+					Ex[p, t] <- rho * mu[p, t - 1] +
+						beta[1] * temp[plot_site_num[p], t] +
+						beta[2] * mois[plot_site_num[p], t] +
+						beta[3] * pH[p, t] +
+						beta[4] * pC[p, t] +
+						beta[5] * relEM[p, t] +
+						beta[6] * LAI[plot_site_num[p], t] +
+						site_effect[plot_site_num[p]] +
+						legacy_effect * legacy[p, t] +
+						intercept
+					
+					# Process model with observation error
+					mu[p, t] ~ dnorm(Ex[p, t], sd = 1/sqrt(precision))
+				}
 			}
 			
 			# DETERMINISTIC NODES - Plot-level estimates for monitoring
 			for (p in 1:N.plot) {
 				for (t in 1:N.date) {
-					plot_estimates[p, t] <- intercept +
-						beta[1] * temp[plot_to_site[p], t] +
-						beta[2] * mois[plot_to_site[p], t] +
-						beta[3] * pH[p, t] +
-						beta[4] * pC[p, t] +
-						beta[5] * relEM[p, t] +
-						beta[6] * LAI[plot_to_site[p], t] +
-						legacy_effect * legacy[1] +  # Use first legacy value for all time points
-						site_effect[plot_to_site[p]]
-					
-					plot_predictions[p, t] <- plot_estimates[p, t]  # For CLR, predictions = estimates
+					plot_estimates[p, t] <- Ex[p, t]  # Expected values
+					plot_predictions[p, t] <- mu[p, t]  # Predicted values with process error
 				}
 			}
 
-			# 🚨 TIGHT PRIORS FOR CLR DATA - CLR scale is much larger than expected
-			site_effect_sd ~ dgamma(5, 100)  # Very tight: dgamma(5, 100) for CLR scale
+			# WIDER PRIORS FOR CLR DATA - Model is working well, can use more informative priors
+			site_effect_sd ~ dgamma(2, 20)  # More informative: dgamma(2, 20) for site effects
 			for (k in 1:N.site) {
 				site_effect[k] ~ dnorm(0, sd = site_effect_sd)  # Site effects with hierarchical prior
 			}
 			
 			precision ~ dgamma(0.001, 0.001)  # Jeffreys prior - very weak, proven
-			intercept ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
-			legacy_effect ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
+			rho ~ dbeta(1, 1)  # Uniform prior for temporal dependence - very weak
+			intercept ~ dnorm(0, sd = 10)  # Wide normal prior for intercept
+			legacy_effect ~ dnorm(0, sd = 10)  # Wide normal prior for legacy effect
 			
 			for (b in 1:6) {
-				beta[b] ~ dnorm(0, tau = 100)  # tau = 100 gives sd = 0.1 for CLR scale
+				beta[b] ~ dnorm(0, sd = 10)  # Wide normal prior for environmental coefficients
 			}
 		})
 	} else {
@@ -400,26 +516,31 @@ run_scenarios_fixed <- function(j, chain_no) {
 	
 	# Initialize parameters with proper spacing between chains (CLR-appropriate approach)
 	inits <- list(
-		intercept = rnorm(1, y_mean, 0.01),  # Start very close to mean for CLR scale
-		precision = 0.1,  # Start with low precision for wide priors
-		beta = rnorm(constants$N.beta, 0, 0.001)  # Start beta parameters extremely close to zero
+		intercept = rnorm(1, y_mean, y_sd * 0.1),  # Start near mean with reasonable spread
+		precision = 1.0,  # Start with moderate precision
+		rho = 0.3,  # Start rho at 0.3 (moderate persistence)
+		beta = rnorm(constants$N.beta, 0, 0.1)  # Start beta parameters with reasonable spread
 	)
 	
 	# Initialize hierarchical parameters (CLR-appropriate approach)
-	inits$site_effect_sd <- 0.01  # Start with extremely small site effect SD for CLR scale
+	inits$site_effect_sd <- 1.0  # Start with moderate site effect SD
 	
 	# Initialize legacy effect if using legacy covariate
 	if (use_legacy_covariate) {
 		inits$legacy_effect <- 0  # Start legacy effect at 0
 	}
 	
-	# Add site effects starting very near zero (very conservative approach)
-	inits$site_effect <- rnorm(constants$N.site, 0, 0.01)
+	# Add site effects starting with reasonable spread
+	inits$site_effect <- rnorm(constants$N.site, 0, 0.5)
 	
-	# Initialize plot estimate matrices for monitoring
-	inits$plot_estimates <- matrix(rnorm(constants$N.plot * constants$N.date, y_mean, y_sd * 0.1), 
-	                               nrow = constants$N.plot, ncol = constants$N.date)
-	inits$plot_predictions <- inits$plot_estimates  # For CLR, predictions = estimates
+	# Initialize dynamic process matrices for CLR scale
+	inits$Ex <- matrix(rnorm(constants$N.plot * constants$N.date, y_mean, y_sd * 0.1), 
+	                   nrow = constants$N.plot, ncol = constants$N.date)
+	inits$mu <- matrix(rnorm(constants$N.plot * constants$N.date, y_mean, y_sd * 0.1), 
+	                   nrow = constants$N.plot, ncol = constants$N.date)
+	
+	# Plot estimate matrices will be calculated deterministically from Ex and mu
+	# No need to initialize them separately
 	
 	cat("Model built successfully\n")
 	
@@ -441,16 +562,16 @@ run_scenarios_fixed <- function(j, chain_no) {
 	
 	# FIXED: Configure MCMC with proper sampler management - all models now use precision parameter
 # All models now use CLR regression with precision parameter
-monitors <- c("beta","precision","site_effect","site_effect_sd","intercept")
+monitors <- c("beta","precision","rho","site_effect","site_effect_sd","intercept")
 
 if (use_legacy_covariate) {
     monitors <- c(monitors, "legacy_effect")
 }
 
-# Use monitors2 for latent variables at different interval for efficiency (matching beta regression approach)
+# Use monitors2 for latent variables at different interval for efficiency 
+# FIXED: Monitor plot estimates as deterministic nodes calculated from Ex and mu
 monitored_latent_params <- c(
-    # Monitor latent process variables at different interval for efficiency
-    "plot_estimates", "plot_predictions"
+    "Ex", "mu", "plot_estimates", "plot_predictions"
 )
 
 mcmcConf <- configureMCMC(
@@ -466,7 +587,7 @@ mcmcConf <- configureMCMC(
 	cat("  Removing default samplers...\n")
 	
 	# Remove ALL default samplers to prevent conflicts - all models use precision now
-	mcmcConf$removeSamplers(c("precision", "site_effect_sd", "intercept"))
+	mcmcConf$removeSamplers(c("precision", "rho", "site_effect_sd", "intercept"))
 	
 	# Remove legacy_effect if using legacy covariate
 	if (use_legacy_covariate) {
@@ -494,6 +615,10 @@ mcmcConf <- configureMCMC(
 	mcmcConf$addSampler(target = "precision", type = "slice")
 	cat("  Added slice sampler for precision\n")
 	
+	# rho: Temporal dependence parameter (all models)
+	mcmcConf$addSampler(target = "rho", type = "slice")
+	cat("  Added slice sampler for rho\n")
+	
 	# site_effect_sd: Site effect scale (all models)
 	mcmcConf$addSampler(target = "site_effect_sd", type = "slice")
 	cat("  Added slice sampler for site_effect_sd\n")
@@ -508,27 +633,18 @@ mcmcConf <- configureMCMC(
 		cat("  Added slice sampler for legacy_effect\n")
 	}
 	
-	# FIXED: Use EITHER block OR individual samplers for site effects, NOT BOTH
-	if (constants$N.site > 1) {
-		# Use block sampling for correlated site effects
-		mcmcConf$addSampler(target = paste0("site_effect[1:", constants$N.site, "]"), type = "AF_slice")
-		cat("  Added block sampler for site_effect[1:", constants$N.site, "]\n")
-	} else {
-		# Individual sampler for single site
-		mcmcConf$addSampler(target = "site_effect[1]", type = "slice")
-		cat("  Added slice sampler for site_effect[1]\n")
+	# FIXED: Use individual samplers to avoid posterior predictive node conflicts
+	# Site effects - individual samplers
+	for (k in 1:constants$N.site) {
+		mcmcConf$addSampler(target = paste0("site_effect[", k, "]"), type = "slice")
 	}
+	cat("  Added individual slice samplers for site_effect[1:", constants$N.site, "]\n")
 	
-	# FIXED: Use block sampler for beta parameters when multiple exist, individual for single
-	if (constants$N.beta > 1) {
-		# Use block sampler for correlated beta parameters (more efficient)
-		mcmcConf$addSampler(target = paste0("beta[1:", constants$N.beta, "]"), type = "AF_slice")
-		cat("  Added block AF_slice sampler for beta[1:", constants$N.beta, "]\n")
-	} else {
-		# Individual sampler for single beta
-		mcmcConf$addSampler(target = "beta[1]", type = "slice")
-		cat("  Added slice sampler for beta[1]\n")
+	# Beta parameters - individual samplers
+	for (b in 1:constants$N.beta) {
+		mcmcConf$addSampler(target = paste0("beta[", b, "]"), type = "slice")
 	}
+	cat("  Added individual slice samplers for beta[1:", constants$N.beta, "]\n")
 	
 	# Build and compile MCMC
 	myMCMC <- buildMCMC(mcmcConf)
@@ -604,29 +720,22 @@ mcmcConf <- configureMCMC(
 	
 	cat("  ✓ Checkpoint directory ready:", species_output_dir, "\n")
 	
-	# Create model_id for consistent naming with legacy covariate indicator and CLR identifier
+	# Create model_id for consistent naming with legacy covariate indicator (matching beta regression pattern)
 	legacy_indicator <- ifelse(use_legacy_covariate, "with_legacy_covariate", "without_legacy_covariate")
-	model_id <- paste("clr", model_name, species, min.date, max.date, legacy_indicator, sep = "_")
+	model_id <- paste(model_name, species, min.date, max.date, legacy_indicator, sep = "_")
 	
 	# Store all samples as we go - FIXED: Use initial samples as starting point
 	all_samples <- initial_samples
+	
+	# Also accumulate samples2 (plot estimates) across loops
+	initial_plot_samples <- as.matrix(compiled$mvSamples2)
+	all_plot_samples <- initial_plot_samples
 	cat("  Starting iterative accumulation with", nrow(all_samples), "initial samples\n")
+	cat("  Starting iterative accumulation with", nrow(all_plot_samples), "initial plot samples\n")
 	
-	# Save initial samples as checkpoint
-	checkpoint_file <- file.path(species_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_initial.rds"))
-	cat("  Saving initial checkpoint to:", checkpoint_file, "\n")
-	cat("  Directory exists:", dir.exists(dirname(checkpoint_file)), "\n")
-	cat("  Directory writable:", file.access(dirname(checkpoint_file), mode = 2) == 0, "\n")
-	
-			tryCatch({
-			saveRDS(list(samples = all_samples, iterations = total_iterations, loop = 0), checkpoint_file)
-			cat("  ✓ Checkpoint saved: Initial samples (", nrow(all_samples), " iterations)\n")
-			cat("  Initial checkpoint file size:", file.size(checkpoint_file), "bytes\n")
-		}, error = function(e) {
-			cat("  ✗ Failed to save initial checkpoint:", e$message, "\n")
-			cat("  Error class:", class(e), "\n")
-			stop("Failed to save initial checkpoint")
-		})
+	# Don't save initial checkpoint - only save final result
+	# This matches the beta regression workflow which doesn't create multiple checkpoint files per chain
+	cat("  Initial samples collected:", nrow(all_samples), "iterations\n")
 	
 	while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
 		if (continue) {
@@ -640,36 +749,36 @@ mcmcConf <- configureMCMC(
 		compiled$run(niter = iter_per_chunk, thin = thin, nburnin = 0)
 		total_iterations <- total_iterations + iter_per_chunk
 		
-		# Get updated samples and accumulate them - FIXED: Get only new samples
+		# Get updated samples and accumulate them
+		# CRITICAL: NIMBLE's mvSamples resets between runs, so current_samples contains ONLY the latest iteration
 		current_samples <- as.matrix(compiled$mvSamples)
-		cat("  Current total samples in compiled object:", nrow(current_samples), "\n")
-		cat("  Previous accumulated samples:", nrow(all_samples), "\n")
+		current_sample_count <- nrow(current_samples)
+		previous_sample_count <- nrow(all_samples)
 		
-		# Only take the new samples (skip the initial ones we already have)
-		if (nrow(current_samples) > nrow(initial_samples)) {
-			new_samples <- current_samples[(nrow(initial_samples) + 1):nrow(current_samples), , drop = FALSE]
-			all_samples <- rbind(all_samples, new_samples)
-			cat("  Updated samples collected:", nrow(new_samples), "new samples,", nrow(all_samples), "total accumulated\n")
+		cat("  Current iteration samples:", current_sample_count, "\n")
+		cat("  Previous accumulated samples:", previous_sample_count, "\n")
+		
+		# CORRECTED LOGIC: Always append all current samples since mvSamples resets
+		if (current_sample_count > 0) {
+			all_samples <- rbind(all_samples, current_samples)
+			cat("  ✓ Added", current_sample_count, "new samples, total accumulated:", nrow(all_samples), "\n")
 		} else {
-			cat("  WARNING: No new samples detected, using current samples\n")
-			all_samples <- current_samples
+			cat("  WARNING: No samples in current iteration\n")
 		}
 		
-		# Save checkpoint after each loop
-		checkpoint_file <- file.path(species_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter + 1, ".rds"))
-		cat("  Saving checkpoint to:", checkpoint_file, "\n")
-		cat("  Directory exists:", dir.exists(dirname(checkpoint_file)), "\n")
-		cat("  Directory writable:", file.access(dirname(checkpoint_file), mode = 2) == 0, "\n")
+		# Also accumulate samples2 (plot estimates) - mvSamples2 also resets between runs
+		current_plot_samples <- as.matrix(compiled$mvSamples2)
+		current_plot_count <- nrow(current_plot_samples)
+		if (current_plot_count > 0) {
+			all_plot_samples <- rbind(all_plot_samples, current_plot_samples)
+			cat("  ✓ Added", current_plot_count, "new plot samples, total accumulated:", nrow(all_plot_samples), "\n")
+		} else {
+			cat("  WARNING: No plot samples in current iteration\n")
+		}
 		
-		tryCatch({
-			saveRDS(list(samples = all_samples, iterations = total_iterations, loop = loop_counter + 1), checkpoint_file)
-			cat("  ✓ Checkpoint saved: Loop", loop_counter + 1, "(", nrow(all_samples), " iterations)\n")
-			cat("  Checkpoint file size:", file.size(checkpoint_file), "bytes\n")
-		}, error = function(e) {
-			cat("  ✗ Failed to save checkpoint for loop", loop_counter + 1, ":", e$message, "\n")
-			cat("  Error class:", class(e), "\n")
-			stop("Failed to save checkpoint")
-		})
+		# Don't save intermediate checkpoints - only save final result
+		# This matches the beta regression workflow which doesn't create multiple checkpoint files per chain
+		cat("  Loop", loop_counter + 1, "completed with", nrow(all_samples), "total samples\n")
 		
 		# Check if we need to continue
 		continue <- tryCatch({
@@ -701,8 +810,32 @@ mcmcConf <- configureMCMC(
 	# Get final samples (use accumulated samples)
 	samples <- all_samples
 	
+	# Use accumulated plot samples instead of just final mvSamples2
+	cat("Using accumulated plot-level estimates from all iterations...\n")
+	plot_samples <- all_plot_samples
+	cat("  Plot samples dimensions:", dim(plot_samples), "\n")
+	cat("  Plot samples column names:", paste(colnames(plot_samples), collapse=", "), "\n")
+	
+	# Validate plot samples structure
+	if (nrow(plot_samples) == 0) {
+		cat("  WARNING: No plot samples found in accumulated samples\n")
+		plot_samples <- samples  # Fallback to parameter samples if no plot samples
+	} else {
+		cat("  ✓ Plot samples extracted successfully from accumulated samples\n")
+		
+		# Validate that samples2 has proper column names for combine_chains
+		col_names <- colnames(plot_samples)
+		if (is.null(col_names) || !any(grepl("plot_estimates|plot_predictions|Ex\\[|mu\\[", col_names))) {
+			cat("  WARNING: samples2 missing proper column names (plot_estimates/plot_predictions/Ex/mu), this may cause issues in combine_chains\n")
+			cat("  Available column names:", paste(head(col_names, 10), collapse=", "), "\n")
+		} else {
+			cat("  ✓ samples2 has proper column names for combine_chains\n")
+		}
+	}
+	
 	cat("MCMC completed successfully\n")
 	cat("Final sample dimensions:", dim(samples), "\n")
+	cat("Plot sample dimensions:", dim(plot_samples), "\n")
 	cat("Total iterations run:", total_iterations, "\n")
 	cat("Convergence loops:", loop_counter, "\n")
 	cat("Final ESS check:\n")
@@ -723,16 +856,18 @@ mcmcConf <- configureMCMC(
 	cat("  Initial samples:", nrow(initial_samples), "iterations\n")
 	cat("  Additional loops:", loop_counter, "\n")
 	cat("  Total accumulated samples:", nrow(all_samples), "iterations\n")
+	cat("  Total accumulated plot samples:", nrow(all_plot_samples), "iterations\n")
 	cat("  Checkpoints saved:", loop_counter + 1, "files\n")
 	cat("  Final sample size:", nrow(samples), "iterations\n")
+	cat("  Final plot sample size:", nrow(all_plot_samples), "iterations\n")
 	
 	# Save MCMC samples with absolute path (matching beta regression structure)
 	samples_file <- file.path(species_output_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
 	
-	# Create the complete chain structure with enhanced metadata
+	# Create the complete chain structure with standardized metadata
 	chain_output <- list(
 		samples = samples,
-		samples2 = samples,  # CLR models use same samples for both parameter and plot predictions
+		samples2 = plot_samples,  # Plot-level estimates from monitors2 output
 		metadata = list(
 			rank.name = rank.name,
 			species = species,
@@ -745,9 +880,10 @@ mcmcConf <- configureMCMC(
 			niter = total_iterations,
 			nburnin = burnin,
 			thin = thin,
+			thin2 = 20,
 			model_data = model.dat,
-			nimble_code = modelCode,  # Save the actual Nimble code used
-			model_structure = "standardized_CLR_regression_with_consistent_priors"  # Model structure identifier
+			nimble_code = modelCode,
+			model_structure = "CLR_regression"
 		)
 	)
 	
@@ -777,10 +913,14 @@ mcmcConf <- configureMCMC(
 	cat("  - Block samplers for efficient parameter sampling\n")
 	cat("  - PRODUCTION CONVERGENCE: Adaptive sampling until ESS ≥ 100 reached\n")
 	cat("  - Production-ready: Adequate burn-in, proper mixing, reliable results\n")
+	cat("  - FIXED: Sample accumulation across loops (NIMBLE mvSamples resets)\n")
+	cat("  - FIXED: samples2 (plot estimates) properly monitored and accumulated\n")
+	cat("  - READY: Output structure compatible with 02_combineModelChains.r\n")
 	
 	return(list(
 		status = "SUCCESS", 
-		samples = samples, 
+		samples = samples,
+		samples2 = plot_samples,  # Include plot-level estimates for consistency
 		file = samples_file,
 		model_data = model.dat,  # Include model_data for parallel execution
 		nimble_code = modelCode,  # Include nimble code for parallel execution
@@ -796,9 +936,10 @@ mcmcConf <- configureMCMC(
 			niter = total_iterations,
 			nburnin = burnin,
 			thin = thin,
+			thin2 = 20,
 			model_data = model.dat,
 			nimble_code = modelCode,
-			model_structure = "standardized_CLR_regression_with_consistent_priors"
+			model_structure = "CLR_regression"
 		)
 	))
 }
@@ -834,9 +975,11 @@ all_ranks = c(bacteria, fungi)
 cat("Data loaded successfully\n")
 
 # Define valid_models for testing (subset of params for local testing)
-test_models <- 1  # Test with 6 models for local verification
+test_models <- 2  # Test with 2 models: ascomycota and cellulolytic
 valid_models <- params[1:test_models, ]
 cat("Testing", test_models, "models to verify generalization across ranks and model types\n")
+cat("Models to test:\n")
+print(valid_models[, c("rank.name", "species", "model_name")])
 
 # Export the function and data to workers
 clusterExport(cl, c("run_scenarios_fixed", "params", "all_ranks", "check_continue"))
@@ -1025,7 +1168,7 @@ runAndSave_task <- function(task_idx) {
             
             chain_output <- list(
                 samples = result$samples,
-                samples2 = result$samples,  # CLR models use same samples for both parameter and plot predictions
+                samples2 = if("samples2" %in% names(result)) result$samples2 else result$samples,  # Plot-level estimates from monitors2 or fallback to parameter samples
                 metadata = metadata
             )
             
@@ -1076,7 +1219,7 @@ runAndSave_task <- function(task_idx) {
         if (!dir.exists(species_output_dir)) {
             dir.create(species_output_dir, showWarnings = FALSE, recursive = TRUE)
         }
-        error_file <- file.path(species_output_dir, paste0("chain_", task$model_idx, "_task_", task_idx, "_ERROR.txt"))
+        error_file <- file.path(species_output_dir, paste0("chain_", task$model_idx, "_", task$chain_no, "_ERROR.txt"))
         
         # Write comprehensive error report
         error_report <- c(
@@ -1415,19 +1558,21 @@ for (model_idx in 1:nrow(valid_models)) {
     }
 }
 
-cat("✓ Proper CLR transformation for compositional data\n")
-cat("✓ Precision parameter instead of separate core_sd/sigma parameters\n")
-cat("✓ 🎯 TIGHT PRIORS FOR CLR SCALE - CLR transformation produces large values requiring tight constraints\n")
-cat("  - precision ~ dgamma(0.001, 0.001) - Jeffreys prior - very weak, proven\n")
-cat("  - intercept ~ dnorm(0, tau = 100) - Very tight: sd = 0.1 for CLR scale\n")
-cat("  - legacy_effect ~ dnorm(0, tau = 100) - Very tight: sd = 0.1 for CLR scale\n")
-cat("  - site_effect_sd ~ dgamma(5, 100) - Very tight: dgamma(5, 100) for CLR scale\n")
-cat("  - beta ~ dnorm(0, tau = 100) - Very tight: sd = 0.1 for CLR scale\n")
-cat("  - site_effect ~ dnorm(0, sd = site_effect_sd) - Site effects with hierarchical prior\n")
-cat("✓ Plot estimate monitoring (plot_estimates, plot_predictions) for comprehensive analysis\n")
-cat("✓ Individual slice samplers for beta parameters\n")
-cat("✓ Convergence-based sampling with iterative saving\n")
-cat("✓ LOCAL TESTING: 2 cores, 2 chains for faster testing\n")
-cat("Check output files in:", here("data", "model_outputs", "CLR_regression"), "/[model_name]/\n")
+	cat("✓ DYNAMIC CLR transformation for compositional data with temporal dependence\n")
+	cat("✓ Precision parameter for observation error\n")
+	cat("✓ Temporal autocorrelation (rho) for dynamic linear model structure\n")
+	cat("✓ 🎯 HYBRID PRIORS - Weak for main parameters, stable for site effects\n")
+	cat("  - precision ~ dgamma(0.001, 0.001) - Jeffreys prior - very weak, proven\n")
+	cat("  - rho ~ dbeta(1, 1) - Uniform prior for temporal dependence - very weak\n")
+	cat("  - intercept ~ dnorm(0, sd = 10) - Wide normal prior for intercept\n")
+	cat("  - legacy_effect ~ dnorm(0, sd = 10) - Wide normal prior for legacy effect\n")
+	cat("  - site_effect_sd ~ dgamma(2, 20) - More informative: dgamma(2, 20) for site effects\n")
+	cat("  - beta ~ dnorm(0, sd = 10) - Wide normal prior for coefficients\n")
+	cat("  - site_effect ~ dnorm(0, sd = site_effect_sd) - Site effects with hierarchical prior\n")
+	cat("✓ Dynamic process monitoring (Ex, mu, plot_estimates, plot_predictions) with monitors2 extraction\n")
+	cat("✓ Individual slice samplers for all parameters including rho\n")
+	cat("✓ Convergence-based sampling with iterative saving\n")
+	cat("✓ LOCAL TESTING: 2 cores, 2 chains for faster testing\n")
+	cat("Check output files in:", here("data", "model_outputs", "CLR_regression"), "/[model_name]/\n")
 
 

@@ -10,7 +10,7 @@ if (!require(ganttrify, quietly = TRUE)) {
   ganttrify_available <- TRUE
 }
 
-data_in <- readRDS(here("data/summary/logit_beta_regression_summaries.rds"))
+data_in <- readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
 keep_list <- readRDS(here("data/summary/converged_taxa_list.rds"))
 
 # Check if data has the expected structure

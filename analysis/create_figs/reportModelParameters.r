@@ -4,7 +4,7 @@ source("source.R")
 library(kableExtra)
 
 
-sum.in <- readRDS(here("data", paste0("summary/logit_beta_regression_summaries.rds")))
+sum.in <- readRDS(here("data", paste0("summary/logit_beta_fixed_priors_summaries.rds")))
 sum.all <- sum.in$summary_df  %>% mutate(tax_rank = rank,
 																				 time_period = recode(time_period, !!!microbialForecast:::date_recode))
 df <- sum.all %>%

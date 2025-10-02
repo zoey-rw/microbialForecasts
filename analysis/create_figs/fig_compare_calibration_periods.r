@@ -68,8 +68,8 @@ if (length(all_seas_vals) > 0 && nrow(all_seas_vals) > 0) {
 }
 
 # Load summaries data
-if (file.exists(here("data/summary/logit_beta_regression_summaries.rds"))) {
-  summaries = readRDS(here("data/summary/logit_beta_regression_summaries.rds"))
+if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds"))) {
+  summaries = readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
   plot_est = summaries$plot_est %>% filter(model_name=="env_cycl")
   plot_est_cycl = summaries$plot_est %>% filter(model_name=="cycl_only")
   
@@ -148,7 +148,7 @@ if (file.exists(here("data/summary/logit_beta_regression_summaries.rds"))) {
     cat("No data available for plotting\n")
   }
 } else {
-  cat("logit_beta_regression_summaries.rds not found\n")
+  cat("logit_beta_fixed_priors_summaries.rds not found\n")
 }
 
 # Check if seasonal amplitude data has the expected structure

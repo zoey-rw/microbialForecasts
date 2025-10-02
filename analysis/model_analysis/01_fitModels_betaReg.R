@@ -59,7 +59,7 @@ all_ranks = c(bacteria, fungi)
 cat("Data loaded successfully for", length(all_ranks), "ranks\n")
 
 # Function to check if MCMC should continue based on effective sample size
-check_continue <- function(samples, min_eff_size = 10) {
+check_continue <- function(samples, min_eff_size = 50) {
     # Validate input
     if (is.null(samples) || nrow(samples) == 0) {
         cat("  WARNING: Empty or NULL samples provided to check_continue, defaulting to continue\n")
@@ -90,17 +90,40 @@ params_in = read.csv(here("data/clean/model_input_df.csv"),
                                     rep("logical", 2),
                                     rep("character", 4)))
 
-rerun_list = readRDS(here("data/summary/unconverged_taxa_list.rds"))
-converged_list = readRDS(here("data/summary/converged_taxa_list.rds"))
+# Check for priority mode via environment variable or command line argument
+use_priority <- Sys.getenv("USE_PRIORITY", "false")
+argv <- commandArgs(TRUE)
+if (length(argv) > 1 && (argv[2] == "priority" || argv[2] == "--priority")) {
+    use_priority <- "true"
+}
+
+if (use_priority == "true" || use_priority == "priority") {
+    cat("🎯 PRIORITY MODE: Using high-priority models with existing progress\n")
+    priority_file <- here("data/summary/priority_rerun_list.rds")
+    if (file.exists(priority_file)) {
+        rerun_list <- readRDS(priority_file)
+        cat("   Loaded", length(rerun_list), "priority models (have chain 1 completed)\n")
+    } else {
+        cat("   Priority list not found! Falling back to standard unconverged list...\n")
+        rerun_list <- readRDS(here("data/summary/unconverged_taxa_list.rds"))
+    }
+} else {
+    cat("📊 STANDARD MODE: Using all unconverged models\n")
+    rerun_list <- readRDS(here("data/summary/unconverged_taxa_list.rds"))
+    cat("   Tip: Set USE_PRIORITY=true or add 'priority' argument to focus on models with existing progress\n")
+}
+
+converged_list = readRDS(here("data/summary/weak_converged_taxa_list.rds"))
 
 # HPC PRODUCTION CONFIGURATION: Run multiple models with all three model types
 params <- params_in %>% ungroup %>% filter(
     # Run ALL model types for comprehensive analysis
-    model_name %in% c("cycl_only", "env_cov", "env_cycl") &
+    model_name %in% c("env_cycl") &
         # Focus on 2013-2018 period for legacy analysis
         scenario %in% c("Legacy with covariate 2013-2018") &
+        species %in% c("plant_pathogen","herbicide_stress")
         # Include multiple ranks for comprehensive coverage
-        rank.name %in% c("phylum_fun")
+#        rank.name %in% c("phylum_fun")
 ) %>% distinct(.keep_all = TRUE)
 
 # Filter out already converged models
@@ -892,14 +915,14 @@ run_scenarios_fixed <- function(j, chain_no) {
         
         # Run MCMC with convergence-based sampling
         cat("Running MCMC with convergence-based sampling...\n")
-        burnin <- 100
+        burnin <- 1000
         thin <- 1
-        iter_per_chunk <- 100
-        init_iter <- 200
-        min_eff_size_perchain <- 10
-        max_loops <- 3
-        max_save_size <- 10000
-        min_total_iterations <- 500
+        iter_per_chunk <- 1000
+        init_iter <- 3000
+        min_eff_size_perchain <- 50
+        max_loops <- 5
+        max_save_size <- 50000
+        min_total_iterations <- 5000
         
         cat("Running MCMC with convergence-based sampling\n")
         cat("  Initial iterations:", init_iter, "burnin:", burnin, "\n")
@@ -954,10 +977,27 @@ run_scenarios_fixed <- function(j, chain_no) {
         
         # Store all samples as we go
         all_samples <- initial_samples
-        cat("  Starting iterative accumulation with", nrow(all_samples), "initial samples\n")
         
-        # Save initial samples as checkpoint
-        save_checkpoint_safe(all_samples, total_iterations, 0, species_output_dir, model_id, chain_no, "initial")
+        # Also accumulate samples2 (plot estimates) across loops
+        initial_plot_samples <- as.matrix(compiled$mvSamples2)
+        all_plot_samples <- initial_plot_samples
+        cat("  Starting iterative accumulation with", nrow(all_samples), "initial samples\n")
+        cat("  Starting iterative accumulation with", nrow(all_plot_samples), "initial plot samples\n")
+        
+        # Save initial samples as checkpoint (including samples2)
+        initial_checkpoint_data <- list(
+            samples = all_samples,
+            samples2 = all_plot_samples,
+            iterations = total_iterations,
+            loop = 0
+        )
+        checkpoint_file <- file.path(species_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_initial.rds"))
+        tryCatch({
+            saveRDS(initial_checkpoint_data, checkpoint_file)
+            cat("  ✓ Initial checkpoint saved with samples and samples2\n")
+        }, error = function(e) {
+            cat("  ✗ Failed to save initial checkpoint:", e$message, "\n")
+        })
         
         # Also save a simple progress file
         progress_file <- create_progress_file(species_output_dir, model_id, chain_no, init_iter)
@@ -975,22 +1015,46 @@ run_scenarios_fixed <- function(j, chain_no) {
             total_iterations <- total_iterations + iter_per_chunk
             
             # Get updated samples and accumulate them
+            # CRITICAL: NIMBLE's mvSamples resets between runs, so current_samples contains ONLY the latest iteration
             current_samples <- as.matrix(compiled$mvSamples)
-            cat("  Current total samples in compiled object:", nrow(current_samples), "\n")
-            cat("  Previous accumulated samples:", nrow(all_samples), "\n")
+            current_sample_count <- nrow(current_samples)
+            previous_sample_count <- nrow(all_samples)
             
-            # Only take the new samples (skip the initial ones we already have)
-            if (nrow(current_samples) > nrow(initial_samples)) {
-                new_samples <- current_samples[(nrow(initial_samples) + 1):nrow(current_samples), , drop = FALSE]
-                all_samples <- rbind(all_samples, new_samples)
-                cat("  Updated samples collected:", nrow(new_samples), "new samples,", nrow(all_samples), "total accumulated\n")
+            cat("  Current iteration samples:", current_sample_count, "\n")
+            cat("  Previous accumulated samples:", previous_sample_count, "\n")
+            
+            # CORRECTED LOGIC: Always append all current samples since mvSamples resets
+            if (current_sample_count > 0) {
+                all_samples <- rbind(all_samples, current_samples)
+                cat("  ✓ Added", current_sample_count, "new samples, total accumulated:", nrow(all_samples), "\n")
             } else {
-                cat("  WARNING: No new samples detected, using current samples\n")
-                all_samples <- current_samples
+                cat("  WARNING: No samples in current iteration\n")
             }
             
-            # Save checkpoint after each loop
-            save_checkpoint_safe(all_samples, total_iterations, loop_counter + 1, species_output_dir, model_id, chain_no, paste0("loop", loop_counter + 1))
+            # Also accumulate samples2 (plot estimates) - mvSamples2 also resets between runs
+            current_plot_samples <- as.matrix(compiled$mvSamples2)
+            current_plot_count <- nrow(current_plot_samples)
+            if (current_plot_count > 0) {
+                all_plot_samples <- rbind(all_plot_samples, current_plot_samples)
+                cat("  ✓ Added", current_plot_count, "new plot samples, total accumulated:", nrow(all_plot_samples), "\n")
+            } else {
+                cat("  WARNING: No plot samples in current iteration\n")
+            }
+            
+            # Save checkpoint after each loop (including samples2)
+            loop_checkpoint_data <- list(
+                samples = all_samples,
+                samples2 = all_plot_samples,
+                iterations = total_iterations,
+                loop = loop_counter + 1
+            )
+            loop_checkpoint_file <- file.path(species_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter + 1, ".rds"))
+            tryCatch({
+                saveRDS(loop_checkpoint_data, loop_checkpoint_file)
+                cat("  ✓ Loop checkpoint saved with samples and samples2\n")
+            }, error = function(e) {
+                cat("  ✗ Failed to save loop checkpoint:", e$message, "\n")
+            })
             
             # Update progress file
             update_progress_file(progress_file, total_iterations, loop_counter + 1)
@@ -1038,8 +1102,32 @@ run_scenarios_fixed <- function(j, chain_no) {
         # Get final samples (use accumulated samples)
         samples <- all_samples
         
+        # Use accumulated plot samples instead of just final mvSamples2
+        cat("Using accumulated plot-level estimates from all iterations...\n")
+        plot_samples <- all_plot_samples
+        cat("  Plot samples dimensions:", dim(plot_samples), "\n")
+        cat("  Plot samples column names:", paste(colnames(plot_samples), collapse=", "), "\n")
+        
+        # Validate plot samples structure
+        if (nrow(plot_samples) == 0) {
+            cat("  WARNING: No plot samples found in accumulated samples\n")
+            plot_samples <- samples  # Fallback to parameter samples if no plot samples
+        } else {
+            cat("  ✓ Plot samples extracted successfully from accumulated samples\n")
+            
+            # Validate that samples2 has proper column names for combine_chains
+            col_names <- colnames(plot_samples)
+            if (is.null(col_names) || !any(grepl("plot_mu", col_names))) {
+                cat("  WARNING: samples2 missing proper column names (plot_mu), this may cause issues in combine_chains\n")
+                cat("  Available column names:", paste(head(col_names, 10), collapse=", "), "\n")
+            } else {
+                cat("  ✓ samples2 has proper column names for combine_chains\n")
+            }
+        }
+        
         cat("MCMC completed successfully\n")
         cat("Final sample dimensions:", dim(samples), "\n")
+        cat("Plot sample dimensions:", dim(plot_samples), "\n")
         cat("Total iterations run:", total_iterations, "\n")
         cat("Convergence loops:", loop_counter, "\n")
         cat("Final ESS check:\n")
@@ -1058,8 +1146,10 @@ run_scenarios_fixed <- function(j, chain_no) {
         cat("  Initial samples:", nrow(initial_samples), "iterations\n")
         cat("  Additional loops:", loop_counter, "iterations\n")
         cat("  Total accumulated samples:", nrow(all_samples), "iterations\n")
+        cat("  Total accumulated plot samples:", nrow(all_plot_samples), "iterations\n")
         cat("  Checkpoints saved:", loop_counter + 1, "files\n")
         cat("  Final sample size:", nrow(all_samples), "iterations\n")
+        cat("  Final plot sample size:", nrow(all_plot_samples), "iterations\n")
         
         # Save MCMC samples with absolute path
         samples_file <- file.path(model_output_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
@@ -1067,6 +1157,7 @@ run_scenarios_fixed <- function(j, chain_no) {
         # Create the complete chain structure with metadata
         chain_output <- list(
             samples = all_samples,
+            samples2 = plot_samples,  # Plot-level estimates from monitors2 output
             metadata = list(
                 rank.name = rank.name,
                 species = species,
@@ -1079,6 +1170,7 @@ run_scenarios_fixed <- function(j, chain_no) {
                 niter = total_iterations,
                 nburnin = burnin,
                 thin = thin,
+                thin2 = 20,  # Include thin2 for samples2
                 model_data = model.dat,
                 nimble_code = modelCode,
                 model_structure = "stable_beta_regression_with_logit_bounds"
@@ -1109,10 +1201,14 @@ run_scenarios_fixed <- function(j, chain_no) {
         cat("  - All three model types supported: cycl_only, env_only, env_cov\n")
         cat("  - CONVERGENCE-BASED: Adaptive sampling until reasonable ESS reached\n")
         cat("  - ITERATIVE SAVING: Samples accumulated and saved incrementally\n")
+        cat("  - FIXED: Sample accumulation across loops (NIMBLE mvSamples resets)\n")
+        cat("  - FIXED: samples2 (plot estimates) properly monitored and accumulated\n")
+        cat("  - READY: Output structure compatible with 02_combineModelChains.r\n")
         
         return(list(
             status = "SUCCESS", 
-            samples = all_samples, 
+            samples = all_samples,
+            samples2 = plot_samples,  # Include plot-level estimates for consistency
             file = samples_file,
             model_data = model.dat,
             nimble_code = modelCode,
@@ -1128,6 +1224,7 @@ run_scenarios_fixed <- function(j, chain_no) {
                 niter = total_iterations,
                 nburnin = burnin,
                 thin = thin,
+                thin2 = 20,  # Include thin2 for samples2
                 model_data = model.dat,
                 nimble_code = modelCode,
                 model_structure = "stable_beta_regression_with_logit_bounds"
@@ -1410,6 +1507,7 @@ runAndSave_task <- function(task_idx) {
             
             chain_output <- list(
                 samples = result$samples,
+                samples2 = if("samples2" %in% names(result)) result$samples2 else result$samples,  # Plot-level estimates from monitors2 or fallback to parameter samples
                 metadata = metadata
             )
             

@@ -1,41 +1,54 @@
 # Combine chains from each taxon model, and create basic summary stats
+# FIXED: Updated for CLR models with proper error handling and CLR-specific logic
 source("../../source.R")
 
-# For phenology analysis: use cycl_only models for 2013-2015 data
-model_name <- "cycl_only"
+# Function to filter files to only include those with both 'with_legacy_covariate' and 'clr'
+# AND exclude checkpoint files (we only want final combined sample files)
+filter_standard_files <- function(file_list) {
+  if (length(file_list) == 0) return(file_list)
+  
+  # Filter to only include files with both required suffixes AND exclude checkpoint files
+  # Note: CLR models don't have "clr" in the filename during fitting, it gets added during combination
+  standard_files <- file_list[grepl('with_legacy_covariate', basename(file_list)) & 
+                              !grepl('checkpoint', basename(file_list))]
+  
+  cat('File filtering applied:\n')
+  cat('  Original files:', length(file_list), '\n')
+  cat('  Standard files (with both suffixes, no checkpoints):', length(standard_files), '\n')
+  cat('  Filtered out:', length(file_list) - length(standard_files), '\n\n')
+  
+  return(standard_files)
+}
 
-# For testing: use our actual CLR model IDs instead of reading from CSV
-# params_in = read.csv(here("data/clean/model_input_df.csv"))
-# model_id_list = unique(params_in$model_id)
+# Process all CLR model types (cycl_only, env_cov, env_cycl)
+# No need to hardcode model_name as we process all models found
 
-# Use our expanded CLR model IDs from CLR_regression directory
+# Use CLR model IDs from CLR_regression directory
 # Get all model IDs from the CLR_regression directory by looking at individual chain files
 clr_output_dir <- here("data/model_outputs/CLR_regression")
 clr_chain_files <- list.files(clr_output_dir, pattern = "samples_.*_chain[0-9]+\\.rds$", 
                               recursive = TRUE, full.names = FALSE)
+
 # Extract model IDs from chain file names (remove _chain[0-9] suffix)
 model_id_list <- unique(gsub("samples_(.*)_chain[0-9]+\\.rds", "\\1", clr_chain_files))
 model_id_list <- gsub(".*/", "", model_id_list)  # Remove directory path
 
 cat("Found", length(model_id_list), "CLR models in CLR_regression\n")
-
-cat("Processing CLR phenology models for 2013-2015 data\n")
-cat("Model type:", model_name, "\n")
 cat("Total models to process:", length(model_id_list), "\n\n")
 
-# For testing: use just 1 core instead of 28
-# cl <- makeCluster(28, outfile="")
-# registerDoParallel(cl)
-cl <- makeCluster(1, outfile="")
+# Set up parallel processing
+n_cores <- min(4, detectCores() - 1)  # Use 4 cores or available cores - 1
+cl <- makeCluster(n_cores, outfile="")
 registerDoParallel(cl)
-#for(model_id in model_id_list){
-foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
-	source("../../source.R")
+cat("Using", n_cores, "cores for parallel processing\n")
+
+	# Process each model ID in parallel
+	foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
+		source("../../source.R")
+		
+		# Do we want to keep all the chain files separately? Deleting them will save space
+		delete_samples_files = F
 	
-	# Do we want to keep all the chain files separately? Deleting them will save space
-	delete_samples_files = F
-	
-	#for (model_name in c("all_covariates", "cycl_only")) {
 	file.list <- list.files(path = here("data/model_outputs/CLR_regression/"),
 													pattern = "_chain",
 													recursive = T,
@@ -45,39 +58,34 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 	info <- file.info(file.list)
 	
 	# Subset more than 1KB (for our test files, lower threshold)
-	# large_enough <- rownames(info[which(info$size > 100000000), ])
-	# large_enough <- rownames(info[which(info$size > 5000000), ])
 	large_enough <- rownames(info[which(info$size > 1000), ])
 	
-	#newer <- rownames(info[which(info$mtime > "2023-03-09 06:00:00 EDT"), ])
-	#newer <- rownames(info[which(info$mtime > "2023-06-09 18:00:00 EDT"), ])
 	# For testing: accept all recent files
 	newer <- rownames(info[which(info$mtime > "2020-01-01 00:00:00 EDT"), ])
 	
 	# Don't want files still being written - at least 1 min old (for testing)
-	# older <- rownames(info[which(info$mtime < (Sys.time()-3600)), ])
 	older <- rownames(info[which(info$mtime < (Sys.time()-60)), ])
 	
-	# If deleting sample files, we don't want models still being run - at least 18 hours old
-	# if (delete_samples_files) {
-	# 	older <- rownames(info[which(info$mtime < (Sys.time()-64800)), ])
-	# }
 	file.list <- file.list[file.list %in% newer & file.list %in% large_enough]
+	
+	# Apply filtering to only process standard files
+	file.list <- filter_standard_files(file.list)
 	
 	message("Searching model outputs for ",model_id)
 	
-	
 	# Subset to files of interest
-	chain_paths <-
-		file.list[grepl(model_id, file.list, fixed = T)]
+	chain_paths <- file.list[grepl(model_id, file.list, fixed = T)]
 	
 	if (length(chain_paths) == 0)
 		return(message("Skipping ", model_id, "; no chains"))
+	
+	# FIXED: Handle single chain models properly for CLR
 	if (length(chain_paths) == 1) {
 		cat("Single chain model, copying to combined samples file...\n")
-		# For single chain models, just copy the chain file to the samples file
 		single_chain_path <- chain_paths[[1]]
 		combined_samples_path <- gsub("_chain[1234567]", "", single_chain_path)
+		# Add "clr" suffix to match beta regression pattern
+		combined_samples_path <- gsub("\\.rds$", "_clr.rds", combined_samples_path)
 		
 		if (file.exists(combined_samples_path)) {
 			cat("Combined samples file already exists, skipping...\n")
@@ -87,9 +95,9 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 		cat("Copying single chain to combined samples file...\n")
 		chain_data <- readRDS(single_chain_path)
 		
-		# Create the same output structure as multi-chain models
+		# FIXED: Create the same output structure as multi-chain models for CLR
 		if (is.list(chain_data) && "samples" %in% names(chain_data)) {
-			# New format with metadata
+			# New format with metadata (CLR models)
 			if ("samples2" %in% names(chain_data)) {
 				out <- list(
 					samples = list(mcmc(chain_data$samples, start = 1, end = nrow(chain_data$samples), thin = 1)),
@@ -105,7 +113,7 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 				)
 			}
 		} else {
-			# Old format (raw matrix)
+			# Old format (raw matrix) - handle gracefully
 			out <- list(
 				samples = list(mcmc(chain_data, start = 1, end = nrow(chain_data), thin = 1)),
 				samples2 = list(mcmc(chain_data, start = 1, end = nrow(chain_data), thin = 1)),
@@ -139,8 +147,10 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 		cat("Single chain model processed successfully!\n")
 		return(message("Completed single chain model: ", model_id))
 	}
-	savepath <- gsub("_chain[1234567]", "", chain_paths[[1]])
 	
+	savepath <- gsub("_chain[1234567]", "", chain_paths[[1]])
+	# Add "clr" suffix to match beta regression pattern (which adds "beta_regression")
+	savepath <- gsub("\\.rds$", "_clr.rds", savepath)
 	
 	# Don't run loop if the samples file is already newer than the chain files
 	cat("Checking if samples already exist...\n")
@@ -149,8 +159,7 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 	} else {
 		cat("No existing samples file, proceeding with combination...\n")
 		
-		
-		# For CLR outputs: handle the proper structure with samples and metadata
+		# FIXED: For CLR outputs: handle the proper structure with samples and metadata
 		cat("Loading", length(chain_paths), "chains...\n")
 		chains <- list()
 		chains2 <- list()
@@ -161,7 +170,7 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 			chain_data <- readRDS(chain_paths[i])
 			
 			if (is.list(chain_data) && "samples" %in% names(chain_data)) {
-				# New format with metadata
+				# New format with metadata (CLR models)
 				cat("    Chain", i, "dimensions:", dim(chain_data$samples), "\n")
 				chains[[i]] <- chain_data$samples
 				
@@ -178,7 +187,7 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 				metadata_list[[i]] <- chain_data$metadata
 				cat("    ✓ Metadata loaded\n")
 			} else {
-				# Old format (raw matrix)
+				# Old format (raw matrix) - handle gracefully
 				cat("    Chain", i, "dimensions:", dim(chain_data), "\n")
 				chains[[i]] <- chain_data
 				chains2[[i]] <- chain_data
@@ -196,6 +205,17 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 		}
 		
 		cat("Successfully loaded", length(chains), "chains\n")
+		
+		# Validate metadata structure matches between CLR and beta models
+		if (!is.null(metadata_list[[1]])) {
+			required_fields <- c("model_name", "model_id", "use_legacy_covariate")
+			missing <- setdiff(required_fields, names(metadata_list[[1]]))
+			if (length(missing) > 0) {
+				warning("Metadata missing fields: ", paste(missing, collapse=", "))
+			} else {
+				cat("✓ Metadata validation passed\n")
+			}
+		}
 		
 		# Validate chain dimensions
 		chain_dims <- sapply(chains, dim)
@@ -221,31 +241,36 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 			metadata = metadata_list[[1]]  # Use metadata from first chain
 		)
 		
+		# FIXED: Process chains for outlier detection with better error handling
 		cat("Processing chains for outlier detection...\n")
-		# Remove chains if one has very different values than the other 3
 		chains <- out$samples
 		cat("Calculating chain means for outlier detection...\n")
-		means <- lapply(chains, function(x) mean(x[,"intercept"], na.rm=T))
-		cat("Chain means:", paste(round(unlist(means), 4), collapse = ", "), "\n")
-		scaled_means = scale(unlist(means))
-		cat("Scaled means:", paste(round(scaled_means, 4), collapse = ", "), "\n")
-		potential_outlier <- which(abs(scaled_means) > 1.3)
-		cat("Potential outliers:", potential_outlier, "\n")
-		if (length(potential_outlier) %in% c(1,2)){
-			chains_without_outlier <- chains[-c(potential_outlier)]
-			new_gelman= gelman.diag(chains_without_outlier, multivariate = F)[[1]][,1] %>%  mean(na.rm=T)
-			old_gelman= gelman.diag(chains, multivariate = F)[[1]][,1] %>%  mean(na.rm=T)
-			improvement = old_gelman - new_gelman
-			remove <- ifelse(improvement > .1, T, F)
-			if (remove) {
-				message(model_id, " removing outlier chain: ", potential_outlier,
-								"\nGelman diagnostic improves from ", round(old_gelman, 3), " to ", round(new_gelman, 3))
-				out$samples = chains_without_outlier
-				out$samples2 = out$samples2[-c(potential_outlier)]
+		
+		# Check if intercept parameter exists before calculating means
+		if ("intercept" %in% colnames(chains[[1]])) {
+			means <- lapply(chains, function(x) mean(x[,"intercept"], na.rm=T))
+			cat("Chain means:", paste(round(unlist(means), 4), collapse = ", "), "\n")
+			scaled_means = scale(unlist(means))
+			cat("Scaled means:", paste(round(scaled_means, 4), collapse = ", "), "\n")
+			potential_outlier <- which(abs(scaled_means) > 1.3)
+			cat("Potential outliers:", potential_outlier, "\n")
+			
+			if (length(potential_outlier) %in% c(1,2)){
+				chains_without_outlier <- chains[-c(potential_outlier)]
+				new_gelman= gelman.diag(chains_without_outlier, multivariate = F)[[1]][,1] %>%  mean(na.rm=T)
+				old_gelman= gelman.diag(chains, multivariate = F)[[1]][,1] %>%  mean(na.rm=T)
+				improvement = old_gelman - new_gelman
+				remove <- ifelse(improvement > .1, T, F)
+				if (remove) {
+					message(model_id, " removing outlier chain: ", potential_outlier,
+									"\nGelman diagnostic improves from ", round(old_gelman, 3), " to ", round(new_gelman, 3))
+					out$samples = chains_without_outlier
+					out$samples2 = out$samples2[-c(potential_outlier)]
+				}
 			}
+		} else {
+			cat("WARNING: No intercept parameter found, skipping outlier detection\n")
 		}
-		
-		
 		
 		cat("Creating parameter summaries...\n")
 		param_summary <- fast.summary.mcmc(out$samples)
@@ -253,6 +278,7 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 		plot_summary <- fast.summary.mcmc(out$samples2)
 		cat("Calculating effective sample sizes...\n")
 		es <- effectiveSize(out$samples)
+		
 		if (length(out$samples) > 1) {
 			cat("Calculating Gelman diagnostics...\n")
 			gelman_out <- cbind(gelman.diag(out$samples, multivariate = F)[[1]], es)
@@ -273,29 +299,25 @@ foreach(model_id=model_id_list, .errorhandling = "pass") %dopar% {
 		saveRDS(out_summary, savepath, compress = F)
 		message("Saved combined samples output for ", model_id, " to: ",savepath)
 		
-		
 		if (min(es) < 500) {
 			message("Low effective sample sizes - check for unconverged parameters in model: ", model_id)
 			print(head(gelman_out, 50))
 		}
 		
-		
 		# If the summary now exists, delete the chains
 		if (delete_samples_files){
-			if (samples_exists(chain_paths_time_period[[1]])) {
-				unlink(chain_paths_time_period)
-				message("Deleting samples files, e.g.: ", chain_paths_time_period[[1]])
+			if (samples_exists(chain_paths[[1]])) {
+				unlink(chain_paths)
+				message("Deleting samples files, e.g.: ", chain_paths[[1]])
 			}
-		} #else message("Not deleting samples files, e.g.: ", chain_paths_time_period[[1]])
+		}
 	}
 	return()
 } # End model_id loop
 
+stopCluster(cl)
 
- stopCluster(cl)
-
-
-
-# Removed hardcoded paths and test code for local testing 
+cat("✅ CLR chain combination completed successfully!\n")
+cat("Combined samples saved to:", clr_output_dir, "\n")
 
 

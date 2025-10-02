@@ -1,13 +1,24 @@
 # read in seasonal values
 library(lubridate)
 source("source.R")
+source("microbialForecast/R/load_plot_estimates.r")
 
 scores_list = readRDS(here("data/summary/scoring_metrics_plsr2.rds"))
 converged = scores_list$converged_list
 #converged_strict = scores_list$converged_strict_list
 
-sum.in <- readRDS(here("data", paste0("summary/logit_beta_regression_summaries.rds")))
-plot_estimates = sum.in$plot_est %>% filter(model_id %in% converged)
+sum.in <- readRDS(here("data", paste0("summary/logit_beta_fixed_priors_summaries.rds")))
+
+# Load plot estimates using new memory-efficient functions
+cat("Loading plot estimates for functional group analysis...\n")
+plot_estimates_env_cycl <- load_plot_estimates_for_phenology("env_cycl")
+plot_estimates_cycl_only <- load_plot_estimates_for_phenology("cycl_only")
+
+# Combine plot estimates from both model types
+plot_estimates <- rbind(plot_estimates_env_cycl, plot_estimates_cycl_only, fill = TRUE)
+
+# Filter to only converged models
+plot_estimates <- plot_estimates %>% filter(model_id %in% converged)
 plot_estimates$month = lubridate::month(plot_estimates$dates)
 cycl_only_est = plot_estimates %>% filter(grepl("cycl_only",model_name))
 cycl_only_est$fg_category <- microbialForecast:::assign_fg_categories(cycl_only_est$taxon)

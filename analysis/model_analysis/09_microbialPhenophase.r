@@ -1,10 +1,13 @@
 # read in seasonal values
+library(here)
 library(lubridate)
 library(ggrepel)
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/microbialForecast/R/assignPhenology.r")
+source(here("source.R"))
+source(here("microbialForecast/R/assignPhenology.r"))
+# Source the new plot estimates loading functions
+source(here("microbialForecast/R/load_plot_estimates.r"))
 
-sum.in <- readRDS(here("data", "summary/logit_beta_regression_summaries.rds"))
+sum.in <- readRDS(here("data", "summary/logit_beta_fixed_priors_summaries.rds"))
 seas_in = readRDS(here("data/summary/seasonal_amplitude.rds"))
 
 seas_amplitude_long <- seas_in[[1]] %>% filter(model_id %in% sum.in$keep_models$model_id)
@@ -17,8 +20,17 @@ seas_amplitude <- seas_amplitude_long %>%
 seas_amplitude_cycl_only = seas_amplitude %>%
 	filter(model_name == "cycl_only")
 
-# Read in and split up plot-level estimates
-plot_estimates = sum.in$plot_est %>% filter(model_name != "all_covariates") %>% filter(model_id %in% sum.in$keep_models$model_id)
+# Load plot estimates using new memory-efficient functions
+cat("Loading plot estimates for phenology analysis...\n")
+plot_estimates_env_cycl <- load_plot_estimates_for_phenology("env_cycl")
+plot_estimates_cycl_only <- load_plot_estimates_for_phenology("cycl_only")
+
+# Combine plot estimates from both model types
+plot_estimates <- rbind(plot_estimates_env_cycl, plot_estimates_cycl_only, fill = TRUE)
+
+# Filter to only converged models
+plot_estimates <- plot_estimates %>% filter(model_id %in% sum.in$keep_models)
+
 
 plot_estimates$month = lubridate::month(plot_estimates$dates)
 plot_estimates$year = lubridate::year(plot_estimates$dates)
