@@ -6,11 +6,11 @@
 summary_exists <- function(file_path) {
 	save_path <- gsub("samples","summary",file_path)
 	if (file.exists(save_path)){
-	sample_info <- file.info(file_path) %>% select(mtime) %>% unlist()
-	summary_info <- file.info(save_path) %>% select(mtime) %>% unlist()
-	if (summary_info > sample_info) {
-		return(TRUE)
-	} else return(FALSE)
+		sample_info <- file.info(file_path) %>% select(mtime) %>% unlist()
+		summary_info <- file.info(save_path) %>% select(mtime) %>% unlist()
+		if (summary_info >= sample_info) {
+			return(TRUE)
+		} else return(FALSE)
 	} else return(FALSE)
 }
 

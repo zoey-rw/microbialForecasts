@@ -3,7 +3,7 @@
 # =============================================================================
 
 #' Vectorized Monte Carlo simulation for improved performance
-vectorized_forecast <- function(params, covar, initial_conditions, timepoints, Nmc) {
+vectorized_forecast <- function(params, covar, initial_conditions, timepoints, Nmc, use_cloglog = FALSE) {
   n_timepoints <- length(timepoints)
   all_predictions <- matrix(NA, nrow = Nmc, ncol = n_timepoints)
   
@@ -34,14 +34,23 @@ vectorized_forecast <- function(params, covar, initial_conditions, timepoints, N
       # OPTIMIZATION 1: Vectorized linear predictor calculation
       # Handle dimension compatibility gracefully
       n_beta_use <- min(ncol(Z), ncol(params$betas))
-      linear_predictor[] <- rowSums(Z[, 1:n_beta_use] * params$betas[, 1:n_beta_use])
+      linear_predictor[] <- rowSums(
+        Z[, 1:n_beta_use, drop = FALSE] * params$betas[, 1:n_beta_use, drop = FALSE]
+      )
       
       # OPTIMIZATION 2: Vectorized AR(1) process
       log_x_prev[] <- log(pmax(0.01, pmin(0.99, all_predictions[, t-1])))
       log_Ex_mean[] <- params$rho * log_x_prev + linear_predictor + params$site_effects + params$intercept
       
       # OPTIMIZATION 3: Vectorized beta distribution sampling
-      mu <- 1 / (1 + exp(-log_Ex_mean))
+      # Apply appropriate link function based on model type
+      if (use_cloglog) {
+        # Cloglog inverse: 1 - exp(-exp(eta)) for driver uncertainty models
+        mu <- 1 - exp(-exp(log_Ex_mean))
+      } else {
+        # Logit inverse: 1 / (1 + exp(-eta)) for regular models
+        mu <- 1 / (1 + exp(-log_Ex_mean))
+      }
       shape1[] <- mu * params$precision
       shape2[] <- (1 - mu) * params$precision
       
@@ -49,8 +58,8 @@ vectorized_forecast <- function(params, covar, initial_conditions, timepoints, N
       shape1[] <- pmax(shape1, 1e-6)
       shape2[] <- pmax(shape2, 1e-6)
       
-      # Sample from beta distribution
-      all_predictions[, t] <- rbeta(Nmc, shape1, shape2)
+      # Sample from beta distribution with probability clamping
+      all_predictions[, t] <- pmin(0.999, pmax(0.001, rbeta(Nmc, shape1, shape2)))
     }
   }
   
@@ -59,58 +68,83 @@ vectorized_forecast <- function(params, covar, initial_conditions, timepoints, N
 
 #' Pre-extract and cache parameters with proper dimension handling
 extract_all_parameters <- function(param_samples, row_samples, model_name) {
-  # Extract parameters with proper dimension handling
-  rho <- param_samples[row_samples, grep("rho", colnames(param_samples))]
+  # rho
+  rho <- param_samples[row_samples, grep("^rho(\\[|$)", colnames(param_samples))]
   if (is.matrix(rho)) rho <- as.numeric(rho)
-  
-  # CRITICAL FIX: Extract betas based on model type to maintain proper matrix structure
-  beta_cols <- grep("beta\\[", colnames(param_samples))
+
+  # betas (preserve matrix shape)
+  beta_cols <- grep("^beta\\[", colnames(param_samples))
   if (model_name == "cycl_only") {
-    # cycl_only uses only 2 covariates (sin_mo, cos_mo)
     betas <- param_samples[row_samples, beta_cols[1:2], drop = FALSE]
   } else if (model_name == "env_cov") {
-    # env_cov uses 6 environmental covariates
     betas <- param_samples[row_samples, beta_cols[1:6], drop = FALSE]
   } else if (model_name == "env_cycl") {
-    # env_cycl uses all 8 covariates
     betas <- param_samples[row_samples, beta_cols[1:8], drop = FALSE]
   } else {
-    # Fallback: use all available beta columns
     betas <- param_samples[row_samples, beta_cols, drop = FALSE]
   }
-  
-  intercept <- param_samples[row_samples, grep("intercept", colnames(param_samples))]
+
+  # intercept (vector)
+  intercept <- param_samples[row_samples, grep("^intercept(\\[|$)", colnames(param_samples))]
   if (is.matrix(intercept)) intercept <- as.numeric(intercept)
-  
-  precision <- param_samples[row_samples, grep("precision|sigma", colnames(param_samples))]
+
+  # precision: avoid grabbing unrelated sigmas
+  prec_cols <- grep("^(precision|phi)(\\[|$)", colnames(param_samples))
+  if (length(prec_cols) == 0) prec_cols <- grep("^kappa(\\[|$)", colnames(param_samples))
+  precision <- param_samples[row_samples, prec_cols[1], drop = TRUE]
   if (is.matrix(precision)) precision <- as.numeric(precision)
-  
-  # Handle site effects - check if they exist
-  site_effect_cols <- grep("site_effect", colnames(param_samples))
-  if (length(site_effect_cols) > 0) {
-    site_effects <- param_samples[row_samples, site_effect_cols]
-    if (is.matrix(site_effects)) site_effects <- as.numeric(site_effects)
+
+  # Always return per-draw vectors of length Nmc
+  site_effects <- rep(0, length(row_samples))
+
+  # legacy effects optional, return per-draw vector too
+  legacy_cols <- grep("^legacy_effect(\\[|$)", colnames(param_samples))
+  legacy_effect <- if (length(legacy_cols) > 0) {
+    x <- param_samples[row_samples, legacy_cols[1], drop = TRUE]
+    if (is.matrix(x)) as.numeric(x) else x
   } else {
-    site_effects <- rep(0, length(row_samples))
+    rep(0, length(row_samples))
   }
+
+  # Driver uncertainty parameters (extract but don't use in hindcast)
+  # These represent the uncertain environmental drivers that are already incorporated
+  temp_est <- NULL
+  mois_est <- NULL
+  pH_est <- NULL
+  pC_est <- NULL
   
-  # Handle legacy effects - check if they exist
-  legacy_cols <- grep("legacy_effect", colnames(param_samples))
-  if (length(legacy_cols) > 0) {
-    legacy_effect <- param_samples[row_samples, legacy_cols]
-    if (is.matrix(legacy_effect)) legacy_effect <- as.numeric(legacy_effect)
-  } else {
-    legacy_effect <- rep(0, length(row_samples))
+  # Check if driver uncertainty parameters exist in the samples
+  temp_cols <- grep("^temp_est", colnames(param_samples))
+  mois_cols <- grep("^mois_est", colnames(param_samples))
+  pH_cols <- grep("^pH_est", colnames(param_samples))
+  pC_cols <- grep("^pC_est", colnames(param_samples))
+  
+  if (length(temp_cols) > 0) {
+    temp_est <- param_samples[row_samples, temp_cols, drop = FALSE]
   }
-  
-  return(list(
+  if (length(mois_cols) > 0) {
+    mois_est <- param_samples[row_samples, mois_cols, drop = FALSE]
+  }
+  if (length(pH_cols) > 0) {
+    pH_est <- param_samples[row_samples, pH_cols, drop = FALSE]
+  }
+  if (length(pC_cols) > 0) {
+    pC_est <- param_samples[row_samples, pC_cols, drop = FALSE]
+  }
+
+  list(
     rho = rho,
     betas = betas,
     intercept = intercept,
-    precision = precision,
+    precision = pmax(precision, 1e-6), # guard for positivity
     site_effects = site_effects,
-    legacy_effect = legacy_effect
-  ))
+    legacy_effect = legacy_effect,
+    # Driver uncertainty parameters (for reference, not used in hindcast)
+    temp_est = temp_est,
+    mois_est = mois_est,
+    pH_est = pH_est,
+    pC_est = pC_est
+  )
 }
 
 #' Cached site covariate generation
@@ -241,17 +275,17 @@ create_covariate_samples_fixed <- function(model.inputs, plotID = NULL, siteID,
       mois_end <- min(NT, mois_available)
       mois_data[1:mois_end] <- model.inputs$mois[site, 1:mois_end]
     }
-    if (!is.null(model.inputs$pH) && !is.null(plotID) && plotID %in% rownames(model.inputs$pH)) {
+    if (!is.null(model.inputs$pH) && !is.null(plotID) && is.character(plotID) && plotID %in% rownames(model.inputs$pH)) {
       # pH is constant over time - extend to full time series length
       pH_value <- model.inputs$pH[plotID, 1]
       pH_data[] <- pH_value
     }
-    if (!is.null(model.inputs$pC) && !is.null(plotID) && plotID %in% rownames(model.inputs$pC)) {
+    if (!is.null(model.inputs$pC) && !is.null(plotID) && is.character(plotID) && plotID %in% rownames(model.inputs$pC)) {
       # pC is constant over time - extend to full time series length
       pC_value <- model.inputs$pC[plotID, 1]
       pC_data[] <- pC_value
     }
-    if (1 <= relEM_available && !is.null(plotID) && plotID %in% rownames(model.inputs$relEM)) {
+    if (1 <= relEM_available && !is.null(plotID) && is.character(plotID) && plotID %in% rownames(model.inputs$relEM)) {
       relEM_end <- min(NT, relEM_available)
       relEM_data[1:relEM_end] <- model.inputs$relEM[plotID, 1:relEM_end]
     }
@@ -421,13 +455,11 @@ create_covariate_samples_fixed <- function(model.inputs, plotID = NULL, siteID,
           
           # Debug: check for invalid values before rnorm
           if (any(is.infinite(mean_val)) || any(is.infinite(sd_val))) {
-            message("WARNING: Infinite values in ", cov_name, " - replacing with defaults")
             mean_val[is.infinite(mean_val)] <- 0
             sd_val[is.infinite(sd_val)] <- 0.1
           }
           
           if (any(sd_val <= 0)) {
-            message("WARNING: Non-positive sd values in ", cov_name, " - replacing with 0.1")
             sd_val[sd_val <= 0] <- 0.1
           }
           
@@ -477,8 +509,7 @@ fcast_logit_beta <- function(plotID,
   unobserved_sites <- c("ABBY", "BARR", "BONA", "DEJU", "HEAL", "KONA", 
                         "LAJA", "LENO", "MLBS", "RMNP", "SOAP", "TOOL", 
                         "WREF", "YELL")
-  is_new_site <- siteID %in% unobserved_sites || 
-                 !(siteID %in% names(model.inputs$site_start))
+  is_new_site <- siteID %in% unobserved_sites
   
   # Process truth data
   truth_data <- if (is.data.frame(truth.plot.long)) {
@@ -491,7 +522,7 @@ fcast_logit_beta <- function(plotID,
 	truth_data <- as.data.frame(truth_data)
 	
   # Extract taxon name
-  taxon_name <- if (!is.null(metadata) && "species" %in% names(metadata)) {
+  taxon_name <- if (!is.null(metadata) && is.list(metadata) && "species" %in% names(metadata)) {
     metadata$species
   } else if (length(unique(truth_data$species)) > 0) {
     unique(truth_data$species)[1]
@@ -499,38 +530,9 @@ fcast_logit_beta <- function(plotID,
     "unknown_taxon"
   }
   
-  # CRITICAL FIX: Apply rank name mapping fix for truth data extraction
-  if (!is.null(rank.name) && !is.null(taxon_name) && taxon_name != "unknown_taxon") {
-    # Load all_ranks data to find the correct rank name
-    all_ranks <- c(readRDS("./data/clean/groupAbundances_16S_2023.rds"),
-                   readRDS("./data/clean/groupAbundances_ITS_2023.rds"))
-    
-    # Find which data source contains this taxon
-    found_sources <- c()
-    for (source_name in names(all_ranks)) {
-      if (taxon_name %in% colnames(all_ranks[[source_name]])) {
-        found_sources <- c(found_sources, source_name)
-      }
-    }
-    
-    if (length(found_sources) > 0) {
-      # Use the first source found
-      correct_source <- found_sources[1]
-      
-      # For taxonomic taxa, we need to map to the full rank name
-      if (grepl("_bac$", correct_source)) {
-        correct_rank <- correct_source  # Keep the full name like "genus_bac"
-      } else if (grepl("_fun$", correct_source)) {
-        correct_rank <- correct_source  # Keep the full name like "phylum_fun"
-	} else {
-        correct_rank <- correct_source  # For functional groups, use as-is
-      }
-      
-      # Update the rank.name parameter with the correct value
-      rank.name <- correct_rank
-      message("DEBUG: Corrected rank.name to ", rank.name, " for taxon ", taxon_name)
-    }
-  }
+  # CRITICAL FIX: Use the rank.name parameter directly instead of loading data
+  # The rank.name should already be correctly determined by the calling script
+  # This eliminates the massive data loading bottleneck that was causing CPU spikes
   
   # Parse model type
   model_name <- if (grepl("env_cycl", model_id)) {
@@ -556,16 +558,16 @@ fcast_logit_beta <- function(plotID,
   
   # Handle site effects for new vs observed sites
 	if (is_new_site) {
-    if (!is.null(predict_site_effects) && siteID %in% predict_site_effects$siteID) {
+    if (!is.null(predict_site_effects) && is.data.frame(predict_site_effects) && siteID %in% predict_site_effects$siteID) {
       # Use predicted site effects
       site_effect_val <- predict_site_effects$fit[predict_site_effects$siteID == siteID]
-      params$site_effects <- rep(site_effect_val, Nmc)
+      params$site_effects[] <- site_effect_val  # Fill the pre-allocated vector
 		} else {
 			# Sample from site effect variance
 			site_effect_sd_cols <- grep("site_effect_sd", colnames(param_samples))
       if (length(site_effect_sd_cols) > 0) {
         site_effect_sd <- mean(param_samples[row_samples, site_effect_sd_cols], na.rm = TRUE)
-        params$site_effects <- rnorm(Nmc, 0, site_effect_sd)
+        params$site_effects[] <- rnorm(Nmc, 0, site_effect_sd)
       }
     }
 			} else {
@@ -580,12 +582,13 @@ fcast_logit_beta <- function(plotID,
     
     site_param <- paste0("site_effect[", site_num, "]")
 		if (site_param %in% colnames(param_samples)) {
-      params$site_effects <- as.numeric(param_samples[row_samples, site_param])
+      params$site_effects[] <- as.numeric(param_samples[row_samples, site_param])
     }
   }
   
-  # OPTIMIZATION 2: Get cached covariates
-  covar <- get_site_covariates_cached(siteID, model.inputs, model_name, plotID, Nmc_large, Nmc)
+  # OPTIMIZATION 2: Get covariates directly (bypass cache for parallel compatibility)
+  covar <- create_covariate_samples_fixed(model.inputs, plotID = plotID, siteID = siteID,
+                                         Nmc_large, Nmc, model_name)
   
   # Select covariates based on model type
 	if (model_name == "cycl_only") {
@@ -596,116 +599,200 @@ fcast_logit_beta <- function(plotID,
     covar <- covar[, 1:8, ]   # all 8
   }
   
-  # Set initial conditions and start date using model.inputs
-  plot_start_date <- model.inputs$plot_start[plotID]
-  if (is.na(plot_start_date)) {
-    # Fallback if plot_start not found
-    plot_start_date <- if (is_new_site) 1 else 56
+  # Assert shape before simulation
+  stopifnot(length(dim(covar)) == 3L, dim(covar)[2] %in% c(2,6,8))
+  
+  # Create date key - use trained time map if provided, otherwise fallback
+  if (!is.null(metadata) && is.list(metadata) && !is.null(metadata$trained_time_map)) {
+    date_key <- metadata$trained_time_map %>%
+      dplyr::transmute(
+        date_num = trained_date_num,
+        dateID,
+        dates = as.Date(paste0(dateID, "01"), "%Y%m%d")
+      )
+  } else {
+    date_sequence <- seq.Date(from = as.Date("2013-06-01"), by = "month", 
+                              length.out = model.inputs$N.date)
+    date_key <- data.frame(
+      date_num = 1:model.inputs$N.date,
+      dateID = as.numeric(format(date_sequence, "%Y%m"))
+    )
   }
+  
+  # Determine plot start date
+  if (plotID %in% names(model.inputs$plot_start)) {
+    plot_start_date <- model.inputs$plot_start[plotID]
+  } else {
+    # For plots not in model.inputs$plot_start, infer from truth data
+    plot_dates <- truth_data %>% 
+      filter(plotID == !!plotID, !is.na(date_num)) %>%
+      pull(date_num)
+    
+    if (length(plot_dates) > 0) {
+      plot_start_date <- min(plot_dates, na.rm = TRUE)
+    } else {
+      # Ultimate fallback - derive Jan 2018 index programmatically
+      cal_boundary <- which(date_key$dateID == 201801)
+      if (length(cal_boundary) == 0) cal_boundary <- 56
+      plot_start_date <- if (is_new_site) 1 else cal_boundary
+    }
+  }
+  
+  # Set defaults first
+  ic_mean <- 0.5
+  ic_sd <- 0.1
   
   if (is_new_site) {
     # Use taxon-specific initial condition
-    observed_data <- truth_data %>% 
-      filter(species == taxon_name, !is.na(truth)) %>% 
-      pull(truth)
-    ic_mean <- if (length(observed_data) > 0) mean(observed_data) else 0.5
-    ic_sd <- if (length(observed_data) > 0) sd(observed_data) else 0.2
-    ic_sd <- max(min(ic_sd, 0.3), 0.05)
-  } else {
-    # For observed sites: EXTRACT FROM PLOT_SUMMARY
-    if (!is.null(plot_summary)) {
-      # Convert plot_summary to expected format if needed
-      if (inherits(plot_summary, "summary.mcmc")) {
-        plot_est <- data.frame(
-          rowname = rownames(plot_summary$quantiles),
-          plot_summary$quantiles,
-          stringsAsFactors = FALSE
-        )
-        plot_est <- plot_est %>%
-          mutate(
-            plotID = gsub("plot_mu\\[([^,]+),.*", "\\1", rowname),
-            timepoint = as.numeric(gsub("plot_mu\\[.*,([^]]+)\\]", "\\1", rowname))
-          ) %>%
-          filter(grepl("^plot_mu\\[", rowname))
-      } else if (is.data.frame(plot_summary)) {
-        plot_est <- plot_summary
-      } else if (is.list(plot_summary) && length(plot_summary) >= 2) {
-        plot_est <- plot_summary[[2]]
-      } else {
-        plot_est <- NULL
+    tryCatch({
+      observed_data <- truth_data %>% 
+        filter(species == taxon_name, !is.na(truth)) %>% 
+        pull(truth)
+      if (length(observed_data) > 0) {
+        ic_mean <- mean(observed_data)
+        ic_sd <- max(min(sd(observed_data), 0.3), 0.05)
       }
-      
-      # Extract last calibration timepoint estimate
-      if (!is.null(plot_est) && nrow(plot_est) > 0) {
-        plot_est_filtered <- plot_est %>% filter(plotID == !!plotID)
+    }, error = function(e) {
+      cat("Warning: Could not extract IC for unobserved site", plotID, ":", e$message, "\n")
+      # Falls back to defaults already set
+    })
+  } else {
+    # For observed sites: EXTRACT FROM PLOT_MU IN RECONSTRUCTED SAMPLES
+    tryCatch({
+      if (!is.null(plot_summary) && is.list(plot_summary) && !is.null(plot_summary$plot_mu)) {
+        # NEW: Extract from plot_mu matrix in reconstructed samples
+        plot_mu_matrix <- plot_summary$plot_mu
         
-        # Get calibration timepoints only
-        if (!is.null(metadata) && "model_data" %in% names(metadata)) {
-          calibration_timepoints <- unique(metadata$model_data$truth.plot.long$timepoint)
-          plot_est_calibration <- plot_est_filtered %>% 
-            filter(timepoint %in% calibration_timepoints)
-        } else {
-          plot_est_calibration <- plot_est_filtered
-        }
-        
-        # Find last valid timepoint with quantile data
-        possible_median_cols <- c("X50.", "50%", "med", "median")
-        valid_col <- NULL
-        for (col in possible_median_cols) {
-          if (col %in% colnames(plot_est_calibration)) {
-            valid_col <- col
-            break
-          }
-        }
-        
-        if (!is.null(valid_col) && nrow(plot_est_calibration) > 0) {
-          valid_timepoints <- plot_est_calibration %>% 
-            filter(!is.na(.data[[valid_col]])) %>%
-            pull(timepoint)
+        # Get plot index for this plotID
+        plot_indices <- unique(truth.plot.long$plot_num[truth.plot.long$plotID == plotID])
+        if (length(plot_indices) > 0) {
+          plot_idx <- plot_indices[1]  # Use first plot index if multiple
           
-          if (length(valid_timepoints) > 0) {
-            last_timepoint <- max(valid_timepoints)
-            last_obs <- plot_est_calibration %>% filter(timepoint == last_timepoint)
+          # Get calibration timepoints
+          if (!is.null(metadata) && is.list(metadata) && "model_data" %in% names(metadata)) {
+            calibration_timepoints <- unique(metadata$model_data$truth.plot.long$timepoint)
+          } else {
+            calibration_timepoints <- 1:ncol(plot_mu_matrix)
+          }
+          
+          # Extract plot_mu values for this plot during calibration period
+          valid_timepoints <- calibration_timepoints[calibration_timepoints <= ncol(plot_mu_matrix)]
+          plot_mu_values <- plot_mu_matrix[plot_idx, valid_timepoints]
+          
+          # Find last non-NA value
+          last_valid_idx <- which(!is.na(plot_mu_values))
+          if (length(last_valid_idx) > 0) {
+            last_idx <- max(last_valid_idx)
+            ic_mean <- plot_mu_values[last_idx]
             
-            # Extract median and IQR for IC
-            ic_mean_raw <- last_obs[[valid_col]]
-            ic_mean <- if (length(ic_mean_raw) > 0) ic_mean_raw[1] else 0.5
-            
-            # Calculate sd from IQR if available
-            if (all(c("25%", "75%") %in% colnames(last_obs))) {
-              ic_sd <- (last_obs$`75%`[1] - last_obs$`25%`[1]) / (2 * qnorm(0.75))
+            # Estimate sd from the variability in the last few timepoints
+            recent_values <- plot_mu_values[max(1, last_idx-2):last_idx]
+            recent_values <- recent_values[!is.na(recent_values)]
+            if (length(recent_values) > 1) {
+              ic_sd <- max(sd(recent_values), 0.05)
             } else {
               ic_sd <- 0.1
             }
-            
-            if (is.na(ic_sd) || ic_sd <= 0) ic_sd <- 0.1
-            
-            # Start from calibration end for hindcast
-            # plot_start_date already set from model.inputs$plot_start[plotID]
           } else {
-            # Fallback if no valid estimates
+            # Fallback if no valid plot_mu values
             ic_mean <- 0.5
             ic_sd <- 0.1
-            # plot_start_date already set from model.inputs$plot_start[plotID]
           }
         } else {
-          # No plot summary available, use fallback
+          # Fallback if plot not found in truth data
           ic_mean <- 0.5
           ic_sd <- 0.1
-          # plot_start_date already set from model.inputs$plot_start[plotID]
+        }
+      } else if (!is.null(plot_summary)) {
+        # FALLBACK: Try old plot_summary format
+        if (inherits(plot_summary, "summary.mcmc")) {
+          plot_est <- data.frame(
+            rowname = rownames(plot_summary$quantiles),
+            plot_summary$quantiles,
+            stringsAsFactors = FALSE
+          )
+          plot_est <- plot_est %>%
+            mutate(
+              plotID = gsub("plot_mu\\[([^,]+),.*", "\\1", rowname),
+              timepoint = as.numeric(gsub("plot_mu\\[.*,([^]]+)\\]", "\\1", rowname))
+            ) %>%
+            filter(grepl("^plot_mu\\[", rowname))
+        } else if (is.data.frame(plot_summary)) {
+          plot_est <- plot_summary
+        } else if (is.list(plot_summary) && length(plot_summary) >= 2) {
+          plot_est <- plot_summary[[2]]
+        } else {
+          plot_est <- NULL
+        }
+        
+        # Extract last calibration timepoint estimate
+        if (!is.null(plot_est) && nrow(plot_est) > 0) {
+          plot_est_filtered <- plot_est %>% filter(plotID == !!plotID)
+          
+          # Get calibration timepoints only
+          if (!is.null(metadata) && is.list(metadata) && "model_data" %in% names(metadata)) {
+            calibration_timepoints <- unique(metadata$model_data$truth.plot.long$timepoint)
+            plot_est_calibration <- plot_est_filtered %>% 
+              filter(timepoint %in% calibration_timepoints)
+          } else {
+            plot_est_calibration <- plot_est_filtered
+          }
+          
+          # Find last valid timepoint with quantile data
+          possible_median_cols <- c("X50.", "50%", "med", "median")
+          valid_col <- NULL
+          for (col in possible_median_cols) {
+            if (col %in% colnames(plot_est_calibration)) {
+              valid_col <- col
+              break
+            }
+          }
+          
+          if (!is.null(valid_col) && nrow(plot_est_calibration) > 0) {
+            valid_timepoints <- plot_est_calibration %>% 
+              filter(!is.na(.data[[valid_col]])) %>%
+              pull(timepoint)
+            
+            if (length(valid_timepoints) > 0) {
+              last_timepoint <- max(valid_timepoints)
+              last_obs <- plot_est_calibration %>% filter(timepoint == last_timepoint)
+              
+              # Extract median and IQR for IC
+              ic_mean_raw <- last_obs[[valid_col]]
+              ic_mean <- if (length(ic_mean_raw) > 0) ic_mean_raw[1] else 0.5
+              
+              # Calculate sd from IQR if available
+              if (all(c("25%", "75%") %in% colnames(last_obs))) {
+                ic_sd <- (last_obs$`75%`[1] - last_obs$`25%`[1]) / (2 * qnorm(0.75))
+              } else {
+                ic_sd <- 0.1
+              }
+              
+              if (is.na(ic_sd) || ic_sd <= 0) ic_sd <- 0.1
+            } else {
+              # Fallback if no valid estimates
+              ic_mean <- 0.5
+              ic_sd <- 0.1
+            }
+          } else {
+            # No plot summary available, use fallback
+            ic_mean <- 0.5
+            ic_sd <- 0.1
+          }
+        } else {
+          # No plot summary, use fallback
+          ic_mean <- 0.5
+          ic_sd <- 0.1
         }
       } else {
-        # No plot summary, use fallback
+        # No plot_summary provided at all
         ic_mean <- 0.5
         ic_sd <- 0.1
-        # plot_start_date already set from model.inputs$plot_start[plotID]
       }
-    } else {
-      # No plot_summary provided at all
-      ic_mean <- 0.5
-      ic_sd <- 0.1
-      # plot_start_date already set from model.inputs$plot_start[plotID]
-    }
+    }, error = function(e) {
+      cat("Warning: Could not extract IC from plot_summary for", plotID, ":", e$message, "\n")
+      # Falls back to defaults already set
+    })
   }
   
   ic <- truncnorm::rtruncnorm(Nmc, mean = ic_mean, sd = ic_sd, a = 0, b = 1)
@@ -713,13 +800,26 @@ fcast_logit_beta <- function(plotID,
   # Define timepoints to forecast
   valid_timepoints <- plot_start_date:model.inputs$N.date
   
+  # Determine if this is a driver uncertainty model
+  use_cloglog <- if (!is.null(metadata) && is.list(metadata) && "has_driver_uncertainty" %in% names(metadata)) {
+    metadata$has_driver_uncertainty
+  } else {
+    # Fallback: check if model_id contains driver uncertainty indicators
+    if (is.character(model_id)) {
+      grepl("driver_uncertainty", model_id) || grepl("logit_beta_driver_uncertainty", model_id)
+    } else {
+      FALSE
+    }
+  }
+  
   # OPTIMIZATION 3: Vectorized Monte Carlo simulation
   all_predictions <- vectorized_forecast(
 		params = params,
 		covar = covar,
 		initial_conditions = ic,
 		timepoints = valid_timepoints,
-		Nmc = Nmc
+		Nmc = Nmc,
+		use_cloglog = use_cloglog
 	)
 
 	# Create output dataframe
@@ -739,49 +839,28 @@ fcast_logit_beta <- function(plotID,
   # Add date information
   ci$date_num <- valid_timepoints
   
-  date_sequence <- seq.Date(from = as.Date("2013-06-01"), by = "month", 
-                            length.out = model.inputs$N.date)
-  date_key <- data.frame(
-		date_num = 1:model.inputs$N.date,
-    dateID = as.numeric(format(date_sequence, "%Y%m"))
-  )
-  
   ci <- left_join(ci, date_key, by = "date_num") %>%
     mutate(dates = as.Date(paste0(dateID, "01"), format = "%Y%m%d"))
   
   # Add truth values - ensure dateID format matches
   plot_obs <- truth_data %>% filter(plotID == !!plotID)
   if (nrow(plot_obs) > 0) {
-    # Debug output
-    cat("    DEBUG: Found", nrow(plot_obs), "truth observations for", plotID, "\n")
-    cat("    DEBUG: Truth dateID range:", range(plot_obs$dateID), "\n")
-    cat("    DEBUG: Prediction dateID range:", range(ci$dateID), "\n")
-    
     # Ensure dateID is numeric in both datasets
     truth_subset <- plot_obs %>%
       mutate(dateID = as.numeric(as.character(dateID))) %>%
       group_by(dateID) %>%
       summarise(truth = mean(truth, na.rm = TRUE), .groups = "drop")
     
-    cat("    DEBUG: Aggregated truth data:", nrow(truth_subset), "rows\n")
-    cat("    DEBUG: Aggregated truth dateIDs:", paste(truth_subset$dateID, collapse = ", "), "\n")
-    
     # Ensure ci$dateID is also numeric before joining
     ci <- ci %>%
       mutate(dateID = as.numeric(as.character(dateID))) %>%
       left_join(truth_subset, by = "dateID")
-    
-    # Debug join results
-    truth_matches <- sum(!is.na(ci$truth))
-    cat("    DEBUG: Truth values successfully joined:", truth_matches, "out of", nrow(ci), "predictions\n")
   } else {
-    cat("    DEBUG: No truth observations found for", plotID, "\n")
     ci$truth <- NA
   }
   
   # Note: Raw observation data (sampleID level) is available in model.inputs$sample_values
   # but is not included in the main output to avoid breaking downstream rbind operations
-  # Raw data can be accessed separately if needed for analysis
   
   # Add metadata and start date information
   ci <- ci %>% mutate(
@@ -791,8 +870,14 @@ fcast_logit_beta <- function(plotID,
       # For unobserved sites, entire period is hindcast (2013-2020)
       "hindcast"
     } else {
-      # For observed sites, split by date
-      ifelse(dates <= as.Date("2018-01-01"), "calibration", "hindcast")
+      # For observed sites: Extract calibration end date from metadata
+      cal_end <- if (!is.null(metadata) && "cal_end_dateID" %in% names(metadata)) {
+        as.numeric(metadata$cal_end_dateID)
+      } else {
+        # legacy fallback if not provided
+        201801
+      }
+      ifelse(dateID <= cal_end, "calibration", "hindcast")
     },
     plot_start = plot_start_date,  # Already defined earlier in function
     site_start = ifelse(is_new_site, 1, 
@@ -813,18 +898,13 @@ fcast_logit_beta <- function(plotID,
 #' @param taxon Taxon name
 #' @export
 generate_hindcast_diagnostics <- function(hindcast_data, model_id, taxon) {
-  cat("Creating diagnostic visualizations for", taxon, "hindcasts...\n")
-  
   # Get unique sites and select one plot from each site
   unique_sites <- unique(hindcast_data$siteID)
-  cat("Found", length(unique_sites), "unique sites for diagnostics\n")
   
   selected_plots <- hindcast_data %>%
     group_by(siteID) %>%
     slice_head(n = 1) %>%
     pull(plotID)
-  
-  cat("Selected", length(selected_plots), "plots (one per site) for diagnostics\n")
   
   # Create visualization directory based on site type
   # Check if this is for observed or unobserved sites based on the data
@@ -843,9 +923,15 @@ generate_hindcast_diagnostics <- function(hindcast_data, model_id, taxon) {
   }
   
   # Generate plots for each selected plot
-  for (i in seq_along(selected_plots)) {
-    plot_id <- selected_plots[i]
-    site_id <- unique_sites[i]
+  picked <- hindcast_data %>%
+    group_by(siteID) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    select(siteID, plotID)
+  
+  for (i in seq_len(nrow(picked))) {
+    plot_id <- picked$plotID[i]
+    site_id <- picked$siteID[i]
     
     # Filter data for this plot - keep ALL data, not just non-NA predictions
     plot_data <- hindcast_data %>%
@@ -853,7 +939,6 @@ generate_hindcast_diagnostics <- function(hindcast_data, model_id, taxon) {
       mutate(plot_date = as.Date(dates))
     
     if (nrow(plot_data) == 0) {
-      cat("  Skipping", plot_id, "- no data\n")
       next
     }
     
@@ -864,23 +949,21 @@ generate_hindcast_diagnostics <- function(hindcast_data, model_id, taxon) {
     hindcast_period_data <- plot_data %>%
       filter(fcast_period == "hindcast" & !is.na(med) & !is.na(lo) & !is.na(hi))
     
+    # For unobserved sites, create a combined factor for site effect type
+    if (is_unobserved_data && nrow(hindcast_period_data) > 0) {
+      hindcast_period_data <- hindcast_period_data %>%
+        mutate(
+          effect_type = ifelse(predicted_site_effect, "predicted", "random"),
+          period_effect = paste(fcast_period, effect_type, sep = "_")
+        )
+    }
+    
     if (nrow(calibration_data) == 0 && nrow(hindcast_period_data) == 0) {
-      cat("  Skipping", plot_id, "- no valid predictions in either period\n")
       next
     }
     
-    # For unobserved sites, limit plot data to actual hindcast period (2018+) to reduce plot density
-    if (nrow(calibration_data) == 0 && nrow(hindcast_period_data) > 0) {
-      # This is an unobserved site - limit to hindcast period only
-      plot_data <- plot_data %>%
-        filter(plot_date >= as.Date("2018-01-01"))
-      
-      # Re-filter hindcast_period_data from the updated plot_data to avoid duplicates
-      hindcast_period_data <- plot_data %>%
-        filter(fcast_period == "hindcast" & !is.na(med) & !is.na(lo) & !is.na(hi))
-    }
-    
-    cat("  Plotting", plot_id, "with", nrow(calibration_data), "calibration predictions and", nrow(hindcast_period_data), "hindcast predictions out of", nrow(plot_data), "total timepoints\n")
+    # For unobserved sites, show full time series (2013-2020) to include all truth data
+    # No filtering needed - show complete time series for unobserved sites
     
     # Create time series plot with both calibration and hindcast periods
     p1 <- ggplot(plot_data, aes(x = plot_date)) +
@@ -894,15 +977,28 @@ generate_hindcast_diagnostics <- function(hindcast_data, model_id, taxon) {
       }} +
       # Add hindcast period confidence intervals and predictions
       {if(nrow(hindcast_period_data) > 0) {
-        list(
-          geom_ribbon(data = hindcast_period_data, aes(ymin = lo, ymax = hi), alpha = 0.3, fill = "lightgreen"),
-          geom_line(data = hindcast_period_data, aes(y = med), color = "green", linewidth = 1),
-          geom_point(data = hindcast_period_data, aes(y = med), color = "green", size = 1, alpha = 0.7)
-        )
+        if (is_unobserved_data && "effect_type" %in% colnames(hindcast_period_data)) {
+          # For unobserved sites, use different colors for random vs predicted effects
+          list(
+            geom_ribbon(data = hindcast_period_data, aes(ymin = lo, ymax = hi, fill = effect_type), alpha = 0.3),
+            geom_line(data = hindcast_period_data, aes(y = med, color = effect_type), linewidth = 1),
+            geom_point(data = hindcast_period_data, aes(y = med, color = effect_type), size = 1, alpha = 0.7),
+            scale_fill_manual(values = c("random" = "lightgreen", "predicted" = "lightcoral"), name = "Site Effect"),
+            scale_color_manual(values = c("random" = "green", "predicted" = "red"), name = "Site Effect")
+          )
+        } else {
+          # For observed sites, use single green color
+          list(
+            geom_ribbon(data = hindcast_period_data, aes(ymin = lo, ymax = hi), alpha = 0.3, fill = "lightgreen"),
+            geom_line(data = hindcast_period_data, aes(y = med), color = "green", linewidth = 1),
+            geom_point(data = hindcast_period_data, aes(y = med), color = "green", size = 1, alpha = 0.7)
+          )
+        }
       }}
     
     # Add truth values if available (for both periods)
-    all_valid_data <- bind_rows(calibration_data, hindcast_period_data)
+    all_valid_data <- bind_rows(calibration_data, hindcast_period_data) %>%
+      mutate(plot_date = as.Date(paste0(dateID, "01"), format = "%Y%m%d"))
     if(sum(!is.na(all_valid_data$truth)) > 0) {
       p1 <- p1 + 
         geom_point(data = all_valid_data, aes(y = truth), color = "red", size = 2, alpha = 0.8) +
@@ -911,9 +1007,11 @@ generate_hindcast_diagnostics <- function(hindcast_data, model_id, taxon) {
     
     # Add vertical line to separate calibration and hindcast periods
     if(nrow(calibration_data) > 0 && nrow(hindcast_period_data) > 0) {
-      # Find the boundary date between calibration and hindcast
-      boundary_date <- max(calibration_data$dateID)
-      p1 <- p1 + geom_vline(xintercept = boundary_date, linetype = "dashed", color = "gray", linewidth = 1)
+      # build Date for boundary line
+      boundary_date_id <- max(calibration_data$dateID)
+      boundary_date <- as.Date(paste0(boundary_date_id, "01"), format = "%Y%m%d")
+      p1 <- p1 + geom_vline(xintercept = as.numeric(boundary_date), linetype = "dashed", 
+                            color = "gray", linewidth = 1)
     }
     
     p1 <- p1 +
@@ -923,28 +1021,62 @@ generate_hindcast_diagnostics <- function(hindcast_data, model_id, taxon) {
                            nrow(hindcast_period_data), "hindcast predictions |", 
                            sum(!is.na(all_valid_data$truth)), "truth values"),
            x = "Date", y = "Abundance",
-           caption = "Blue: Calibration period | Green: Hindcast period | Red: Observed truth") +
+           caption = if (is_unobserved_data && "effect_type" %in% colnames(hindcast_period_data)) {
+             "Blue: Calibration | Green: Hindcast (random effects) | Red: Hindcast (predicted effects) | Black: Observed truth"
+           } else {
+             "Blue: Calibration period | Green: Hindcast period | Red: Observed truth"
+           }) +
       theme_minimal() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
     
     # Create prediction distribution plot (combine both periods)
-    p2 <- ggplot(all_valid_data, aes(x = med, fill = fcast_period)) +
-      geom_histogram(bins = 20, alpha = 0.7, position = "identity") +
-      scale_fill_manual(values = c("calibration" = "lightblue", "hindcast" = "lightgreen")) +
-      labs(title = paste("Distribution of Predictions for", plot_id),
-           x = "Predicted Abundance", y = "Count", fill = "Period") +
-      theme_minimal()
+    if (is_unobserved_data && "effect_type" %in% colnames(all_valid_data)) {
+      # For unobserved sites, use effect type for coloring
+      p2 <- ggplot(all_valid_data, aes(x = med, fill = period_effect)) +
+        geom_histogram(bins = 20, alpha = 0.7, position = "identity") +
+        scale_fill_manual(values = c("calibration" = "lightblue", 
+                                   "hindcast_random" = "lightgreen", 
+                                   "hindcast_predicted" = "lightcoral"), 
+                         name = "Period & Effect") +
+        labs(title = paste("Distribution of Predictions for", plot_id),
+             x = "Predicted Abundance", y = "Count", fill = "Period & Effect") +
+        theme_minimal()
+    } else {
+      # For observed sites, use period only
+      p2 <- ggplot(all_valid_data, aes(x = med, fill = fcast_period)) +
+        geom_histogram(bins = 20, alpha = 0.7, position = "identity") +
+        scale_fill_manual(values = c("calibration" = "lightblue", "hindcast" = "lightgreen"), drop = FALSE) +
+        labs(title = paste("Distribution of Predictions for", plot_id),
+             x = "Predicted Abundance", y = "Count", fill = "Period") +
+        theme_minimal()
+    }
     
     # Create uncertainty plot (combine both periods)
     all_valid_data$uncertainty <- all_valid_data$hi - all_valid_data$lo
-    p3 <- ggplot(all_valid_data, aes(x = dateID, y = uncertainty, color = fcast_period)) +
-      geom_line(linewidth = 1) +
-      geom_point(size = 1) +
-      scale_color_manual(values = c("calibration" = "blue", "hindcast" = "green")) +
-      labs(title = paste("Prediction Uncertainty for", plot_id),
-           x = "Date", y = "Uncertainty (95% CI width)", color = "Period") +
-      theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    if (is_unobserved_data && "effect_type" %in% colnames(all_valid_data)) {
+      # For unobserved sites, use effect type for coloring
+      p3 <- ggplot(all_valid_data, aes(x = dateID, y = uncertainty, color = period_effect)) +
+        geom_line(linewidth = 1) +
+        geom_point(size = 1) +
+        scale_color_manual(values = c("calibration" = "blue", 
+                                    "hindcast_random" = "green", 
+                                    "hindcast_predicted" = "red"), 
+                          name = "Period & Effect") +
+        labs(title = paste("Prediction Uncertainty for", plot_id),
+             x = "Date", y = "Uncertainty (95% CI width)", color = "Period & Effect") +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    } else {
+      # For observed sites, use period only
+      p3 <- ggplot(all_valid_data, aes(x = dateID, y = uncertainty, color = fcast_period)) +
+        geom_line(linewidth = 1) +
+        geom_point(size = 1) +
+        scale_color_manual(values = c("calibration" = "blue", "hindcast" = "green"), drop = FALSE) +
+        labs(title = paste("Prediction Uncertainty for", plot_id),
+             x = "Date", y = "Uncertainty (95% CI width)", color = "Period") +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    }
     
     # Add vertical line to separate periods in uncertainty plot
     if(nrow(calibration_data) > 0 && nrow(hindcast_period_data) > 0) {
@@ -954,27 +1086,49 @@ generate_hindcast_diagnostics <- function(hindcast_data, model_id, taxon) {
     
     # Create validation plot (predictions vs truth) if truth values are available
     if(sum(!is.na(all_valid_data$truth)) > 0) {
-      p4 <- ggplot(all_valid_data, aes(x = truth, y = med, color = fcast_period)) +
-        geom_point(size = 2, alpha = 0.7) +
-        geom_abline(slope = 1, intercept = 0, color = "red", linewidth = 1, linetype = "dashed") +
-        scale_color_manual(values = c("calibration" = "blue", "hindcast" = "green")) +
-        labs(title = paste("Predictions vs Truth for", plot_id),
-             x = "Observed Truth", y = "Predicted Abundance", color = "Period") +
-        theme_minimal()
+      if (is_unobserved_data && "effect_type" %in% colnames(all_valid_data)) {
+        # For unobserved sites, use effect type for coloring with better point separation
+        p4 <- ggplot(all_valid_data, aes(x = truth, y = med, color = period_effect)) +
+          geom_point(size = 3, alpha = 0.8, position = position_jitter(width = 0.0005, height = 0.0005)) +
+          geom_abline(slope = 1, intercept = 0, color = "black", linewidth = 1, linetype = "dashed") +
+          scale_color_manual(values = c("calibration" = "blue", 
+                                      "hindcast_random" = "green", 
+                                      "hindcast_predicted" = "red"), 
+                            name = "Period & Effect") +
+          labs(title = paste("Predictions vs Truth for", plot_id),
+               x = "Observed Truth", y = "Predicted Abundance", color = "Period & Effect") +
+          theme_minimal() +
+          theme(legend.position = "bottom")
+      } else {
+        # For observed sites, use period only
+        p4 <- ggplot(all_valid_data, aes(x = truth, y = med, color = fcast_period)) +
+          geom_point(size = 2, alpha = 0.7) +
+          geom_abline(slope = 1, intercept = 0, color = "red", linewidth = 1, linetype = "dashed") +
+          scale_color_manual(values = c("calibration" = "blue", "hindcast" = "green"), drop = FALSE) +
+          labs(title = paste("Predictions vs Truth for", plot_id),
+               x = "Observed Truth", y = "Predicted Abundance", color = "Period") +
+          theme_minimal()
+      }
       
-      # Combine plots with validation plot
-      combined_plot <- gridExtra::grid.arrange(p1, p2, p3, p4, ncol = 2, heights = c(2, 1, 1, 1))
+      # For observed sites, create a single time series plot only
+      if (!is_unobserved_data) {
+        combined_plot <- p1  # Single time series plot for observed sites
+      } else {
+        # For unobserved sites, create a 2x2 grid (jitter already applied in p4)
+        combined_plot <- gridExtra::grid.arrange(p1, p2, p3, p4, ncol = 2, heights = c(2, 1, 1, 1))
+      }
 		} else {
-      # Combine plots without validation plot
-      combined_plot <- gridExtra::grid.arrange(p1, p2, p3, ncol = 1, heights = c(2, 1, 1))
+      # For observed sites without validation plot, use single time series
+      if (!is_unobserved_data) {
+        combined_plot <- p1  # Single time series plot for observed sites
+      } else {
+        # For unobserved sites without validation plot
+        combined_plot <- gridExtra::grid.arrange(p1, p2, p3, ncol = 1, heights = c(2, 1, 1))
+      }
     }
     
     # Save plot
     plot_file <- file.path(viz_dir, paste0("hindcast_", plot_id, "_", taxon, ".png"))
     ggsave(plot_file, combined_plot, width = 12, height = 10, dpi = 300)
-    
-    cat("  Saved visualization for", plot_id, "to", plot_file, "\n")
   }
-  
-  cat("Diagnostic visualizations saved to:", viz_dir, "\n")
 }

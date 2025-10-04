@@ -146,7 +146,7 @@ combine_chains <- function(chain_paths,
 	message("Metadata components found: ", paste(metadata_components, collapse = ", "))
 	
 	# Check for critical metadata components
-	critical_components <- c("model_name", "use_legacy_covariate")
+	critical_components <- c("model_name", "use_legacy_covariate", "has_driver_uncertainty")
 	for (comp in critical_components) {
 		if (comp %in% metadata_components) {
 			message("✅ ", comp, " preserved: ", metadata_final[[comp]])

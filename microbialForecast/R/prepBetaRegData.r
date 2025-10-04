@@ -212,10 +212,8 @@ prepBetaRegData <- function(rank.df,
 		# For full time series, use the full environmental data range
 		env_min_date <- min(colnames(predictor_data$temp))
 		env_max_date <- max(colnames(predictor_data$temp))
-		message("DEBUG: Using full environmental data range: ", env_min_date, " to ", env_max_date)
 		# CRITICAL FIX: Override max.predictor.date to use environmental data range
 		env_max_predictor_date <- paste0(substr(env_max_date, 1, 4), "-", substr(env_max_date, 5, 6), "-01")
-		message("DEBUG: Setting max.predictor.date to: ", env_max_predictor_date)
 		filt_predictor_data <- lapply(predictor_data, filter_date_site, keep_sites = keep_sites,
 																	keep_plots = keep_plots, min.date = env_min_date,
 																	max.date = env_max_date, max.predictor.date = env_max_predictor_date)
@@ -230,13 +228,8 @@ prepBetaRegData <- function(rank.df,
 	# CRITICAL FIX: Handle LAI data structure - convert data.frame to matrix
 	if ("LAI" %in% names(filt_predictor_data)) {
 		if (is.data.frame(filt_predictor_data$LAI)) {
-			message("DEBUG: Converting LAI data.frame to matrix")
 			filt_predictor_data$LAI <- as.matrix(filt_predictor_data$LAI)
 		}
-		message("DEBUG: LAI found in filtered predictor data with dimensions: ", paste(dim(filt_predictor_data$LAI), collapse=" x "))
-	} else {
-		message("DEBUG: LAI NOT found in filtered predictor data!")
-		message("DEBUG: Available filtered variables: ", paste(names(filt_predictor_data), collapse=", "))
 	}
 
 	# Add sine/cosine

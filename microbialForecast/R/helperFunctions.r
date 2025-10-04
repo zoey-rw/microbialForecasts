@@ -988,6 +988,12 @@ parse_plot_mu_vars <- function(input_df) {
 	with_rowname_col$rowname <- rownames(with_rowname_col)
 	rownames(with_rowname_col) <- NULL
 
+	# Handle empty data frames or NA rownames
+	if (nrow(with_rowname_col) == 0 || all(is.na(with_rowname_col$rowname))) {
+		# Return empty data frame with expected structure
+		return(data.frame(plot_num = integer(0), timepoint = integer(0), stringsAsFactors = FALSE))
+	}
+
 	# check number of commas for how to split values (i.e. should there be a "species_num" value)
 	if (str_count(with_rowname_col$rowname[1], ',') == 2) {
 		parsed <- with_rowname_col %>%
@@ -1032,11 +1038,34 @@ extract_summary_row <- function(input_df, var = "sigma") {
 #'
 extract_bracketed_vals <- function(input_df, varname1 = "beta_num", varname2 = NULL) {
 
+	# Handle empty data frames
+	if (nrow(input_df) == 0) {
+		# Return empty data frame with expected column names
+		if (is.null(varname2)) {
+			return(data.frame(rowname = character(0), stringsAsFactors = FALSE) %>%
+						 mutate(!!varname1 := character(0)))
+		} else {
+			return(data.frame(rowname = character(0), stringsAsFactors = FALSE) %>%
+						 mutate(!!varname1 := character(0), !!varname2 := character(0)))
+		}
+	}
 
 	if (!"rowname" %in% colnames(input_df)){
 		input_df <- input_df %>% as.data.frame()
 		input_df$rowname <- rownames(input_df)
 		rownames(input_df) <- NULL
+	}
+
+	# Check if rowname column has any non-NA values
+	if (all(is.na(input_df$rowname))) {
+		# Return empty data frame with expected column names
+		if (is.null(varname2)) {
+			return(data.frame(rowname = character(0), stringsAsFactors = FALSE) %>%
+						 mutate(!!varname1 := character(0)))
+		} else {
+			return(data.frame(rowname = character(0), stringsAsFactors = FALSE) %>%
+						 mutate(!!varname1 := character(0), !!varname2 := character(0)))
+		}
 	}
 
 	if (str_count(input_df$rowname[1], ',') == 1) {
@@ -1063,8 +1092,11 @@ extract_bracketed_vals <- function(input_df, varname1 = "beta_num", varname2 = N
 
 # Does confidence interval include 0? If so, not significant (0) otherwise significant (1)
 is_significant <- function(lo, hi) {
-	ifelse(lo < 0 & hi < 0 |
-				 	lo > 0 & hi > 0, 1, 0)
+	# Handle NA values by treating them as non-significant
+	# Check if both bounds are on the same side of 0 (both negative or both positive)
+	both_negative <- !is.na(lo) & !is.na(hi) & lo < 0 & hi < 0
+	both_positive <- !is.na(lo) & !is.na(hi) & lo > 0 & hi > 0
+	ifelse(both_negative | both_positive, 1, 0)
 }
 
 
@@ -1149,6 +1181,10 @@ parse_model_id = function(model_id){
 		is_legacy_covariate <- TRUE
 	}
 	
+	# Check if this is a driver uncertainty model
+	is_driver_uncertainty <- grepl("driver_uncertainty", model_id) || 
+	                       grepl("logit_beta_driver_uncertainty", model_id)
+	
 	if (is_legacy_covariate) {
 		# Enhanced metadata format: model_name_species_startdate_enddate_with_legacy_covariate
 		
@@ -1228,7 +1264,7 @@ parse_model_id = function(model_id){
 		group <-  rank.name  %>% str_split("_") %>% unlist() %>% tail(1)
 	}
 	
-	return(list(rank.name, time_period, rank_only, species, group, model_name, model_id, summary_type))
+	return(list(rank.name, time_period, rank_only, species, group, model_name, model_id, summary_type, is_driver_uncertainty))
 }
 
 # ## ################################################

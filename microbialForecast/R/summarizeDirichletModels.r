@@ -37,6 +37,7 @@ summarize_dirichlet_model <- function(file_path, save_summary = NULL, overwrite 
   time_period <- parsed_id[[2]]
   species <- parsed_id[[4]]
   rank_only <- parsed_id[[3]]
+  has_driver_uncertainty <- if (length(parsed_id) >= 9) parsed_id[[9]] else FALSE
   
   # Add columns based on type
   if (summary_type == "functional") {
