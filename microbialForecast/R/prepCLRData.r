@@ -217,13 +217,8 @@ prepCLRData <- function(rank.df,
 	# CRITICAL FIX: Handle LAI data structure - convert data.frame to matrix
 	if ("LAI" %in% names(filt_predictor_data)) {
 		if (is.data.frame(filt_predictor_data$LAI)) {
-			message("DEBUG: Converting LAI data.frame to matrix")
 			filt_predictor_data$LAI <- as.matrix(filt_predictor_data$LAI)
 		}
-		message("DEBUG: LAI found in filtered predictor data with dimensions: ", paste(dim(filt_predictor_data$LAI), collapse=" x "))
-	} else {
-		message("DEBUG: LAI NOT found in filtered predictor data!")
-		message("DEBUG: Available filtered variables: ", paste(names(filt_predictor_data), collapse=", "))
 	}
 	
 	# Add sine/cosine

@@ -93,10 +93,12 @@ fcast_clr <- function(plotID,
   
   # Extract model name safely
   if (is.list(model_info) && length(model_info) >= 6) {
-    # parse_model_id succeeded and returned a list with 8 elements
+    # parse_model_id succeeded and returned a list with 9 elements (including driver uncertainty flag)
     model_name <- model_info[[6]]
+    has_driver_uncertainty <- if (length(model_info) >= 9) model_info[[9]] else FALSE
   } else if (is.list(model_info) && "model_name" %in% names(model_info)) {
     # Fallback parsing was used and returned a list with model_name
+    has_driver_uncertainty <- FALSE
     model_name <- model_info$model_name
   } else {
     # Final fallback: try to parse from model_id directly

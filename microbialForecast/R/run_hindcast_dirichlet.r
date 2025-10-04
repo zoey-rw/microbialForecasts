@@ -121,7 +121,6 @@ fcast_dirichlet <- function(plotID,
     
     # CRITICAL FIX: Bounds checking for covariate access
     if (time > dim(covar)[3]) {
-      message("Warning: Time ", time, " exceeds covariate array bounds for plot ", plotID, " - skipping")
       next
     }
     
@@ -129,7 +128,6 @@ fcast_dirichlet <- function(plotID,
     
     # CRITICAL FIX: Validate Z dimensions
     if (ncol(Z) != ncol(betas)) {
-      message("Warning: Covariate dimension mismatch at time ", time, " for plot ", plotID, " - skipping")
       next
     }
     

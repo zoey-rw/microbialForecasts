@@ -50,13 +50,14 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 		source("R/summarizeModels.r")
 	}
 	if(summary_exists(file_path)) { # checks that a summary is needed (samples files are new)
-		if (is.null(overwrite)) {
+		if (is.null(overwrite) || overwrite == FALSE) {
 			return("Summary file already exists")
 		}
 	}
 	# Read in file, assign named contents to global environment
 	read_in <- readRDS(file_path)
 	message("File loaded successfully")
+	message("  DEBUG: File loaded, checking structure...")
 	#list2env(read_in,globalenv())
 
 	# Read in samples
@@ -66,9 +67,12 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	
 	# Debug: Check initial param_summary
 	message("  DEBUG: Initial param_summary names: ", paste(names(param_summary), collapse = ", "))
+	message("  DEBUG: Data extracted successfully, proceeding to model ID parsing...")
 	
 	# Check if we have samples2 (plot estimates) and use it for plot_summary if available
+	message("  DEBUG: Extracting samples2...")
 	samples2 <- read_in$samples2
+	message("  DEBUG: samples2 extracted, type:", class(samples2))
 	
 	# Check if existing plot_summary is malformed (contains parameter data instead of plot data)
 	plot_summary_valid <- FALSE
@@ -172,11 +176,15 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	# Handle different data structures
 	# Newer models have truth.plot.long nested under model_data
 	# Older models have the data directly in model_data
+	message("  DEBUG: Extracting truth.plot.long...")
 	if("truth.plot.long" %in% names(read_in$metadata$model_data)) {
 		truth.plot.long <- read_in$metadata$model_data$truth.plot.long
+		message("  DEBUG: Using nested truth.plot.long")
 	} else {
 		truth.plot.long <- read_in$metadata$model_data
+		message("  DEBUG: Using direct model_data")
 	}
+	message("  DEBUG: truth.plot.long extracted, class:", class(truth.plot.long))
 	
 	# Ensure truth.plot.long is a data frame
 	if (!is.data.frame(truth.plot.long)) {
@@ -188,12 +196,20 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	info <- basename(file_path) %>% str_split("_") %>% unlist()
 	model_id <- basename(file_path) %>%  str_replace("samples_", "") %>%  str_replace(".rds", "")
 
-	parsed_id = parse_model_id(model_id)
+	message("  DEBUG: About to parse model_id:", model_id)
+	tryCatch({
+		parsed_id = parse_model_id(model_id)
+		message("  DEBUG: Model ID parsed successfully")
+	}, error = function(e) {
+		message("  ERROR in parse_model_id:", e$message)
+		stop(e)
+	})
 	rank.name.eval <- parsed_id[[1]]
 	model_name <- parsed_id[[6]]
 	summary_type <- parsed_id[[8]]  # Fixed: should be index 8, not 3
 	group  <- parsed_id[[5]]
 	time_period <- parsed_id[[2]]
+	has_driver_uncertainty <- parsed_id[[9]]  # New driver uncertainty flag
 
 	if (length(info) > 0 && !is.na(tail(info,1)) && tail(info,1) == "summary.rds") {
 			info <- info %>% head(-1)
@@ -220,6 +236,7 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	taxon.name = species
 
 	message("Summarizing ", species, ", ", rank.name, ", ", time_period, ", ", model_name)
+	message("  DEBUG: Starting parameter extraction...")
 
 
 	cov_key <- switch(model_name,
@@ -227,9 +244,7 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 										"env_cov" = microbialForecast:::all_covariates_key,
 										"env_cycl" = microbialForecast:::all_covariates_key,
 										"cycl_only" = microbialForecast:::cycl_only_key)
-
-	taxon_key <- unique(truth.plot.long$species)
-	names(taxon_key) <- seq(1, length(taxon_key))
+	message("  DEBUG: cov_key assigned, length:", length(cov_key))
 
 	sites <- truth.plot.long %>% select(site_num, siteID) %>% unique()
 	site_key <- sites[["siteID"]]
@@ -248,7 +263,7 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 						 rank_only = !!rank_only,
 						 time_period = !!time_period,
 						 fcast_type = !!summary_type,
-						 pretty_group = ifelse(!is.na(group) & group %in% c("16S","bac"), "Bacteria", "Fungi"),
+						 pretty_group = ifelse(!is.na(group) & !is.na(group %in% c("16S","bac")) & group %in% c("16S","bac"), "Bacteria", "Fungi"),
 						 model_id = !!model_id) %>%
 			mutate(time_period =
 						 	recode(as.character(!!time_period), !!!microbialForecast:::date_recode))
@@ -263,7 +278,7 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 						 rank_only = !!rank_only,
 						 time_period = !!time_period,
 						 fcast_type = !!summary_type,
-						 pretty_group = ifelse(!is.na(group) & group %in% c("16S","bac"), "Bacteria", "Fungi"),
+						 pretty_group = ifelse(!is.na(group) & !is.na(group %in% c("16S","bac")) & group %in% c("16S","bac"), "Bacteria", "Fungi"),
 						 model_id = !!model_id) %>%
 			mutate(time_period =
 						 	recode(as.character(!!time_period), !!!microbialForecast:::date_recode))
@@ -283,21 +298,60 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 		truth.plot.long <- truth.plot.long %>% filter(species != "other")
 	}
 
+	# Initialize taxon_key before using it
+	taxon_key <- unique(truth.plot.long$species)
+	names(taxon_key) <- seq(1, length(taxon_key))
+	
 	if (!is.na(species) && nchar(species) > 0) {
 		taxon_key[1] = species
 	}
 
 	# Calculate plot median and quantiles
-	pred.quantiles <- plot_summary[[2]] %>% parse_plot_mu_vars() %>%
-		merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
+	# Handle different plot_summary structures
+	if (inherits(plot_summary, "summary.mcmc")) {
+		# For env_cov models with summary.mcmc objects, create empty plot estimates
+		message("  Using summary.mcmc plot_summary - creating empty plot estimates")
+		pred.quantiles <- data.frame(
+			plot_num = integer(0),
+			timepoint = integer(0),
+			Mean = numeric(0),
+			SD = numeric(0),
+			`2.5%` = numeric(0),
+			`25%` = numeric(0),
+			`50%` = numeric(0),
+			`75%` = numeric(0),
+			`97.5%` = numeric(0),
+			taxon = character(0)
+		)
+		pred.means <- pred.quantiles
+	} else if (is.list(plot_summary) && length(plot_summary) >= 2) {
+		# For standard plot_summary with plot_mu parameters
+		pred.quantiles <- plot_summary[[2]] %>% parse_plot_mu_vars() %>%
+			merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
 
+		# For scoring the predictions, need mean and SD
+		pred.means <- plot_summary[[1]] %>% parse_plot_mu_vars() %>%
+			merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
 
-	# For scoring the predictions, need mean and SD
-	pred.means <- plot_summary[[1]] %>% parse_plot_mu_vars() %>%
-		merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
-
-	pred.quantiles$Mean <- pred.means$Mean
-	pred.quantiles$SD <- pred.means$SD
+		pred.quantiles$Mean <- pred.means$Mean
+		pred.quantiles$SD <- pred.means$SD
+	} else {
+		# Fallback for other structures
+		message("  Unknown plot_summary structure - creating empty plot estimates")
+		pred.quantiles <- data.frame(
+			plot_num = integer(0),
+			timepoint = integer(0),
+			Mean = numeric(0),
+			SD = numeric(0),
+			`2.5%` = numeric(0),
+			`25%` = numeric(0),
+			`50%` = numeric(0),
+			`75%` = numeric(0),
+			`97.5%` = numeric(0),
+			taxon = character(0)
+		)
+		pred.means <- pred.quantiles
+	}
 
 	# Get mean values for parameters
 	means <- param_summary[[1]]
@@ -411,7 +465,7 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 					 rank_only = !!rank_only,
 					 time_period = !!time_period,
 					 fcast_type = !!summary_type,
-					 pretty_group = ifelse(!is.na(group) & group %in% c("16S","bac"), "Bacteria", "Fungi"),
+					 pretty_group = ifelse(!is.na(group) & !is.na(group %in% c("16S","bac")) & group %in% c("16S","bac"), "Bacteria", "Fungi"),
 					 model_id = !!model_id)
 	# } else {
 	# 	summary_df <-
@@ -428,7 +482,7 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 						 rank_only = !!rank_only,
 						 time_period = !!time_period,
 						 fcast_type = !!summary_type,
-						 pretty_group = ifelse(!is.na(group) & group %in% c("16S","bac"), "Bacteria", "Fungi"),
+						 pretty_group = ifelse(!is.na(group) & !is.na(group %in% c("16S","bac")) & group %in% c("16S","bac"), "Bacteria", "Fungi"),
 						 model_id = !!model_id)
 	}, error = function(e) {
 		cat("  WARNING: Error calculating Gelman diagnostics:", e$message, "\n")
@@ -445,7 +499,7 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 			rank_only = rank_only,
 			time_period = time_period,
 			fcast_type = summary_type,
-			pretty_group = ifelse(!is.na(group) & group %in% c("16S","bac"), "Bacteria", "Fungi"),
+			pretty_group = ifelse(!is.na(group) & !is.na(group %in% c("16S","bac")) & group %in% c("16S","bac"), "Bacteria", "Fungi"),
 			model_id = model_id,
 			stringsAsFactors = FALSE
 		)
@@ -458,12 +512,15 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	}
 
 	out <- list(summary_df, pred.means, pred.quantiles, gd)
-	if (!is.null(save_summary)) {
+	message("  DEBUG: Created output list with", length(out), "elements")
+	if (!is.null(save_summary) && save_summary == TRUE) {
 		savePath <- gsub("samples","summary",file_path)
+		message("  DEBUG: About to save to", savePath)
 		saveRDS(out, savePath)
 		message("Saved summary to ", savePath)
 		return(TRUE)
 	} else {
+		message("  DEBUG: Not saving, returning output list")
 		return(out)
 	}
 }
