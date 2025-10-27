@@ -174,11 +174,12 @@ combine_chains <- function(chain_paths,
 		
 		# Extract samples2 if it exists and has proper plot prediction structure
 		if (is.list(chain) && "samples2" %in% names(chain)) {
-			if (is.matrix(chain$samples2) && (any(grepl("plot_mu", colnames(chain$samples2))) || any(grepl("^Ex\\[", colnames(chain$samples2))) || any(grepl("plot_estimates", colnames(chain$samples2))) || any(grepl("plot_predictions", colnames(chain$samples2))))) {
-				# samples2 has proper plot prediction structure (plot_mu, Ex[i,j], plot_estimates, or plot_predictions format)
+			if (is.matrix(chain$samples2) && (any(grepl("plot_mu", colnames(chain$samples2))) || any(grepl("^Ex\\[", colnames(chain$samples2))) || any(grepl("^mu\\[", colnames(chain$samples2))) || any(grepl("plot_estimates", colnames(chain$samples2))) || any(grepl("plot_predictions", colnames(chain$samples2))))) {
+				# samples2 has proper plot prediction structure (plot_mu, Ex[i,j], mu[i,j], plot_estimates, or plot_predictions format)
 				samples2_list[[i]] <- chain$samples2
 				plot_param_type <- if(any(grepl("plot_mu", colnames(chain$samples2)))) "plot_mu" 
 					else if(any(grepl("^Ex\\[", colnames(chain$samples2)))) "Ex[i,j]"
+					else if(any(grepl("^mu\\[", colnames(chain$samples2)))) "mu[i,j]"
 					else if(any(grepl("plot_estimates", colnames(chain$samples2)))) "plot_estimates"
 					else "plot_predictions"
 				message("Chain ", i, " has proper samples2 with ", plot_param_type, " parameters")
@@ -189,10 +190,11 @@ combine_chains <- function(chain_paths,
 			}
 		} else if (is.list(chain) && length(chain) >= 2) {
 			# Old format: check if second element is samples2
-			if (is.matrix(chain[[2]]) && (any(grepl("plot_mu", colnames(chain[[2]]))) || any(grepl("^Ex\\[", colnames(chain[[2]]))) || any(grepl("plot_estimates", colnames(chain[[2]]))) || any(grepl("plot_predictions", colnames(chain[[2]]))))) {
+			if (is.matrix(chain[[2]]) && (any(grepl("plot_mu", colnames(chain[[2]]))) || any(grepl("^Ex\\[", colnames(chain[[2]]))) || any(grepl("^mu\\[", colnames(chain[[2]]))) || any(grepl("plot_estimates", colnames(chain[[2]]))) || any(grepl("plot_predictions", colnames(chain[[2]]))))) {
 				samples2_list[[i]] <- chain[[2]]
 				plot_param_type <- if(any(grepl("plot_mu", colnames(chain[[2]])))) "plot_mu" 
 					else if(any(grepl("^Ex\\[", colnames(chain[[2]])))) "Ex[i,j]"
+					else if(any(grepl("^mu\\[", colnames(chain[[2]])))) "mu[i,j]"
 					else if(any(grepl("plot_estimates", colnames(chain[[2]])))) "plot_estimates"
 					else "plot_predictions"
 				message("Chain ", i, " has proper samples2 from old format with ", plot_param_type, " parameters")
