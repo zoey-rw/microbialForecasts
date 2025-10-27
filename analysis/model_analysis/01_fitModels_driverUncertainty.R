@@ -10,12 +10,16 @@ if (!require(here)) {
     library(here)
 }
 
+# Setup logging first
+source(here("analysis/model_analysis/60_logging.R"))
+log_setup(logfile = here("logs", paste0("model_fitting_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".log")))
+
 # Set project root
-here::i_am("analysis/model_analysis/01_fitModels_betaReg.R")
+here::i_am("analysis/model_analysis/01_fitModels_driverUncertainty.R")
 project_root <- here()
 
-cat("here() starts at", project_root, "\n")
-cat("Project root set to:", getwd(), "\n")
+info("here() starts at %s", project_root)
+info("Project root set to: %s", getwd())
 
 # Load the microbialForecast package to access helper functions
 library(microbialForecast)
@@ -26,69 +30,181 @@ library(nimble)
 # Set nimbleOptions for faster compilation
 nimbleOptions(buildInterfacesForCompiledNimbleFunctions = FALSE) # faster compile
 nimbleOptions(optimize = TRUE)
-cat("✓ NIMBLE options set for faster compilation\n")
+info("✓ NIMBLE options set for faster compilation")
+
+
+# One source of truth for driver uncertainty mode
+driver_uncertainty_mode <- TRUE  # Set FALSE for fixed drivers
+
+# ---- BEGIN: compat shim to standardize output structure ----
+ensure_old_schema <- function(samples, samples2, meta,
+                              model_output_root, model_name, species,
+                              model_id, chain_no) {
+
+  # 1) Ensure matrices
+  if (inherits(samples, "mcmc.list")) samples <- as.matrix(do.call(rbind, samples))
+  if (inherits(samples, "mcmc"))      samples <- as.matrix(samples)
+  if (!is.matrix(samples))            samples <- as.matrix(samples)
+
+  if (missing(samples2) || is.null(samples2)) samples2 <- samples
+  if (inherits(samples2, "mcmc.list")) samples2 <- as.matrix(do.call(rbind, samples2))
+  if (inherits(samples2, "mcmc"))      samples2 <- as.matrix(samples2)
+  if (!is.matrix(samples2))            samples2 <- as.matrix(samples2)
+
+  # 2) Rename latent columns to plot_mu[*] (drop Ex if present)
+  cn2 <- colnames(samples2)
+  if (!is.null(cn2)) {
+    # keep only mu[...] (or plot_mu[...]) columns
+    keep <- grepl("^mu\\[", cn2) | grepl("^plot_mu\\[", cn2)
+    if (any(keep)) {
+      samples2 <- samples2[, keep, drop = FALSE]
+      cn2      <- colnames(samples2)
+    }
+    # convert mu[...] -> plot_mu[...]
+    cn2 <- sub("^mu\\[", "plot_mu[", cn2)
+    colnames(samples2) <- cn2
+  }
+
+  # 3) Minimal metadata set with consistent keys/types
+  required_meta <- list(
+    rank.name           = meta$rank.name              %||% NA_character_,
+    species             = meta$species                %||% NA_character_,
+    model_name          = meta$model_name             %||% NA_character_,
+    model_id            = meta$model_id               %||% NA_character_,
+    use_legacy_covariate= isTRUE(meta$use_legacy_covariate),
+    has_driver_uncertainty = isTRUE(meta$has_driver_uncertainty),
+    scenario            = meta$scenario               %||% NA_character_,
+    min.date            = meta$min.date               %||% NA_character_,
+    max.date            = meta$max.date               %||% NA_character_,
+    niter               = meta$niter                  %||% nrow(samples),
+    nburnin             = meta$nburnin                %||% 0L,
+    thin                = meta$thin                   %||% 1L,
+    thin2               = meta$thin2                  %||% 20L,
+    model_structure     = meta$model_structure        %||% "cloglog_beta_regression_with_driver_uncertainty"
+  )
+  # keep any extras too
+  for (nm in setdiff(names(meta), names(required_meta))) required_meta[[nm]] <- meta[[nm]]
+
+  # 4) Standard file path (always include species folder)
+  species_dir  <- file.path(model_output_root, model_name, species)
+  dir.create(species_dir, recursive = TRUE, showWarnings = FALSE)
+  samples_file <- file.path(species_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
+
+  # 5) Return final list and path
+  list(
+    chain_output = list(samples = samples, samples2 = samples2, metadata = required_meta),
+    path = samples_file
+  )
+}
+
+`%||%` <- function(a,b) if(is.null(a)) b else a
+
+# Optional safety net: rebuild mu from eta if needed
+fix_mu_from_eta <- function(S2, N.plot, N.date) {
+  has_mu  <- any(grepl("^mu\\[",  colnames(S2)))
+  has_eta <- any(grepl("^eta\\[", colnames(S2)))
+  if (has_mu || !has_eta) return(S2)
+
+  eta_cols <- grep("^eta\\[", colnames(S2), value = TRUE)
+  eta_mat  <- as.matrix(S2[, eta_cols, drop = FALSE])
+  mu_mat   <- 1 - exp(-exp(eta_mat))
+  colnames(mu_mat) <- sub("^eta\\[", "mu[", colnames(eta_mat))
+  cbind(S2, mu_mat)
+}
+# ---- END: compat shim ----
 
 # Load packages and create directories using package functions
 load_required_packages()
+
+# Ensure parallel packages are loaded
+library(parallel)
+library(doParallel)
+library(foreach)
+library(coda)
 create_directories_safe(
     here("data", "model_outputs"), 
-    c("logit_beta_driver_uncertainty", "logit_beta_driver_uncertainty/cycl_only")
+    c(if (driver_uncertainty_mode) "cloglog_beta_driver_uncertainty"
+      else "cloglog_beta_fixed_drivers")
 )
 
+# Define output directory based on mode
+model_output_dir <- here("data", "model_outputs", 
+                         if (driver_uncertainty_mode) "cloglog_beta_driver_uncertainty"
+                         else "cloglog_beta_fixed_drivers")
 
+info("==================================================")
+info("Microbial forecasts environment setup complete!")
+info("Ready for analysis.")
+info("==================================================")
 
-# Define output directory early to prevent undefined variable errors
-model_output_dir <- here("data", "model_outputs", "logit_beta_driver_uncertainty")
-
-cat("==================================================\n")
-cat("Microbial forecasts environment setup complete!\n")
-cat("Ready for analysis.\n")
-cat("==================================================\n")
-
-# Get arguments from the command line (run with qsub script & OGE scheduler)
+# ----------------- HPC / CLI ARGUMENTS -----------------
 argv <- commandArgs(TRUE)
-# Check if the command line is not empty and convert values to numerical values
-if (length(argv) > 0){
-    k <- as.numeric( argv[1] )
-} else {
-    k=1
+
+# helpers
+get_flag <- function(name) any(grepl(paste0("^", name, "$"), argv))
+get_opt  <- function(name, default = NULL) {
+  hit <- grep(paste0("^", name, "="), argv, value = TRUE)
+  if (length(hit) == 0) return(default)
+  sub(paste0("^", name, "="), "", hit[1])
 }
 
-# Run with 4 chains for HPC production use
-nchains = 3
+# Chains: default 4 for HPC, 2 for LOCAL_TEST
+nchains <- as.integer(Sys.getenv("NCHAINS", ifelse(identical(tolower(Sys.getenv("LOCAL_TEST","false")),"true"), "2", "4")))
+
+# Priority switch stays compatible with your existing logic
+use_priority <- Sys.getenv("USE_PRIORITY", ifelse(get_flag("priority") || get_flag("--priority"), "true", "false"))
+
+# Selection methods (only one needs to be provided)
+cli_model_id   <- get_opt("--model-id",   NULL)
+cli_rank       <- get_opt("--rank",       NULL)
+cli_species    <- get_opt("--species",    NULL)
+cli_model_name <- get_opt("--model-name", NULL)
+
+# Linear task (1..n_models*nchains) from CLI or scheduler env
+cli_task      <- suppressWarnings(as.integer(get_opt("--task", NA)))
+sge_task      <- suppressWarnings(as.integer(Sys.getenv("SGE_TASK_ID", NA)))
+pbs_task      <- suppressWarnings(as.integer(Sys.getenv("PBS_ARRAYID", NA)))
+slurm_task    <- suppressWarnings(as.integer(Sys.getenv("SLURM_ARRAY_TASK_ID", NA)))
+array_task_id <- suppressWarnings(as.integer(na.omit(c(cli_task, sge_task, pbs_task, slurm_task))[1]))
+
+# Back-compat "k" (ignored previously); we still allow it if provided
+k <- suppressWarnings(as.integer(if (length(argv) > 0) argv[1] else NA))
+if (!is.na(k) && is.na(array_task_id)) array_task_id <- k
+# -------------------------------------------------------
 
 #### Run on all groups ----
 
 # Load data early for filtering
-cat("Loading data files for filtering...\n")
+info("Loading data files for filtering...")
 bacteria <- readRDS(here("data/clean/groupAbundances_16S_2023.rds"))
 fungi <- readRDS(here("data/clean/groupAbundances_ITS_2023.rds"))
 all_ranks = c(bacteria, fungi)
-cat("Data loaded successfully for", length(all_ranks), "ranks\n")
+info("Data loaded successfully for %d ranks", length(all_ranks))
 
 # Function to check if MCMC should continue based on effective sample size
 check_continue <- function(samples, min_eff_size = 50) {
     # Validate input
     if (is.null(samples) || nrow(samples) == 0) {
-        cat("  WARNING: Empty or NULL samples provided to check_continue, defaulting to continue\n")
+        warn("Empty samples; continuing")
         return(TRUE)
     }
     
     # Convert to mcmc object for effectiveSize calculation
     if (!inherits(samples, "mcmc")) {
-        samples <- as.mcmc(samples)
+        samples <- coda::as.mcmc(samples)
     }
+    
     # Calculate effective sample sizes for all parameters
-    eff_sizes <- effectiveSize(samples)
+    eff_sizes <- coda::effectiveSize(samples)
     
     # Check if any parameter has ESS below threshold
-    min_ess <- min(eff_sizes, na.rm = TRUE)
+    min_ess <- suppressWarnings(min(eff_sizes, na.rm = TRUE))
     
     # Continue if minimum ESS is below threshold
-    continue <- min_ess < min_eff_size
+    continue <- is.finite(min_ess) && (min_ess < min_eff_size)
     
-    cat("  ESS check - Min ESS:", round(min_ess, 1), "Target:", min_eff_size, "\n")
-    cat("  Continue sampling:", continue, "\n")
+    info("ESS check - Min ESS: %.1f, Target: %d", round(min_ess, 1), min_eff_size)
+    info("Continue sampling: %s", continue)
     
     return(continue)
 }
@@ -98,70 +214,85 @@ params_in = read.csv(here("data/clean/model_input_df.csv"),
                                     rep("logical", 2),
                                     rep("character", 4)))
 
-# Check for priority mode via environment variable or command line argument
-use_priority <- Sys.getenv("USE_PRIORITY", "false")
-argv <- commandArgs(TRUE)
-if (length(argv) > 1 && (argv[2] == "priority" || argv[2] == "--priority")) {
-    use_priority <- "true"
+# LOCAL TESTING: Filter early to avoid loading 2,700+ models
+if (identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")) {
+    info("🧪 LOCAL TESTING: Filtering to single plant_pathogen env_cycl model")
+    params_in <- params_in %>% filter(
+        species == "plant_pathogen" & 
+        rank.name == "plant_pathogen" &
+        model_name == "env_cycl" &
+        scenario == "Legacy with covariate 2013-2018" &
+        min.date == "20130601" &
+        max.date == "20180101" &
+        temporalDriverUncertainty == TRUE &
+        spatialDriverUncertainty == TRUE
+    )
+    info("   Filtered to %d models for testing", nrow(params_in))
 }
 
+# Priority mode is now handled in CLI parsing above
+
 if (use_priority == "true" || use_priority == "priority") {
-    cat("🎯 PRIORITY MODE: Using high-priority models with existing progress\n")
+    info("🎯 PRIORITY MODE: Using high-priority models with existing progress")
     priority_file <- here("data/summary/priority_rerun_list.rds")
     if (file.exists(priority_file)) {
         rerun_list <- readRDS(priority_file)
-        cat("   Loaded", length(rerun_list), "priority models (have chain 1 completed)\n")
+        info("   Loaded %d priority models (have chain 1 completed)", length(rerun_list))
     } else {
-        cat("   Priority list not found! Falling back to standard unconverged list...\n")
+        warn("   Priority list not found! Falling back to standard unconverged list...")
         rerun_list <- readRDS(here("data/summary/unconverged_taxa_list.rds"))
     }
 } else {
-    cat("📊 STANDARD MODE: Using all unconverged models\n")
+    info("📊 STANDARD MODE: Using all unconverged models")
     rerun_list <- readRDS(here("data/summary/unconverged_taxa_list.rds"))
-    cat("   Tip: Set USE_PRIORITY=true or add 'priority' argument to focus on models with existing progress\n")
+    info("   Tip: Set USE_PRIORITY=true or add 'priority' argument to focus on models with existing progress")
 }
 
 converged_list = readRDS(here("data/summary/weak_converged_taxa_list.rds"))
 
 # HPC PRODUCTION CONFIGURATION: Run multiple models with driver uncertainty enabled
-params <- params_in %>% ungroup %>% filter(
-    # Run ALL model types with driver uncertainty enabled
-    model_name %in% c("env_cycl", "env_cov", "cycl_only") &
-        # Only include models with driver uncertainty enabled
-        temporalDriverUncertainty == TRUE &
-        spatialDriverUncertainty == TRUE &
-        # Focus on 2013-2018 period for legacy analysis
-        scenario %in% c("Legacy with covariate 2013-2018") &
-        species %in% c("plant_pathogen","herbicide_stress")
-        # Include multiple ranks for comprehensive coverage
-#        rank.name %in% c("phylum_fun")
-) %>% distinct(.keep_all = TRUE)
+# Note: params_in may already be filtered by LOCAL_TEST above
+if (identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")) {
+    # LOCAL TESTING: Use the already filtered params_in directly
+    info("🧪 LOCAL TESTING: Using pre-filtered params_in (%d models)", nrow(params_in))
+    params <- params_in
+} else {
+    # PRODUCTION: Apply full filtering
+    params <- params_in %>% ungroup %>% filter(
+        # Run ALL model types with driver uncertainty enabled
+        model_name %in% c("env_cycl", "env_cov", "cycl_only") &
+            # Only include models with driver uncertainty enabled
+            temporalDriverUncertainty == TRUE &
+            spatialDriverUncertainty == TRUE &
+            # Focus on 2013-2018 period for legacy analysis
+            scenario %in% c("Legacy with covariate 2013-2018")
+    ) %>% distinct(.keep_all = TRUE)
+}
 
 # Filter out already converged models
 params <- params %>% filter(!model_id %in% converged_list)
 
 # LOCAL TESTING: Run just 1 model for faster testing
-# Limit to reasonable number for local testing
+if (identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")) {
 set.seed(123)  # For reproducible sampling
 params <- params %>%
     sample_n(size = 1, replace = FALSE) %>%  # Run just 1 model for faster testing
     ungroup()
+}
 
-cat("LOCAL TESTING: Starting parallel execution for", nrow(params), "models with", nchains, "chains\n")
-cat("Expected runtime: Variable (convergence-based sampling)\n")
-cat("  - Models to run:", nrow(params), "models (cycl_only, env_cov, env_cycl) with driver uncertainty\n")
-cat("  - Chains per model:", nchains, "(total", nrow(params) * nchains, "parallel tasks)\n")
-cat("  - Initial iterations: ~ 0.1 minutes per chain\n")
-cat("  - Additional iterations: Variable based on convergence\n")
-cat("  - Target: ESS >= 3 per parameter\n")
-cat("🎯 PRIOR STRATEGY: HYBRID (weak main + stable site effects) - PROVEN TO WORK\n")
-cat("🔧 TESTING MODE: Local testing with 2 cores (not HPC)\n")
+info("LOCAL TESTING: Starting parallel execution for %d models with %d chains", nrow(params), nchains)
+info("Expected runtime: Variable (convergence-based sampling)")
+info("  - Models to run: %d models (cycl_only, env_cov, env_cycl) with driver uncertainty", nrow(params))
+info("  - Chains per model: %d (total %d parallel tasks)", nchains, nrow(params) * nchains)
+info("  - Initial iterations: ~ 0.1 minutes per chain")
+info("  - Additional iterations: Variable based on convergence")
+info("  - Target: ESS >= 10 per parameter")
+info("🔧 TESTING MODE: Local testing with 2 cores (not HPC)")
 
-cat("LOCAL TESTING: Running", nrow(params), "models with", nchains, "chains in parallel\n")
-cat("This executes the stable env_cycl framework with PROVEN HYBRID PRIORS for local testing\n")
+info("LOCAL TESTING: Running %d models with %d chains in parallel", nrow(params), nchains)
 
 # Filter parameters to only include models with available species and ranks
-cat("Filtering models to only include those with available data...\n")
+info("Filtering models to only include those with available data...")
 original_n_models <- nrow(params)
 
 # Create a function to check if a model has valid data
@@ -192,25 +323,25 @@ filtered_n_models <- nrow(params)
 # Report filtering results
 if (filtered_n_models < original_n_models) {
     n_filtered <- original_n_models - filtered_n_models
-    cat("⚠️  Filtered out", n_filtered, "models with unavailable species/ranks\n")
-    cat("  Original models:", original_n_models, "\n")
-    cat("  Valid models:", filtered_n_models, "\n")
+    warn("Filtered out %d models with unavailable species/ranks", n_filtered)
+    info("  Original models: %d", original_n_models)
+    info("  Valid models: %d", filtered_n_models)
 } else {
-    cat("✓ All", filtered_n_models, "models have valid data\n")
+    info("✓ All %d models have valid data", filtered_n_models)
 }
 
 # Additional validation: ensure we have at least one valid model
 if (filtered_n_models == 0) {
-    cat("❌ ERROR: No valid models remaining after filtering!\n")
-    cat("Available ranks in data:", paste(names(all_ranks), collapse=", "), "\n")
+    error("No valid models remaining after filtering!")
+    error("Available ranks in data: %s", paste(names(all_ranks), collapse=', '))
     
     # Show some examples of available species for each rank
     for (rank_name in names(all_ranks)) {
         rank_data <- all_ranks[[rank_name]]
         metadata_cols <- c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date")
         available_species <- setdiff(colnames(rank_data), metadata_cols)
-        cat("  ", rank_name, "species (first 5):", paste(head(available_species, 5), collapse=", "),
-            if(length(available_species) > 5) paste("... (+", length(available_species) - 5, " more)") else "", "\n")
+        info("  %s species (first 5): %s%s", rank_name, paste(head(available_species, 5), collapse=", "),
+            if(length(available_species) > 5) paste("... (+", length(available_species) - 5, " more)") else "")
     }
     
     stop("No valid models to run - check species names and rank names in parameters")
@@ -218,31 +349,39 @@ if (filtered_n_models == 0) {
 
 # Use the filtered parameters from data loading
 valid_models <- params
-cat("Testing with", nrow(valid_models), "models\n")
-cat("Models to test:\n")
+info("Testing with %d models", nrow(valid_models))
+info("Models to test:")
 print(valid_models)
 
-cat("HPC PRODUCTION: Running", nrow(valid_models), "models across all ranks with beta regression approach\n")
+# Store single-task mode flag for later use
+single_task_mode <- !is.na(array_task_id)
 
-# LOCAL TESTING: Configuration for parallel execution
-n_cores <- 2  # LOCAL TESTING: Use 2 cores for faster testing
-cat("📊 Models to run:", nrow(valid_models), "models with", nchains, "chains each\n")
-cat("⏱️  Expected runtime: Variable (convergence-based sampling)\n")
-cat("🎯 Target: ESS >= 10 per parameter\n")
-cat("🧪 TESTING MODE: Using first 500 rows of rank_df.spec for faster testing\n")
+info("HPC PRODUCTION: Running %d models across all ranks with beta regression approach", nrow(valid_models))
+
+# Configuration for parallel execution
+if (identical(tolower(Sys.getenv("LOCAL_TEST","false")), "true")) {
+  n_cores <- 2
+  info("🔧 TESTING MODE: Local testing with %d cores", n_cores)
+} else {
+  n_cores <- as.integer(Sys.getenv("NCORES", parallel::detectCores()))
+  info("HPC MODE: Using %d cores (NCORES env or detectCores)", n_cores)
+}
+
+info("📊 Models to run: %d models with %d chains each", nrow(valid_models), nchains)
+info("⏱️  Expected runtime: Variable (convergence-based sampling)")
+info("🎯 Target: ESS >= 10 per parameter")
 #
 
 create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariate = TRUE, 
                                                       temporalDriverUncertainty = TRUE, 
                                                       spatialDriverUncertainty = TRUE) {
-    cat("Building FINAL Nimble model WITH driver uncertainty:", model_name, "\n")
-    cat("  Temporal uncertainty:", temporalDriverUncertainty, "\n")
-    cat("  Spatial uncertainty:", spatialDriverUncertainty, "\n")
+    info("Building Nimble model with driver uncertainty: %s", model_name)
+    info("  Temporal uncertainty: %s", temporalDriverUncertainty)
+    info("  Spatial uncertainty: %s", spatialDriverUncertainty)
     
     if (model_name == "env_cycl" && use_legacy_covariate) {
         modelCode <- nimble::nimbleCode({
-            # 🎯 PROVEN HYBRID PRIORS - Weak for main parameters, stable for site effects
-            precision ~ dgamma(0.001, 0.001)        # Jeffreys prior - very weak
+            precision ~ dgamma(2, 0.1)              # Gentle prior - mean 20, var 200
             rho ~ dbeta(1, 1)                       # Uniform prior - very weak
             intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak
             legacy_effect ~ dnorm(0, sd = 10)       # Very wide normal - very weak
@@ -258,37 +397,45 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
                 beta[b] ~ dnorm(0, sd = 10)         # Very wide normal - very weak
             }
             
-            # PROCESS MODEL - FINAL with all fixes
+            # NEW: process & initial-state scales
+            sigma_proc ~ dunif(0, 0.5)
+            tau_proc <- pow(sigma_proc, -2)
+            sigma_init ~ dunif(0, 1)
+            tau_init <- pow(sigma_init, -2)
+            
+            # PROCESS MODEL - Direct AR(1) on η with deterministic μ = cloglog⁻¹(η)
             for (p in 1:N.plot) {
-                # Initial condition - ONLY at plot_start[p] (no overlap with dynamic loop)
-                Ex[p, plot_start[p]] ~ dunif(0.1, 0.9)
-                mu[p, plot_start[p]] ~ dbeta(shape1 = Ex[p, plot_start[p]] * precision, 
-                                            shape2 = (1 - Ex[p, plot_start[p]]) * precision)
+                # Initial state on eta (level-anchored). Use *_est to honor driver-uncertainty toggles.
+                eta[p, plot_start[p]] ~ dnorm(
+                    intercept +
+                    site_effect[plot_site_num[p]] +
+                    beta[1] * sin_mo[plot_start[p]] + beta[2] * cos_mo[plot_start[p]] +
+                    beta[3] * temp_est[plot_site_num[p], plot_start[p]] +
+                    beta[4] * mois_est[plot_site_num[p], plot_start[p]] +
+                    beta[5] * pH_est[p, plot_start[p]] + beta[6] * pC_est[p, plot_start[p]] +
+                    beta[7] * relEM[p, plot_start[p]] +
+                    beta[8] * LAI[plot_site_num[p], plot_start[p]] +
+                    legacy_effect * legacy[p, plot_start[p]],
+                    tau_init
+                )
+                mu[p, plot_start[p]] <- 1 - exp(-exp(eta[p, plot_start[p]]))
                 
-                # Dynamic evolution - START AFTER plot_start[p] (NIMBLE will handle empty ranges)
+                # DIRECT AR(1) on eta
                 for (t in (plot_start[p] + 1):N.date) {
-                    # Smooth feedback on log(mu) - no hard clamps
-                    eta_prev[p, t] <- log(max(1e-6, mu[p, t - 1]))  # Safe log with tiny guard
-                    
-                    # Linear predictor with UNCERTAIN environmental predictors
-                    eta_mean[p, t] <- rho * eta_prev[p, t] +
-                        beta[1] * sin_mo[t] + beta[2] * cos_mo[t] +  # Seasonal terms
-                        beta[3] * temp_est[plot_site_num[p], t] + beta[4] * mois_est[plot_site_num[p], t] +  # Site-level environmental terms (UNCERTAIN)
-                        beta[5] * pH_est[p, t] + beta[6] * pC_est[p, t] +  # Plot-level environmental terms (UNCERTAIN)
-                        beta[7] * relEM[p, t] + beta[8] * LAI[plot_site_num[p], t] +  # Mixed level terms
-                        site_effect[plot_site_num[p]] +  # Site effects
-                        legacy_effect * legacy[p, t] +  # Legacy covariate
-                        intercept  # Baseline abundance
-                    
-                    # ETA CAP to avoid exp() overflow
-                    eta_cap[p, t] <- min(eta_mean[p, t], 700)
-                    
-                    # SMOOTH exp-only link to (0,1) - no hard clamps!
-                    Ex_raw[p, t] <- 1 - exp(-exp(eta_cap[p, t]))    # cloglog^-1
-                    Ex[p, t] <- Ex_raw[p, t]                         # Already in (0,1)
-                    
-                    mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, 
-                                    shape2 = (1 - Ex[p, t]) * precision)
+                    eta[p, t] ~ dnorm(
+                        rho * eta[p, t - 1] +
+                        intercept +
+                        site_effect[plot_site_num[p]] +
+                        beta[1] * sin_mo[t] + beta[2] * cos_mo[t] +
+                        beta[3] * temp_est[plot_site_num[p], t] +
+                        beta[4] * mois_est[plot_site_num[p], t] +
+                        beta[5] * pH_est[p, t] + beta[6] * pC_est[p, t] +
+                        beta[7] * relEM[p, t] +
+                        beta[8] * LAI[plot_site_num[p], t] +
+                        legacy_effect * legacy[p, t],
+                        tau_proc
+                    )
+                    mu[p, t] <- 1 - exp(-exp(eta[p, t]))
                 }
             }
             
@@ -312,9 +459,11 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
             # DRIVER UNCERTAINTY - Spatial (pH and pC - constant over time)
             if (spatialDriverUncertainty) {
                 for (p in 1:N.plot) {
+                    pH_est_p[p] ~ dnorm(pH[p, plot_start[p]], sd = pH_sd[p, plot_start[p]])
+                    pC_est_p[p] ~ dnorm(pC[p, plot_start[p]], sd = pC_sd[p, plot_start[p]])
                     for (t in plot_start[p]:N.date) {
-                        pH_est[p, t] ~ dnorm(pH[p, t], sd = pH_sd[p, t])
-                        pC_est[p, t] ~ dnorm(pC[p, t], sd = pC_sd[p, t])
+                        pH_est[p, t] <- pH_est_p[p]   # deterministic replicate over t
+                        pC_est[p, t] <- pC_est_p[p]
                     }
                 }
             } else {
@@ -334,8 +483,7 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
         })
     } else if (model_name == "env_cov" && use_legacy_covariate) {
         modelCode <- nimble::nimbleCode({
-            # 🎯 PROVEN HYBRID PRIORS - Weak for main parameters, stable for site effects
-            precision ~ dgamma(0.001, 0.001)        # Jeffreys prior - very weak
+            precision ~ dgamma(2, 0.1)              # Gentle prior - mean 20, var 200
             rho ~ dbeta(1, 1)                       # Uniform prior - very weak
             intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak
             legacy_effect ~ dnorm(0, sd = 10)       # Very wide normal - very weak
@@ -351,36 +499,43 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
                 beta[b] ~ dnorm(0, sd = 10)         # Very wide normal - very weak
             }
             
-            # PROCESS MODEL - FINAL with all fixes
+            # NEW: process & initial-state scales
+            sigma_proc ~ dunif(0, 0.5)
+            tau_proc <- pow(sigma_proc, -2)
+            sigma_init ~ dunif(0, 1)
+            tau_init <- pow(sigma_init, -2)
+            
+            # PROCESS MODEL - Direct AR(1) on η with deterministic μ = cloglog⁻¹(η)
             for (p in 1:N.plot) {
-                # Initial condition - ONLY at plot_start[p] (no overlap with dynamic loop)
-                Ex[p, plot_start[p]] ~ dunif(0.1, 0.9)
-                mu[p, plot_start[p]] ~ dbeta(shape1 = Ex[p, plot_start[p]] * precision, 
-                                            shape2 = (1 - Ex[p, plot_start[p]]) * precision)
+                # Initial state on eta (level-anchored). Use *_est to honor driver-uncertainty toggles.
+                eta[p, plot_start[p]] ~ dnorm(
+                    intercept +
+                    site_effect[plot_site_num[p]] +
+                    beta[1] * temp_est[plot_site_num[p], plot_start[p]] +
+                    beta[2] * mois_est[plot_site_num[p], plot_start[p]] +
+                    beta[3] * pH_est[p, plot_start[p]] + beta[4] * pC_est[p, plot_start[p]] +
+                    beta[5] * relEM[p, plot_start[p]] +
+                    beta[6] * LAI[plot_site_num[p], plot_start[p]] +
+                    legacy_effect * legacy[p, plot_start[p]],
+                    tau_init
+                )
+                mu[p, plot_start[p]] <- 1 - exp(-exp(eta[p, plot_start[p]]))
                 
-                # Dynamic evolution - START AFTER plot_start[p] (NIMBLE will handle empty ranges)
+                # DIRECT AR(1) on eta
                 for (t in (plot_start[p] + 1):N.date) {
-                    # Smooth feedback on log(mu) - no hard clamps
-                    eta_prev[p, t] <- log(max(1e-6, mu[p, t - 1]))  # Safe log with tiny guard
-                    
-                    # Linear predictor with UNCERTAIN environmental predictors (no seasonal terms)
-                    eta_mean[p, t] <- rho * eta_prev[p, t] +
-                        beta[1] * temp_est[plot_site_num[p], t] + beta[2] * mois_est[plot_site_num[p], t] +  # Site-level environmental terms (UNCERTAIN)
-                        beta[3] * pH_est[p, t] + beta[4] * pC_est[p, t] +  # Plot-level environmental terms (UNCERTAIN)
-                        beta[5] * relEM[p, t] + beta[6] * LAI[plot_site_num[p], t] +  # Mixed level terms
-                        site_effect[plot_site_num[p]] +  # Site effects
-                        legacy_effect * legacy[p, t] +  # Legacy covariate
-                        intercept  # Baseline abundance
-                    
-                    # ETA CAP to avoid exp() overflow
-                    eta_cap[p, t] <- min(eta_mean[p, t], 700)
-                    
-                    # SMOOTH exp-only link to (0,1) - no hard clamps!
-                    Ex_raw[p, t] <- 1 - exp(-exp(eta_cap[p, t]))    # cloglog^-1
-                    Ex[p, t] <- Ex_raw[p, t]                         # Already in (0,1)
-                    
-                    mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, 
-                                    shape2 = (1 - Ex[p, t]) * precision)
+                    eta[p, t] ~ dnorm(
+                        rho * eta[p, t - 1] +
+                        intercept +
+                        site_effect[plot_site_num[p]] +
+                        beta[1] * temp_est[plot_site_num[p], t] +
+                        beta[2] * mois_est[plot_site_num[p], t] +
+                        beta[3] * pH_est[p, t] + beta[4] * pC_est[p, t] +
+                        beta[5] * relEM[p, t] +
+                        beta[6] * LAI[plot_site_num[p], t] +
+                        legacy_effect * legacy[p, t],
+                        tau_proc
+                    )
+                    mu[p, t] <- 1 - exp(-exp(eta[p, t]))
                 }
             }
             
@@ -404,9 +559,11 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
             # DRIVER UNCERTAINTY - Spatial (pH and pC - constant over time)
             if (spatialDriverUncertainty) {
                 for (p in 1:N.plot) {
+                    pH_est_p[p] ~ dnorm(pH[p, plot_start[p]], sd = pH_sd[p, plot_start[p]])
+                    pC_est_p[p] ~ dnorm(pC[p, plot_start[p]], sd = pC_sd[p, plot_start[p]])
                     for (t in plot_start[p]:N.date) {
-                        pH_est[p, t] ~ dnorm(pH[p, t], sd = pH_sd[p, t])
-                        pC_est[p, t] ~ dnorm(pC[p, t], sd = pC_sd[p, t])
+                        pH_est[p, t] <- pH_est_p[p]   # deterministic replicate over t
+                        pC_est[p, t] <- pC_est_p[p]
                     }
                 }
             } else {
@@ -426,8 +583,7 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
         })
     } else if (model_name == "cycl_only") {
         modelCode <- nimble::nimbleCode({
-            # 🎯 PROVEN HYBRID PRIORS - Weak for main parameters, stable for site effects
-            precision ~ dgamma(0.001, 0.001)        # Jeffreys prior - very weak
+            precision ~ dgamma(2, 0.1)              # Gentle prior - mean 20, var 200
             rho ~ dbeta(1, 1)                       # Uniform prior - very weak
             intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak
             
@@ -442,33 +598,33 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
                 beta[b] ~ dnorm(0, sd = 10)         # Very wide normal - very weak
             }
             
-            # PROCESS MODEL - FINAL with all fixes
+            # NEW: process & initial-state scales
+            sigma_proc ~ dunif(0, 0.5)
+            tau_proc <- pow(sigma_proc, -2)
+            sigma_init ~ dunif(0, 1)
+            tau_init <- pow(sigma_init, -2)
+            
+            # PROCESS MODEL - Direct AR(1) on η with deterministic μ = cloglog⁻¹(η)
             for (p in 1:N.plot) {
-                # Initial condition - ONLY at plot_start[p] (no overlap with dynamic loop)
-                Ex[p, plot_start[p]] ~ dunif(0.1, 0.9)
-                mu[p, plot_start[p]] ~ dbeta(shape1 = Ex[p, plot_start[p]] * precision, 
-                                            shape2 = (1 - Ex[p, plot_start[p]]) * precision)
+                # Initial state on eta (level-anchored)
+                eta[p, plot_start[p]] ~ dnorm(
+                    intercept +
+                    site_effect[plot_site_num[p]] +
+                    beta[1] * sin_mo[plot_start[p]] + beta[2] * cos_mo[plot_start[p]],
+                    tau_init
+                )
+                mu[p, plot_start[p]] <- 1 - exp(-exp(eta[p, plot_start[p]]))
                 
-                # Dynamic evolution - START AFTER plot_start[p] (NIMBLE will handle empty ranges)
+                # DIRECT AR(1) on eta
                 for (t in (plot_start[p] + 1):N.date) {
-                    # Smooth feedback on log(mu) - no hard clamps
-                    eta_prev[p, t] <- log(max(1e-6, mu[p, t - 1]))  # Safe log with tiny guard
-                    
-                    # Linear predictor with ONLY seasonal terms
-                    eta_mean[p, t] <- rho * eta_prev[p, t] +
-                        beta[1] * sin_mo[t] + beta[2] * cos_mo[t] +  # Seasonal terms only
-                        site_effect[plot_site_num[p]] +  # Site effects
-                        intercept  # Baseline abundance
-                    
-                    # ETA CAP to avoid exp() overflow
-                    eta_cap[p, t] <- min(eta_mean[p, t], 700)
-                    
-                    # SMOOTH exp-only link to (0,1) - no hard clamps!
-                    Ex_raw[p, t] <- 1 - exp(-exp(eta_cap[p, t]))    # cloglog^-1
-                    Ex[p, t] <- Ex_raw[p, t]                         # Already in (0,1)
-                    
-                    mu[p, t] ~ dbeta(shape1 = Ex[p, t] * precision, 
-                                    shape2 = (1 - Ex[p, t]) * precision)
+                    eta[p, t] ~ dnorm(
+                        rho * eta[p, t - 1] +
+                        intercept +
+                        site_effect[plot_site_num[p]] +
+                        beta[1] * sin_mo[t] + beta[2] * cos_mo[t],
+                        tau_proc
+                    )
+                    mu[p, t] <- 1 - exp(-exp(eta[p, t]))
                 }
             }
             
@@ -487,88 +643,155 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
 
 # Function to sanitize driver uncertainty data
 sanitize_driver_uncertainty <- function(constants) {
-    cat("Sanitizing driver uncertainty data...\n")
-    
-    eps <- 1e-6  # Small epsilon for invalid standard deviations
-    
-    # --- Sanitize pC / pC_sd (SPATIAL - constant over time) ---
-    bad_pC <- !is.finite(constants$pC)
+  info("Sanitizing driver uncertainty data (STRICT, window-aware)")
+
+  eps <- 1e-6
+
+  ## helpers
+  .summarize_bad <- function(mask, max_show = 10) {
+    rc <- which(mask, arr.ind = TRUE)
+    if (length(rc) == 0) return("0")
+    head_pairs <- apply(head(rc, max_show), 1, \(r) paste0("(", r[1], ",", r[2], ")"))
+    paste0(nrow(rc), " cells; e.g., ", paste(head_pairs, collapse = ", "),
+           if (nrow(rc) > max_show) ", ..." else "")
+  }
+  .in_scope_site <- function(Nsite, Ndate, site_start) {
+    m <- matrix(FALSE, Nsite, Ndate)
+    for (k in seq_len(Nsite)) {
+      if (is.finite(site_start[k]) && site_start[k] >= 1 && site_start[k] <= Ndate) {
+        m[k, site_start[k]:Ndate] <- TRUE
+      }
+    }
+    m
+  }
+  .in_scope_plot <- function(Nplot, Ndate, plot_start) {
+    m <- matrix(FALSE, Nplot, Ndate)
+    for (p in seq_len(Nplot)) {
+      if (is.finite(plot_start[p]) && plot_start[p] >= 1 && plot_start[p] <= Ndate) {
+        m[p, plot_start[p]:Ndate] <- TRUE
+      }
+    }
+    m
+  }
+
+  ## ---------- pC / pC_sd (SPATIAL; should be constant over time) ----------
+  bad_pC    <- !is.finite(constants$pC)
     bad_pC_sd <- !is.finite(constants$pC_sd) | (constants$pC_sd <= 0)
     
-    # For spatial predictors, check only the first time point since they're constant
-    bad_pC_plot <- bad_pC[, 1]  # Only check first time point
-    bad_pC_sd_plot <- bad_pC_sd[, 1]  # Only check first time point
-    
-    # Create mask for valid plots (spatial predictors)
-    constants$has_pC_plot <- (!bad_pC_plot) & (!bad_pC_sd_plot)
-    
-    # Replace bad pC means with a benign fill (use first time point for all)
+  # Repair (global medians / epsilon for SD)
     pC_fill <- median(constants$pC[is.finite(constants$pC)], na.rm = TRUE)
     constants$pC[bad_pC] <- pC_fill
-    
-    # Replace bad/zero sds with small epsilon (use first time point for all)
-    pC_sd_fill <- median(constants$pC_sd[is.finite(constants$pC_sd)], na.rm = TRUE)
-    if (is.na(pC_sd_fill) || pC_sd_fill <= 0) pC_sd_fill <- eps
+  pC_sd_fill <- median(constants$pC_sd[is.finite(constants$pC_sd) & constants$pC_sd > 0], na.rm = TRUE)
+  if (!is.finite(pC_sd_fill) || pC_sd_fill <= 0) pC_sd_fill <- eps
     constants$pC_sd[bad_pC_sd] <- pC_sd_fill
     
-    cat("  pC invalid cells:", sum(bad_pC), 
-        " | pC_sd invalid/≤0 cells:", sum(bad_pC_sd), 
-        " | valid pC plots:", sum(constants$has_pC_plot), "\n")
-    
-    # --- Sanitize pH / pH_sd (SPATIAL - constant over time) ---
-    bad_pH <- !is.finite(constants$pH)
+  # has_pC_plot evaluated at each plot's own start time
+  idx_pc <- cbind(seq_len(constants$N.plot), pmax(1, pmin(constants$plot_start, constants$N.date)))
+  constants$has_pC_plot <- is.finite(constants$pC[idx_pc]) &
+                           is.finite(constants$pC_sd[idx_pc]) &
+                           (constants$pC_sd[idx_pc] > 0)
+
+  info("  pC repaired: mean cells=%d, sd cells=%d | valid pC plots at start=%d",
+       sum(bad_pC), sum(bad_pC_sd), sum(constants$has_pC_plot))
+
+  ## ---------- pH / pH_sd (SPATIAL; allowed to repair) ----------
+  bad_pH    <- !is.finite(constants$pH)
     bad_pH_sd <- !is.finite(constants$pH_sd) | (constants$pH_sd <= 0)
     
-    # For spatial predictors, check only the first time point since they're constant
-    bad_pH_plot <- bad_pH[, 1]  # Only check first time point
-    bad_pH_sd_plot <- bad_pH_sd[, 1]  # Only check first time point
-    
-    # Create mask for valid plots (spatial predictors)
-    constants$has_pH_plot <- (!bad_pH_plot) & (!bad_pH_sd_plot)
-    
-    # Replace bad pH means with a benign fill (use first time point for all)
     pH_fill <- median(constants$pH[is.finite(constants$pH)], na.rm = TRUE)
     constants$pH[bad_pH] <- pH_fill
-    
-    # Replace bad/zero sds with small epsilon (use first time point for all)
-    pH_sd_fill <- median(constants$pH_sd[is.finite(constants$pH_sd)], na.rm = TRUE)
-    if (is.na(pH_sd_fill) || pH_sd_fill <= 0) pH_sd_fill <- eps
+  pH_sd_fill <- median(constants$pH_sd[is.finite(constants$pH_sd) & constants$pH_sd > 0], na.rm = TRUE)
+  if (!is.finite(pH_sd_fill) || pH_sd_fill <= 0) pH_sd_fill <- eps
     constants$pH_sd[bad_pH_sd] <- pH_sd_fill
     
-    cat("  pH invalid cells:", sum(bad_pH), 
-        " | pH_sd invalid/≤0 cells:", sum(bad_pH_sd), 
-        " | valid pH plots:", sum(constants$has_pH_plot), "\n")
-    
-    # --- Sanitize temp / temp_sd ---
-    bad_temp <- !is.finite(constants$temp)
-    bad_temp_sd <- !is.finite(constants$temp_sd) | (constants$temp_sd <= 0)
-    constants$has_temp <- (!bad_temp) & (!bad_temp_sd)
-    temp_fill <- median(constants$temp[is.finite(constants$temp)], na.rm = TRUE)
-    constants$temp[bad_temp] <- temp_fill
-    constants$temp_sd[bad_temp_sd] <- eps
-    
-    cat("  temp invalid cells:", sum(bad_temp), 
-        " | temp_sd invalid/≤0 cells:", sum(bad_temp_sd), 
-        " | stochastic temp cells:", sum(constants$has_temp), "\n")
-    
-    # --- Sanitize mois / mois_sd ---
-    bad_mois <- !is.finite(constants$mois)
-    bad_mois_sd <- !is.finite(constants$mois_sd) | (constants$mois_sd <= 0)
-    constants$has_mois <- (!bad_mois) & (!bad_mois_sd)
-    mois_fill <- median(constants$mois[is.finite(constants$mois)], na.rm = TRUE)
-    constants$mois[bad_mois] <- mois_fill
-    constants$mois_sd[bad_mois_sd] <- eps
-    
-    cat("  mois invalid cells:", sum(bad_mois), 
-        " | mois_sd invalid/≤0 cells:", sum(bad_mois_sd), 
-        " | stochastic mois cells:", sum(constants$has_mois), "\n")
-    
-    cat("✓ Driver uncertainty data sanitized successfully\n")
-    return(constants)
+  idx_ph <- cbind(seq_len(constants$N.plot), pmax(1, pmin(constants$plot_start, constants$N.date)))
+  constants$has_pH_plot <- is.finite(constants$pH[idx_ph]) &
+                           is.finite(constants$pH_sd[idx_ph]) &
+                           (constants$pH_sd[idx_ph] > 0)
+
+  info("  pH repaired: mean cells=%d, sd cells=%d | valid pH plots at start=%d",
+       sum(bad_pH), sum(bad_pH_sd), sum(constants$has_pH_plot))
+
+  ## ---------- temp / temp_sd (TEMPORAL; strict inside site windows only) ----------
+  if (!is.null(constants$temp)) {
+    in_scope <- .in_scope_site(constants$N.site, constants$N.date, constants$site_start)
+
+    bad_temp_all <- !is.finite(constants$temp)
+    bad_temp_sd_all <- !is.finite(constants$temp_sd) | (constants$temp_sd <= 0)
+
+    bad_temp_in  <- bad_temp_all  & in_scope
+    bad_tsd_in   <- bad_temp_sd_all & in_scope
+
+    denom <- max(1L, sum(in_scope))
+    bad_temp_pct <- 100 * sum(bad_temp_in) / denom
+    bad_tsd_pct  <- 100 * sum(bad_tsd_in)  / denom
+
+    if (any(bad_temp_in)) {
+      stop(sprintf("sanitize_driver_uncertainty: temp has non-finite values within site windows (%.2f%%; %s). No filling allowed.",
+                   bad_temp_pct, .summarize_bad(bad_temp_in)))
+    }
+    if (any(bad_tsd_in)) {
+      stop(sprintf("sanitize_driver_uncertainty: temp_sd has non-finite or <=0 values within site windows (%.2f%%; %s). No filling allowed.",
+                   bad_tsd_pct, .summarize_bad(bad_tsd_in)))
+    }
+
+    info("  temp: 100%% valid within site windows | checked cells=%d | out-of-window ignored=%d",
+         sum(in_scope), sum(!in_scope & (bad_temp_all | bad_temp_sd_all)))
+    constants$has_temp <- TRUE
+  }
+
+  ## ---------- mois / mois_sd (TEMPORAL; strict inside site windows only) ----------
+  if (!is.null(constants$mois)) {
+    in_scope <- .in_scope_site(constants$N.site, constants$N.date, constants$site_start)
+
+    bad_mois_all <- !is.finite(constants$mois)
+    bad_mois_sd_all <- !is.finite(constants$mois_sd) | (constants$mois_sd <= 0)
+
+    bad_mois_in <- bad_mois_all & in_scope
+    bad_msd_in  <- bad_mois_sd_all & in_scope
+
+    denom <- max(1L, sum(in_scope))
+    bad_mois_pct <- 100 * sum(bad_mois_in) / denom
+    bad_msd_pct  <- 100 * sum(bad_msd_in)  / denom
+
+    if (any(bad_mois_in)) {
+      stop(sprintf("sanitize_driver_uncertainty: mois has non-finite values within site windows (%.2f%%; %s). No filling allowed.",
+                   bad_mois_pct, .summarize_bad(bad_mois_in)))
+    }
+    if (any(bad_msd_in)) {
+      stop(sprintf("sanitize_driver_uncertainty: mois_sd has non-finite or <=0 values within site windows (%.2f%%; %s). No filling allowed.",
+                   bad_msd_pct, .summarize_bad(bad_msd_in)))
+    }
+
+    info("  mois: 100%% valid within site windows | checked cells=%d | out-of-window ignored=%d",
+         sum(in_scope), sum(!in_scope & (bad_mois_all | bad_mois_sd_all)))
+    constants$has_mois <- TRUE
+  }
+
+  info("✓ Driver uncertainty data sanitized (STRICT, window-aware)")
+  constants
+}
+
+# Assert helpers
+assert_matrix_dims <- function(x, nr, nc, name) {
+  if (is.null(dim(x))) {
+    stop(sprintf("Expected matrix for %s, got vector of length %d", name, length(x)))
+  }
+  if (!identical(dim(x), c(nr, nc))) {
+    stop(sprintf("Dimension mismatch for %s: got %dx%d; expected %dx%d",
+                 name, nrow(x), ncol(x), nr, nc))
+  }
+  invisible(TRUE)
+}
+
+assert_vector_len <- function(x, n, name) {
+  if (length(x) != n)
+    stop(sprintf("Length mismatch for %s: got %d; expected %d", name, length(x), n))
+  invisible(TRUE)
 }
 
 create_inits_with_uncertainty <- function(constants, model_name, model_data = NULL) {
-    cat("Creating initial values with driver uncertainty for", model_name, "...\n")
+    info("Creating initial values with driver uncertainty for %s...", model_name)
     
     # Determine number of beta parameters based on model type
     if (model_name == "env_cycl") {
@@ -587,6 +810,7 @@ create_inits_with_uncertainty <- function(constants, model_name, model_data = NU
         }
     }
 
+    # Base initial values that all models need
     inits <- list(
         precision = 50,  # Start with moderate precision
         rho = 0.3,      # Start rho at 0.3 (moderate persistence)
@@ -594,44 +818,61 @@ create_inits_with_uncertainty <- function(constants, model_name, model_data = NU
         site_effect_sd = 0.5,  # Start with moderate site effect SD
         site_effect = rnorm(constants$N.site, 0, 0.1),  # Small random initial values
         intercept = -2,  # Start intercept at -2
-        legacy_effect = 0,  # Start legacy effect at 0
-        Ex = matrix(0.3, nrow = constants$N.plot, ncol = constants$N.date),  # Start with moderate abundance
-        mu = matrix(0.3, nrow = constants$N.plot, ncol = constants$N.date)   # Start with moderate abundance
+        legacy_effect = 0,  # Start legacy effect at 0 (all models use legacy covariate)
+        sigma_proc = 0.1,  # Start with small process noise
+        sigma_init = 0.5,  # Start with moderate initial state uncertainty
+        # NEW: eta matrix for direct AR(1) on eta (mu is deterministic from eta)
+        eta = matrix(-1, nrow = constants$N.plot, ncol = constants$N.date)  # Start eta at -1 (moderate abundance)
     )
     
-    # Initialize driver uncertainty variables CLOSE TO OBSERVED DATA for better mixing
-    if (constants$N.site > 0 && constants$N.date > 0) {
-        # Initialize near observed values instead of random values
-        inits$temp_est <- constants$temp  # Start at observed temperature
-        inits$mois_est <- constants$mois  # Start at observed moisture
-        cat("  ✓ Initialized temp_est and mois_est at observed values\n")
+    info("  ✓ Added legacy_effect for all models (including %s)", model_name)
+    
+    # Initialize driver uncertainty variables ONLY for environmental models
+    if (model_name %in% c("env_cycl", "env_cov")) {
+        if (constants$N.site > 0 && constants$N.date > 0) {
+            # Initialize near observed values instead of random values
+            inits$temp_est <- constants$temp  # Start at observed temperature
+            inits$mois_est <- constants$mois  # Start at observed moisture
+            info("  ✓ Initialized temp_est and mois_est at observed values")
+        }
+        
+        if (constants$N.plot > 0 && constants$N.date > 0) {
+            # Initialize spatial pH/pC variables (one per plot)
+            inits$pH_est_p <- constants$pH[cbind(1:constants$N.plot, constants$plot_start)]  # Start at observed pH at plot start
+            inits$pC_est_p <- constants$pC[cbind(1:constants$N.plot, constants$plot_start)]  # Start at observed pC at plot start
+            # Note: pH_est and pC_est are deterministic from pH_est_p and pC_est_p, so no need to initialize them
+            info("  ✓ Initialized pH_est_p, pC_est_p (spatial) at observed values")
+        }
+    } else {
+        info("  ✓ Skipped driver uncertainty variables for %s model (not needed)", model_name)
     }
     
-    if (constants$N.plot > 0 && constants$N.date > 0) {
-        # Initialize near observed values instead of random values
-        inits$pH_est <- constants$pH  # Start at observed pH
-        inits$pC_est <- constants$pC  # Start at observed pC
-        cat("  ✓ Initialized pH_est and pC_est at observed values\n")
-    }
+    info("  ✓ Initial values created successfully for %s model", model_name)
+    info("    precision: %s", inits$precision)
+    info("    rho: %s", inits$rho)
+    info("    beta parameters: %d", n_beta)
+    info("    site effects: %d", constants$N.site)
+    info("    eta matrix dimensions: %s", paste(dim(inits$eta), collapse = " x "))
     
-    cat("  ✓ Initial values created successfully WITH driver uncertainty\n")
-    cat("    precision:", inits$precision, "\n")
-    cat("    rho:", inits$rho, "\n")
-    cat("    beta parameters:", n_beta, "\n")
-    cat("    site effects:", constants$N.site, "\n")
-    cat("    Ex matrix dimensions:", dim(inits$Ex), "\n")
-    cat("    mu matrix dimensions:", dim(inits$mu), "\n")
-    cat("    temp_est matrix dimensions:", dim(inits$temp_est), "\n")
-    cat("    mois_est matrix dimensions:", dim(inits$mois_est), "\n")
-    cat("    pH_est matrix dimensions:", dim(inits$pH_est), "\n")
-    cat("    pC_est matrix dimensions:", dim(inits$pC_est), "\n")
+    # Only report driver uncertainty dimensions if they exist
+    if ("temp_est" %in% names(inits)) {
+        info("    temp_est matrix dimensions: %s", paste(dim(inits$temp_est), collapse = " x "))
+    }
+    if ("mois_est" %in% names(inits)) {
+        info("    mois_est matrix dimensions: %s", paste(dim(inits$mois_est), collapse = " x "))
+    }
+    if ("pH_est" %in% names(inits)) {
+        info("    pH_est matrix dimensions: %s", paste(dim(inits$pH_est), collapse = " x "))
+    }
+    if ("pC_est" %in% names(inits)) {
+        info("    pC_est matrix dimensions: %s", paste(dim(inits$pC_est), collapse = " x "))
+    }
     
     return(inits)
 }
 
 # Function to create visualization of plot_mu over time
 create_plot_mu_visualization <- function(samples, samples2, model_data, metadata, output_dir) {
-    cat("Creating plot_mu visualization...\n")
     
     # Use actual column names from samples
     cn <- colnames(samples)
@@ -651,7 +892,6 @@ create_plot_mu_visualization <- function(samples, samples2, model_data, metadata
     }
     
     dev.off()
-    cat("  ✓ Parameter estimates plot saved\n")
     
     # Create trace plots
     png(file.path(output_dir, "trace_plots.png"), width = 1200, height = 800)
@@ -665,7 +905,6 @@ create_plot_mu_visualization <- function(samples, samples2, model_data, metadata
     }
     
     dev.off()
-    cat("  ✓ Trace plots saved\n")
     
     # Create density plots
     png(file.path(output_dir, "density_plots.png"), width = 1200, height = 800)
@@ -680,11 +919,9 @@ create_plot_mu_visualization <- function(samples, samples2, model_data, metadata
     }
     
     dev.off()
-    cat("  ✓ Density plots saved\n")
     
     # Create mu over time visualization if samples2 is available
     if (!is.null(samples2) && ncol(samples2) > 0) {
-        cat("Creating mu over time visualization...\n")
         
         # Extract mu samples and compute summaries
         mu_samples <- samples2
@@ -735,7 +972,6 @@ create_plot_mu_visualization <- function(samples, samples2, model_data, metadata
         }
         
         dev.off()
-        cat("  ✓ Mu over time plot saved\n")
     }
     
     # Create summary statistics using actual column names
@@ -749,7 +985,6 @@ create_plot_mu_visualization <- function(samples, samples2, model_data, metadata
     )
     
     write.csv(summary_stats, file.path(output_dir, "parameter_summary.csv"), row.names = FALSE)
-    cat("  ✓ Parameter summary saved\n")
     
     return(summary_stats)
 }
@@ -763,28 +998,28 @@ run_scenarios_fixed <- function(j, chain_no) {
     tryCatch({
         # Load required libraries in each worker using helper function
         load_required_packages()
-        cat("=== Starting model fitting ===\n")
-        cat("Model index:", j, "Chain:", chain_no, "\n")
-        cat("Model parameters:\n")
-        print(params[j,])
-        cat("=============================\n")
+        info("=== Starting model fitting ===")
+        info("Model index: %d Chain: %d", j, chain_no)
+        info("Model parameters:")
+        print(valid_models[j,])
+        info("=============================")
         
         # Debug HPC environment information
-        cat("=============================\n")
+        info("=============================")
         
         # Validate input parameters
-        if (is.null(params) || nrow(params) < j) {
-            stop("Params data frame not available or index out of bounds")
+        if (is.null(valid_models) || nrow(valid_models) < j) {
+            stop("Valid_models data frame not available or index out of bounds")
         }
         
         # Extract model parameters
-        rank.name <- params$rank.name[[j]]
-        species <- params$species[[j]]
-        model_id <- params$model_id[[j]]
-        model_name <- params$model_name[[j]]
-        min.date <- params$min.date[[j]]
-        max.date <- params$max.date[[j]]
-        scenario <- params$scenario[[j]]
+        rank.name <- valid_models$rank.name[[j]]
+        species <- valid_models$species[[j]]
+        model_id <- valid_models$model_id[[j]]
+        model_name <- valid_models$model_name[[j]]
+        min.date <- valid_models$min.date[[j]]
+        max.date <- valid_models$max.date[[j]]
+        scenario <- valid_models$scenario[[j]]
         
         # Validate extracted parameters
         if (is.null(rank.name) || is.na(rank.name) || rank.name == "") {
@@ -823,10 +1058,10 @@ run_scenarios_fixed <- function(j, chain_no) {
                  paste(colnames(rank.df), collapse=", "))
         }
         
-        cat("Preparing model data for", rank.name, "\n")
+        info("Preparing model data for %s", rank.name)
         
         # Extract the specific species
-        cat("DEBUG: Extracting species", species, "from", rank.name, "\n")
+        info("DEBUG: Extracting species %s from %s", species, rank.name)
         
         # Validate required columns exist
         required_cols <- c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date", species)
@@ -837,13 +1072,30 @@ run_scenarios_fixed <- function(j, chain_no) {
         
         # Extract species data for beta regression
         rank.df_spec <- rank.df %>%
-            select("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date", !!species) %>%
-            head(500)  # TESTING: Use only first 500 rows for faster testing
+            select("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date", !!species)
         
-        cat("DEBUG: rank.df_spec dimensions:", dim(rank.df_spec), "\n")
-        cat("DEBUG: rank.df_spec columns:", colnames(rank.df_spec), "\n")
-        cat("DEBUG: Expected columns: siteID, plotID, dateID, sampleID, dates, plot_date,", species, "\n")
-        cat("DEBUG: Column count:", ncol(rank.df_spec), "(should be 7)\n")
+        # Apply LOCAL_TEST gating for head(500)
+        if (identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")) {
+            rank.df_spec <- rank.df_spec %>% head(500)
+            info("  ✓ LOCAL_TEST mode: Using first 500 rows for faster testing")
+        }
+        
+        # Fix exact 0/1 values for beta regression (dbeta can't handle them)
+        eps_fix <- function(y) {
+            n <- length(y[is.finite(y)])
+            (y*(n-1) + 0.5) / n
+        }
+        rank.df_spec[[species]] <- eps_fix(rank.df_spec[[species]])
+        info("  ✓ Applied eps_fix to handle exact 0/1 values in beta regression")
+        
+        # Log NA rate for response data
+        na_rate <- mean(is.na(rank.df_spec[[species]]))
+        if (na_rate > 0) warn("Response has %.1f%% NA; these will be treated as missing data.", 100*na_rate)
+        
+        info("DEBUG: rank.df_spec dimensions: %s", paste(dim(rank.df_spec), collapse = " x "))
+        info("DEBUG: rank.df_spec columns: %s", paste(colnames(rank.df_spec), collapse = ", "))
+        info("DEBUG: Expected columns: siteID, plotID, dateID, sampleID, dates, plot_date, %s", species)
+        info("DEBUG: Column count: %d (should be 7)", ncol(rank.df_spec))
         
         # Validate the data structure before calling prepBetaRegData
         if (ncol(rank.df_spec) != 7) {
@@ -861,32 +1113,32 @@ run_scenarios_fixed <- function(j, chain_no) {
         # The model handles proportions directly (0-1 range)
         
         # Use prepBetaRegData with the species-specific data
-        cat("Calling prepBetaRegData...\n")
+        info("Calling prepBetaRegData...")
         model.dat <- prepBetaRegData(rank.df = rank.df_spec,
                                      min.prev = 3,
                                      min.date = min.date,
                                      max.date = max.date)
         
-        cat("Data prepared successfully\n")
+        info("Data prepared successfully")
         
         # Debug: Check data structure immediately after preparation
-        cat("DEBUG: Data structure check:\n")
-        cat("  model.dat$y dimensions:", dim(model.dat$y), "\n")
-        cat("  model.dat$y class:", class(model.dat$y), "\n")
-        cat("  model.dat$y column names:", if(is.matrix(model.dat$y)) paste(colnames(model.dat$y), collapse=", ") else "N/A", "\n")
+        info("DEBUG: Data structure check:")
+        info("  model.dat$y dimensions: %s", paste(dim(model.dat$y), collapse = " x "))
+        info("  model.dat$y class: %s", class(model.dat$y))
+        info("  model.dat$y column names: %s", if(is.matrix(model.dat$y)) paste(colnames(model.dat$y), collapse=", ") else "N/A")
         if (is.matrix(model.dat$y)) {
-            cat("  model.dat$y first few rows:\n")
+            info("  model.dat$y first few rows:")
             print(head(model.dat$y, 3))
         }
-        cat("  N.core calculated:", nrow(model.dat$y), "\n")
-        cat("  N.spp calculated:", ncol(model.dat$y), "\n")
-        cat("  Model type:", model_name, "\n")
+        info("  N.core calculated: %d", nrow(model.dat$y))
+        info("  N.spp calculated: %d", ncol(model.dat$y))
+        info("  Model type: %s", model_name)
         
         # For beta regression, we expect exactly 1 column (the species abundance)
         if (ncol(model.dat$y) != 1) {
-            cat("  ❌ ERROR: Beta regression requires exactly 1 column in response data\n")
-            cat("  Current columns:", ncol(model.dat$y), "\n")
-            cat("  Column names:", paste(colnames(model.dat$y), collapse=", "), "\n")
+            error("  ❌ ERROR: Beta regression requires exactly 1 column in response data")
+            error("  Current columns: %d", ncol(model.dat$y))
+            error("  Column names: %s", paste(colnames(model.dat$y), collapse=", "))
             stop("Response data must have exactly 1 column for beta regression")
         }
         
@@ -899,7 +1151,7 @@ run_scenarios_fixed <- function(j, chain_no) {
         }
         
         # Prepare constants with validation
-        cat("Preparing model constants...\n")
+        info("Preparing model constants...")
         required_constants <- c("plotID", "timepoint", "plot_site", "site_start", "plot_start", 
                                 "plot_index", "plot_num", "plot_site_num", "N.plot", "N.spp", 
                                 "N.core", "N.site", "N.date", "sin_mo", "cos_mo")
@@ -914,7 +1166,7 @@ run_scenarios_fixed <- function(j, chain_no) {
         # Add environmental predictors with validation (ONLY for environmental models)
         if (model_name %in% c("env_cycl", "env_cov")) {
             env_predictors <- c("temp", "mois", "pH", "pC", "relEM", "LAI")
-            cat("Adding environmental predictors with validation...\n")
+            info("Adding environmental predictors with validation...")
             
             for (pred in env_predictors) {
                 if (pred %in% names(model.dat)) {
@@ -923,195 +1175,236 @@ run_scenarios_fixed <- function(j, chain_no) {
                     # Validate predictor dimensions and structure
                     pred_data <- model.dat[[pred]]
                     if (is.matrix(pred_data)) {
-                        cat("  ✓ Added", pred, "predictor:", dim(pred_data), "matrix\n")
+                        info("  ✓ Added %s predictor: %s matrix", pred, paste(dim(pred_data), collapse = " x "))
                     } else if (is.vector(pred_data)) {
-                        cat("  ✓ Added", pred, "predictor:", length(pred_data), "vector\n")
+                        info("  ✓ Added %s predictor: %d vector", pred, length(pred_data))
                     } else {
-                        cat("  ✓ Added", pred, "predictor:", class(pred_data), "object\n")
+                        info("  ✓ Added %s predictor: %s object", pred, class(pred_data))
                     }
                     
                     # Check for missing or extreme values
                     if (is.numeric(pred_data)) {
                         missing_pct <- mean(is.na(pred_data)) * 100
                         if (missing_pct > 0) {
-                            cat("    WARNING:", pred, "has", round(missing_pct, 1), "% missing values\n")
+                            warn("    WARNING: %s has %.1f%% missing values", pred, missing_pct)
                         }
                         
                         if (is.matrix(pred_data)) {
                             extreme_vals <- sum(abs(pred_data) > 10, na.rm = TRUE)
                             if (extreme_vals > 0) {
-                                cat("    WARNING:", pred, "has", extreme_vals, "extreme values (>10)\n")
+                                warn("    WARNING: %s has %d extreme values (>10)", pred, extreme_vals)
                             }
                         }
                     }
                 } else {
-                    cat("  ❌ ERROR:", pred, "predictor not found in model data\n")
+                    error("  ❌ ERROR: %s predictor not found in model data", pred)
                     stop("Missing required environmental predictor: ", pred)
                 }
             }
         } else {
-            cat("Skipping environmental predictors for", model_name, "model\n")
+            info("Skipping environmental predictors for %s model", model_name)
         }
         
-        # Add driver uncertainty data (ONLY for environmental models)
+        # Add explicit dimension checks for all predictors
         if (model_name %in% c("env_cycl", "env_cov")) {
-            cat("Adding driver uncertainty data with proper dimension matching...\n")
+            info("Validating predictor dimensions...")
+            assert_matrix_dims(constants$temp,  constants$N.site, constants$N.date, "temp")
+            assert_matrix_dims(constants$mois,  constants$N.site, constants$N.date, "mois")
+            assert_matrix_dims(constants$LAI,   constants$N.site, constants$N.date, "LAI")
+            assert_matrix_dims(constants$pH,    constants$N.plot, constants$N.date, "pH")
+            assert_matrix_dims(constants$pC,    constants$N.plot, constants$N.date, "pC")
+            assert_matrix_dims(constants$relEM, constants$N.plot, constants$N.date, "relEM")
+            info("  ✓ All predictor dimensions validated")
+        }
+        
+        # Add driver uncertainty flags to constants for Nimble model evaluation
+        info("Adding driver uncertainty flags to constants...")
+        constants$temporalDriverUncertainty <- driver_uncertainty_mode   # Driver uncertainty - temporal uncertainty
+        constants$spatialDriverUncertainty <- driver_uncertainty_mode    # Driver uncertainty - spatial uncertainty
+        info("  ✓ temporalDriverUncertainty = %s", constants$temporalDriverUncertainty)
+        info("  ✓ spatialDriverUncertainty = %s", constants$spatialDriverUncertainty)
+        
+        # Add driver uncertainty data when flags are enabled
+        if (model_name %in% c("env_cycl", "env_cov") &&
+            (constants$temporalDriverUncertainty || constants$spatialDriverUncertainty)) {
+            info("Adding driver uncertainty data with proper dimension matching...")
             
             # Check if uncertainty data exists in predictor data
             predictor_data <- readRDS(here("data/clean/all_predictor_data.rds"))
             
             # FIX: Properly subset uncertainty matrices to match model dimensions
-            cat("  Fixing dimension mismatches...\n")
-            cat("    Model dimensions - N.site:", constants$N.site, "N.plot:", constants$N.plot, "N.date:", constants$N.date, "\n")
+            info("  Fixing dimension mismatches...")
+            info("    Model dimensions - N.site: %d N.plot: %d N.date: %d", constants$N.site, constants$N.plot, constants$N.date)
             
-            # Subset temporal uncertainty (temp_sd, mois_sd) to N.site x N.date
+            # Subset temporal uncertainty (temp_sd, mois_sd) to N.site x N.date with intelligent filling
             if ("temp_sd" %in% names(predictor_data)) {
                 temp_sd_full <- predictor_data$temp_sd
-                cat("    temp_sd full dimensions:", dim(temp_sd_full), "\n")
+                info("    temp_sd full dimensions: %s", paste(dim(temp_sd_full), collapse = " x "))
                 constants$temp_sd <- temp_sd_full[1:constants$N.site, 1:constants$N.date, drop = FALSE]
-                cat("  ✓ Added temp_sd uncertainty data (subset):", dim(constants$temp_sd), "matrix\n")
+                
+                # Fill missing values with reasonable defaults
+                # Use median of available values, or 0.1 if no values available
+                available_vals <- constants$temp_sd[is.finite(constants$temp_sd) & constants$temp_sd > 0]
+                if (length(available_vals) > 0) {
+                    default_sd <- median(available_vals, na.rm = TRUE)
             } else {
-                cat("  ⚠️  WARNING: temp_sd not found, using default values\n")
+                    default_sd <- 0.1
+                }
+                
+                # Replace missing or invalid values
+                bad_mask <- !is.finite(constants$temp_sd) | (constants$temp_sd <= 0)
+                constants$temp_sd[bad_mask] <- default_sd
+                
+                info("  ✓ Added temp_sd uncertainty data (subset): %s matrix", paste(dim(constants$temp_sd), collapse = " x "))
+                info("  ✓ Filled %d missing values with default %.4f", sum(bad_mask), default_sd)
+            } else {
+                warn("  ⚠️  WARNING: temp_sd not found, using default values")
                 constants$temp_sd <- matrix(0.1, nrow = constants$N.site, ncol = constants$N.date)
             }
             
             if ("mois_sd" %in% names(predictor_data)) {
                 mois_sd_full <- predictor_data$mois_sd
-                cat("    mois_sd full dimensions:", dim(mois_sd_full), "\n")
+                info("    mois_sd full dimensions: %s", paste(dim(mois_sd_full), collapse = " x "))
                 constants$mois_sd <- mois_sd_full[1:constants$N.site, 1:constants$N.date, drop = FALSE]
-                cat("  ✓ Added mois_sd uncertainty data (subset):", dim(constants$mois_sd), "matrix\n")
+                
+                # Fill missing values with reasonable defaults
+                available_vals <- constants$mois_sd[is.finite(constants$mois_sd) & constants$mois_sd > 0]
+                if (length(available_vals) > 0) {
+                    default_sd <- median(available_vals, na.rm = TRUE)
             } else {
-                cat("  ⚠️  WARNING: mois_sd not found, using default values\n")
+                    default_sd <- 0.1
+                }
+                
+                # Replace missing or invalid values
+                bad_mask <- !is.finite(constants$mois_sd) | (constants$mois_sd <= 0)
+                constants$mois_sd[bad_mask] <- default_sd
+                
+                info("  ✓ Added mois_sd uncertainty data (subset): %s matrix", paste(dim(constants$mois_sd), collapse = " x "))
+                info("  ✓ Filled %d missing values with default %.4f", sum(bad_mask), default_sd)
+            } else {
+                warn("  ⚠️  WARNING: mois_sd not found, using default values")
                 constants$mois_sd <- matrix(0.1, nrow = constants$N.site, ncol = constants$N.date)
             }
             
             # Subset spatial uncertainty (pH_sd, pC_sd) - SPATIAL PREDICTORS ARE CONSTANT OVER TIME
             if ("pH_sd" %in% names(predictor_data)) {
                 pH_sd_full <- predictor_data$pH_sd
-                cat("    pH_sd full dimensions:", dim(pH_sd_full), "\n")
+                info("    pH_sd full dimensions: %s", paste(dim(pH_sd_full), collapse = " x "))
                 # For spatial predictors, use the same value for all time points
                 pH_sd_plot <- pH_sd_full[1:constants$N.plot, 1, drop = FALSE]  # Take first time point
                 constants$pH_sd <- matrix(pH_sd_plot, nrow = constants$N.plot, ncol = constants$N.date)
-                cat("  ✓ Added pH_sd uncertainty data (constant over time):", dim(constants$pH_sd), "matrix\n")
+                info("  ✓ Added pH_sd uncertainty data (constant over time): %s matrix", paste(dim(constants$pH_sd), collapse = " x "))
             } else {
-                cat("  ⚠️  WARNING: pH_sd not found, using default values\n")
+                warn("  ⚠️  WARNING: pH_sd not found, using default values")
                 constants$pH_sd <- matrix(0.1, nrow = constants$N.plot, ncol = constants$N.date)
             }
             
             if ("pC_sd" %in% names(predictor_data)) {
                 pC_sd_full <- predictor_data$pC_sd
-                cat("    pC_sd full dimensions:", dim(pC_sd_full), "\n")
+                info("    pC_sd full dimensions: %s", paste(dim(pC_sd_full), collapse = " x "))
                 # For spatial predictors, use the same value for all time points
                 pC_sd_plot <- pC_sd_full[1:constants$N.plot, 1, drop = FALSE]  # Take first time point
                 constants$pC_sd <- matrix(pC_sd_plot, nrow = constants$N.plot, ncol = constants$N.date)
-                cat("  ✓ Added pC_sd uncertainty data (constant over time):", dim(constants$pC_sd), "matrix\n")
+                info("  ✓ Added pC_sd uncertainty data (constant over time): %s matrix", paste(dim(constants$pC_sd), collapse = " x "))
             } else {
-                cat("  ⚠️  WARNING: pC_sd not found, using default values\n")
+                warn("  ⚠️  WARNING: pC_sd not found, using default values")
                 constants$pC_sd <- matrix(0.1, nrow = constants$N.plot, ncol = constants$N.date)
             }
             
-            # Sanitize driver uncertainty data
+            # (Optional) hard shape checks; no padding done
+            assert_matrix_dims(constants$temp_sd, constants$N.site, constants$N.date, "temp_sd")
+            assert_matrix_dims(constants$mois_sd, constants$N.site, constants$N.date, "mois_sd")
+            assert_matrix_dims(constants$pH_sd,   constants$N.plot, constants$N.date, "pH_sd")
+            assert_matrix_dims(constants$pC_sd,   constants$N.plot, constants$N.date, "pC_sd")
+            
+            # Strict sanitize: only pH/pC repaired; temp/mois must be clean
             constants <- sanitize_driver_uncertainty(constants)
             
-            # Add driver uncertainty flags
-            constants$temporalDriverUncertainty <- TRUE
-            constants$spatialDriverUncertainty <- TRUE
-            
-            cat("  ✓ Driver uncertainty data added successfully\n")
+            info("  ✓ Driver uncertainty data added & sanitized")
         } else {
-            cat("Skipping driver uncertainty data for", model_name, "model\n")
+            info("Skipping driver uncertainty data for %s model", model_name)
         }
         
         # Add legacy covariate if needed
         if (use_legacy_covariate) {
-            cat("Adding legacy covariate with enhanced validation...\n")
-            
-                    # Create legacy covariate matrix properly for plot x time indexing
-        # The legacy covariate should be 1 for legacy period (2013-2015), 0 for post-2015
-        cat("Creating legacy covariate matrix for plot x time structure...\n")
-        cat("Matrix dimensions needed:", constants$N.plot, "plots ×", constants$N.date, "time points\n")
-        
-        # Use time-based approach (simpler and more robust)
-            if ("timepoint" %in% names(model.dat)) {
-                cat("Using timepoint for legacy calculation...\n")
-                # Use timepoint-based legacy: assume early timepoints are legacy
-                timepoints <- sort(unique(model.dat$timepoint))
-                cat("Time points:", length(timepoints), "\n")
-                cat("N.date constant:", constants$N.date, "\n")
-                
-                # Create legacy vector that matches N.date exactly
-                if (length(timepoints) == constants$N.date) {
-                    legacy_by_time <- timepoints <= quantile(timepoints, 0.6)  # First 60% are legacy
+            info("Adding legacy covariate using actual dates...")
+            legacy_cutoff <- as.Date("2015-01-01")
+
+            # derive a per-timepoint legacy vector of length N.date
+            # model.dat should carry a unique ordered list of dates; if not, derive from input df
+            if (!"all_dates" %in% names(model.dat)) {
+                # fallback from the original df
+                all_dates <- sort(unique(as.Date(rank.df_spec$dates)))
                 } else {
-                    # If dimensions don't match, create a vector of length N.date
-                    cat("WARNING: Timepoint length (", length(timepoints), ") != N.date (", constants$N.date, "), creating default pattern\n")
-                    legacy_by_time <- 1:constants$N.date <= quantile(1:constants$N.date, 0.6)
-                }
-                
-                cat("Legacy time points:", sum(legacy_by_time), "\n")
-                cat("Legacy vector length:", length(legacy_by_time), "\n")
-                
-                # Expand to full matrix (all plots have same legacy status per time point)
-                constants$legacy <- matrix(as.numeric(legacy_by_time), nrow = constants$N.plot, ncol = constants$N.date, byrow = TRUE)
-                
-            } else {
-                cat("WARNING: No time information available, creating default legacy pattern\n")
-                # Default: first half of time period is legacy
-                legacy_by_time <- rep(c(1, 0), length.out = constants$N.date)
-                constants$legacy <- matrix(as.numeric(legacy_by_time), nrow = constants$N.plot, ncol = constants$N.date, byrow = TRUE)
+                all_dates <- as.Date(model.dat$all_dates)
             }
-            
-            cat("Legacy matrix created successfully\n")
+
+            if (length(all_dates) != constants$N.date) {
+                warn("Time axis length mismatch (got %d dates, expected N.date=%d). Rebuilding by index.",
+                     length(all_dates), constants$N.date)
+                all_dates <- seq_len(constants$N.date) # still deterministic
+                legacy_by_time <- all_dates <= floor(0.6 * constants$N.date)
+            } else {
+                legacy_by_time <- as.numeric(all_dates < legacy_cutoff)
+            }
+
+            # expand to plot x time while respecting plot_start windows
+            legacy_mat <- matrix(0, nrow = constants$N.plot, ncol = constants$N.date)
+            for (p in seq_len(constants$N.plot)) {
+                ts <- max(1L, min(constants$plot_start[p], constants$N.date))
+                legacy_mat[p, ts:constants$N.date] <- legacy_by_time[ts:constants$N.date]
+            }
+            constants$legacy <- legacy_mat
+
+            prop_legacy <- mean(constants$legacy)
+            info("Legacy covariate set. Proportion legacy cells: %.3f", prop_legacy)
+            if (prop_legacy %in% c(0,1)) warn("Legacy covariate is all-%d; model may have identifiability issues.", prop_legacy)
             
             # Validate legacy covariate to prevent extreme values
             legacy_sum <- sum(constants$legacy)
             legacy_total <- length(constants$legacy)
             if (legacy_sum == 0 || legacy_sum == legacy_total) {
-                cat("WARNING: Legacy covariate is all 0s or all 1s - this may cause numerical issues\n")
+                warn("WARNING: Legacy covariate is all 0s or all 1s - this may cause numerical issues")
             }
             
-            cat("Legacy covariate added:", legacy_sum, "legacy observations out of", legacy_total, "\n")
-            cat("Legacy proportion:", round(legacy_sum/legacy_total, 3), "\n")
-            cat("Legacy matrix dimensions:", nrow(constants$legacy), "x", ncol(constants$legacy), "\n")
+            info("Legacy covariate added: %d legacy observations out of %d", legacy_sum, legacy_total)
+            info("Legacy proportion: %.3f", legacy_sum/legacy_total)
+            info("Legacy matrix dimensions: %d x %d", nrow(constants$legacy), ncol(constants$legacy))
             
-            cat("  ✓ Legacy covariate added successfully\n")
+            info("  ✓ Legacy covariate added successfully")
         }
         
         # Model hyperparameters - adjust based on model type
-        cat("Setting model hyperparameters...\n")
+        info("Setting model hyperparameters...")
         if (model_name == "env_cycl") {
             constants$N.beta = 8
-            constants$omega <- 0.1 * diag(8)
-            constants$zeros <- rep(0, 8)
         } else if (model_name == "env_cov") {
             constants$N.beta = 6
-            constants$omega <- 0.1 * diag(6)
-            constants$zeros <- rep(0, 6)
         } else {
             constants$N.beta = 2
-            constants$omega <- 0.1 * diag(2)
-            constants$zeros <- rep(0, 2)
         }
         
-        cat("Constants prepared successfully\n")
+        info("Constants prepared successfully")
         
-        # Create model with driver uncertainty
-        cat("Building Nimble model WITH driver uncertainty...\n")
+        # Keep driver uncertainty flags as logical for NIMBLE (cleaner and safer)
+        info("  ✓ Driver uncertainty flags ready for NIMBLE (logical format)")
+        
+        # Create model with driver uncertainty mode
+        info("Building Nimble model with driver uncertainty mode: %s", driver_uncertainty_mode)
         modelCode <- create_nimble_model_with_uncertainty(model_name, use_legacy_covariate, 
-                                                         temporalDriverUncertainty = TRUE, 
-                                                         spatialDriverUncertainty = TRUE)
+                                                         temporalDriverUncertainty = driver_uncertainty_mode, 
+                                                         spatialDriverUncertainty = driver_uncertainty_mode)
         
-        # Create initial values with driver uncertainty
-        cat("Creating initial values WITH driver uncertainty...\n")
+        # Create initial values with drivers
         inits <- create_inits_with_uncertainty(constants, model_name, model_data = model.dat)
         
-        cat("Model built successfully\n")
+        info("Model built successfully")
         
         # STEP: Comprehensive Model Validation
-        cat("Performing comprehensive model validation...\n")
+        info("Performing comprehensive model validation...")
         
         # Validate model dimensions
-        cat("  Validating model dimensions...\n")
+        info("  Validating model dimensions...")
         expected_dims <- list(
             N.plot = constants$N.plot,
             N.date = constants$N.date,
@@ -1121,59 +1414,59 @@ run_scenarios_fixed <- function(j, chain_no) {
         
         for (dim_name in names(expected_dims)) {
             if (expected_dims[[dim_name]] <= 0) {
-                cat("    ❌ ERROR:", dim_name, "is", expected_dims[[dim_name]], "- must be positive\n")
+                error("    ❌ ERROR: %s is %d - must be positive", dim_name, expected_dims[[dim_name]])
                 stop("Invalid model dimensions")
             }
-            cat("    ✓", dim_name, "=", expected_dims[[dim_name]], "\n")
+            info("    ✓ %s = %d", dim_name, expected_dims[[dim_name]])
         }
         
         # Validate environmental predictors for environmental models
         if (model_name %in% c("env_cycl", "env_cov")) {
-            cat("  Validating environmental predictors...\n")
+            info("  Validating environmental predictors...")
             required_env <- c("temp", "mois", "pH", "pC", "relEM", "LAI")
             
             for (pred in required_env) {
                 if (pred %in% names(constants)) {
                     pred_data <- constants[[pred]]
                     if (is.matrix(pred_data)) {
-                        cat("    ✓", pred, ":", dim(pred_data), "matrix\n")
+                        info("    ✓ %s: %s matrix", pred, paste(dim(pred_data), collapse = " x "))
                         
                         # Check matrix dimensions match expected
                         if (nrow(pred_data) != constants$N.plot && ncol(pred_data) != constants$N.date) {
-                            cat("      ⚠️  WARNING:", pred, "dimensions may not match plot/time structure\n")
+                            warn("      ⚠️  WARNING: %s dimensions may not match plot/time structure", pred)
                         }
                     } else if (is.vector(pred_data)) {
-                        cat("    ✓", pred, ":", length(pred_data), "vector\n")
+                        info("    ✓ %s: %d vector", pred, length(pred_data))
                     } else {
-                        cat("    ⚠️  WARNING:", pred, ":", class(pred_data), "object\n")
+                        warn("    ⚠️  WARNING: %s: %s object", pred, class(pred_data))
                     }
                 } else {
-                    cat("    ❌ ERROR:", pred, "missing for environmental model\n")
+                    error("    ❌ ERROR: %s missing for environmental model", pred)
                     stop("Missing required environmental predictor: ", pred)
                 }
             }
         }
         
         # Validate seasonal predictors
-        cat("  Validating seasonal predictors...\n")
+        info("  Validating seasonal predictors...")
         if (length(constants$sin_mo) != constants$N.date) {
-            cat("    ❌ ERROR: sin_mo length (", length(constants$sin_mo), ") != N.date (", constants$N.date, ")\n")
+            error("    ❌ ERROR: sin_mo length (%d) != N.date (%d)", length(constants$sin_mo), constants$N.date)
             stop("Seasonal predictor dimension mismatch")
         }
         if (length(constants$cos_mo) != constants$N.date) {
-            cat("    ❌ ERROR: cos_mo length (", length(constants$cos_mo), ") != N.date (", constants$N.date, ")\n")
+            error("    ❌ ERROR: cos_mo length (%d) != N.date (%d)", length(constants$cos_mo), constants$N.date)
             stop("Seasonal predictor dimension mismatch")
         }
-        cat("    ✓ Seasonal predictors validated\n")
+        info("    ✓ Seasonal predictors validated")
         
         # Validate response data
-        cat("  Validating response data...\n")
+        info("  Validating response data...")
         if (nrow(model.dat$y) != constants$N.core) {
-            cat("    ❌ ERROR: Response data rows (", nrow(model.dat$y), ") != N.core (", constants$N.core, ")\n")
+            error("    ❌ ERROR: Response data rows (%d) != N.core (%d)", nrow(model.dat$y), constants$N.core)
             stop("Response data dimension mismatch")
         }
         if (ncol(model.dat$y) != 1) {
-            cat("    ❌ ERROR: Response data should have 1 column, got", ncol(model.dat$y), "\n")
+            error("    ❌ ERROR: Response data should have 1 column, got %d", ncol(model.dat$y))
             stop("Response data structure error")
         }
         
@@ -1184,148 +1477,178 @@ run_scenarios_fixed <- function(j, chain_no) {
         y_neg <- sum(y_values < 0, na.rm = TRUE)
         y_gt1 <- sum(y_values > 1, na.rm = TRUE)
         
-        if (y_na > 0) cat("    ⚠️  WARNING:", y_na, "missing values in response\n")
-        if (y_inf > 0) cat("    ❌ ERROR:", y_inf, "infinite values in response\n")
-        if (y_neg > 0) cat("    ❌ ERROR:", y_neg, "negative values in response\n")
-        if (y_gt1 > 0) cat("    ❌ ERROR:", y_gt1, "values > 1 in response\n")
+        if (y_na > 0) warn("    ⚠️  WARNING: %d missing values in response", y_na)
+        if (y_inf > 0) error("    ❌ ERROR: %d infinite values in response", y_inf)
+        if (y_neg > 0) error("    ❌ ERROR: %d negative values in response", y_neg)
+        if (y_gt1 > 0) error("    ❌ ERROR: %d values > 1 in response", y_gt1)
         
         if (y_inf > 0 || y_neg > 0 || y_gt1 > 0) {
             stop("Response data contains invalid values")
         }
         
-        cat("    ✓ Response data validated\n")
+        info("    ✓ Response data validated")
         
-        cat("  ✓ All model validations passed\n")
+        info("  ✓ All model validations passed")
         
         # Build model
-        cat("Building Nimble model...\n")
+        info("Building Nimble model...")
         Rmodel <- nimbleModel(code = modelCode, constants = constants,
                               data = list(y = model.dat$y[,1,drop=FALSE]), inits = inits)
         
         # Debug: Check data dimensions
-        cat("Data dimensions check:\n")
-        cat("  model.dat$y dimensions:", dim(model.dat$y), "\n")
-        cat("  model.dat$y class:", class(model.dat$y), "\n")
-        cat("  constants$N.core:", constants$N.core, "\n")
-        cat("  constants$N.spp:", constants$N.spp, "\n")
+        info("Data dimensions check:")
+        info("  model.dat$y dimensions: %s", paste(dim(model.dat$y), collapse = " x "))
+        info("  model.dat$y class: %s", class(model.dat$y))
+        info("  constants$N.core: %d", constants$N.core)
+        info("  constants$N.spp: %d", constants$N.spp)
         
         # Compile model
-        cat("Compiling Nimble model...\n")
+        info("Compiling Nimble model...")
         cModel <- compileNimble(Rmodel)
         
-        cat("Model compiled successfully\n")
+        info("Model compiled successfully")
         
         # Configure MCMC with proper sampler management
-        cat("Configuring MCMC...\n")
+        info("Configuring MCMC...")
         
         # Enhanced monitoring for comprehensive convergence analysis (matching working approach)
+        # Start with core parameters that all models have
         monitored_params <- c(
-            # Core parameters (primary focus) - MONITOR ALL ESSENTIAL PARAMETERS
-            "precision", "rho", "beta", "site_effect_sd", "site_effect", "intercept", "legacy_effect",
-            # Driver uncertainty parameters - MONITOR FOR ANALYSIS
-            "temp_est", "mois_est", "pH_est", "pC_est"
+            "precision", "rho", "beta", "site_effect_sd", "site_effect", "intercept",
+            "sigma_proc", "sigma_init"  # NEW: process and initial state scales
         )
+        
+        # Add legacy_effect only for models that use it
+        if (use_legacy_covariate && model_name %in% c("env_cycl", "env_cov")) {
+            monitored_params <- c(monitored_params, "legacy_effect")
+        }
+        
+        # Add driver uncertainty parameters for DRIVER UNCERTAINTY models
+        # NOTE: Removed temp_est, mois_est, pH_est, pC_est from monitoring to reduce memory usage
+        # These are large arrays that can cause performance issues during testing
+        if (model_name %in% c("env_cycl", "env_cov")) {
+            # Only monitor the spatial pH/pC variables if using driver uncertainty
+            if (constants$spatialDriverUncertainty) {
+                monitored_params <- c(monitored_params, "pH_est_p", "pC_est_p")
+            }
+        }
         
         # Use monitors2 for latent variables at different interval (matching working approach)
         monitored_latent_params <- c(
             # Monitor latent process variables at different interval for efficiency
-            "Ex", "mu"
+            "eta", "mu"  # NEW: eta is now the main latent process, mu is deterministic
         )
         
-        cat("Monitoring parameters for convergence analysis:\n")
-        cat("  Core parameters:", paste(monitored_params, collapse = ", "), "\n")
-        cat("  Latent variables:", paste(monitored_latent_params, collapse = ", "), "\n")
-        cat("  Total beta parameters:", constants$N.beta, "\n")
+        info("Monitoring parameters for convergence analysis:")
+        info("  Core parameters: %s", paste(monitored_params, collapse = ", "))
+        info("  Latent variables: %s", paste(monitored_latent_params, collapse = ", "))
+        info("  Total beta parameters: %d", constants$N.beta)
+        
+        # Choose small thins for local tests to ensure mvSamples2 gets rows
+        thin  <- 5   # for parameters
+        thin2 <- 10  # for latent (eta/mu) - must be <= total_iterations - burnin
         
         mcmcConf <- configureMCMC(
-            model = cModel,
+            model = Rmodel,
             monitors = monitored_params,
             monitors2 = monitored_latent_params,  # Use monitors2 for latent variables
-            thin = 1,
-            thin2 = 20,  # Sample latent variables every 20th iteration for efficiency
+            thin = thin,
+            thin2 = thin2,
             enableWAIC = FALSE
         )
         
         # Add specialized samplers for better convergence of key parameters (matching working approach)
-        cat("Adding specialized samplers for convergence improvement...\n")
+        info("Adding specialized samplers for convergence improvement...")
         
         # 1. FIRST remove default samplers to prevent conflicts
-        cat("  Removing default samplers...\n")
-        mcmcConf$removeSamplers(c("precision", "rho", "beta", "site_effect_sd", "site_effect", "intercept"))
-        
-        if (use_legacy_covariate) {
-            mcmcConf$removeSamplers("legacy_effect")
+        info("  Removing default samplers...")
+        samplers_to_remove <- c("precision", "rho", "beta", "site_effect_sd", "site_effect", "intercept", "sigma_proc", "sigma_init")
+        if (use_legacy_covariate && model_name %in% c("env_cycl", "env_cov")) {
+            samplers_to_remove <- c(samplers_to_remove, "legacy_effect")
         }
+        mcmcConf$removeSamplers(samplers_to_remove)
         
         # 2. THEN add specialized samplers - IMPROVED SAMPLER STRATEGY
-        cat("  Adding improved samplers for key parameters...\n")
+        info("  Adding improved samplers for key parameters...")
         
         # Use regular slice samplers for single parameters, AF_slice for blocks
         mcmcConf$addSampler(target = "precision", type = "slice")        # Regular slice sampler for single parameter
         mcmcConf$addSampler(target = "rho", type = "slice")              # Regular slice sampler for single parameter
         mcmcConf$addSampler(target = "site_effect_sd", type = "slice")   # Regular slice sampler for single parameter
         mcmcConf$addSampler(target = "intercept", type = "slice")        # Regular slice sampler for single parameter
-        
-        if (use_legacy_covariate) {
-            mcmcConf$addSampler(target = "legacy_effect", type = "slice")  # Regular slice sampler for single parameter
+        if (use_legacy_covariate && model_name %in% c("env_cycl", "env_cov")) {
+        mcmcConf$addSampler(target = "legacy_effect", type = "slice")  # Regular slice sampler for single parameter
         }
+        # NEW: process and initial state scales
+        mcmcConf$addSampler(target = "sigma_proc", type = "slice")       # Regular slice sampler for process scale
+        mcmcConf$addSampler(target = "sigma_init", type = "slice")       # Regular slice sampler for initial state scale
         
         # Add specialized samplers for all beta parameters (seasonal + environmental)
         for (i in 1:constants$N.beta) {
             mcmcConf$addSampler(target = paste0("beta[", i, "]"), type = "slice")
-            cat("    Added slice sampler for beta[", i, "]\n")
+            info("    Added slice sampler for beta[%d]", i)
         }
         
         # 3. Better site effects sampling strategy (matching working approach)
         if (constants$N.site > 1) {
-            cat("  Adding improved block sampler for site effects...\n")
-            # Use adaptive block sampler for better mixing of correlated parameters
+            info("  Adding improved block sampler for site effects...")
+            # Try AF_slice first, fall back to RW_block if not available
+            tryCatch({
             mcmcConf$addSampler(target = paste0("site_effect[1:", constants$N.site, "]"), type = "AF_slice")
-            cat("  Added adaptive block sampler for site_effect[1:", constants$N.site, "]\n")
+                info("  Added adaptive block sampler for site_effect[1:%d]", constants$N.site)
+            }, error = function(e) {
+                warn("  AF_slice not available, using RW_block fallback")
+                mcmcConf$addSampler(target = paste0("site_effect[1:", constants$N.site, "]"), type = "RW_block")
+            })
         } else {
             # Single site effect - use adaptive slice sampler
-            cat("  Adding adaptive slice sampler for single site effect...\n")
+            info("  Adding adaptive slice sampler for single site effect...")
+            tryCatch({
             mcmcConf$addSampler(target = "site_effect[1]", type = "AF_slice")
+                info("  Added AF_slice sampler for single site effect")
+            }, error = function(e) {
+                warn("  AF_slice not available, using slice fallback")
+                mcmcConf$addSampler(target = "site_effect[1]", type = "slice")
+            })
         }
         
-        cat("MCMC configured successfully - ALL advanced features RESTORED!\n")
+        info("MCMC configured successfully - ALL advanced features RESTORED!")
         
         # Build and compile MCMC
-        cat("Building and compiling MCMC...\n")
+        info("Building and compiling MCMC...")
         myMCMC <- buildMCMC(mcmcConf)
         compiled <- compileNimble(myMCMC, project = Rmodel, resetFunctions = TRUE)
         
-        cat("MCMC configured successfully\n")
+        info("MCMC configured successfully")
         
         # Run MCMC with convergence-based sampling
-        cat("Running MCMC with convergence-based sampling...\n")
-        burnin <- 100  # TESTING: Reduced for faster testing
-        thin <- 1
-        iter_per_chunk <- 200  # TESTING: Reduced for faster testing
-        init_iter <- 500  # TESTING: Reduced for faster testing
-        min_eff_size_perchain <- 10  # TESTING: Reduced for faster testing
-        max_loops <- 3  # TESTING: Reduced for faster testing
+        info("Running MCMC with convergence-based sampling...")
+        burnin <- 50    # TESTING: Minimal burn-in for quick test
+        iter_per_chunk <- 50   # TESTING: Small chunks for quick test
+        init_iter <- 50  # TESTING: Minimal initial iterations
+        min_eff_size_perchain <- 10  # TESTING: Low ESS target for quick test
+        max_loops <- 2  # TESTING: Few loops for quick test
         max_save_size <- 50000
-        min_total_iterations <- 5000
+        min_total_iterations <- 100  # TESTING: Just 100 total iterations
         
-        cat("Running MCMC with convergence-based sampling\n")
-        cat("  Initial iterations:", init_iter, "burnin:", burnin, "\n")
-        cat("  Iterations per chunk:", iter_per_chunk, "max loops:", max_loops, "\n")
-        cat("  Target ESS per chain:", min_eff_size_perchain, "\n")
-        cat("  Minimum total iterations:", min_total_iterations, "\n")
+        info("Running MCMC with convergence-based sampling")
+        info("  Initial iterations: %d burnin: %d", init_iter, burnin)
+        info("  Iterations per chunk: %d max loops: %d", iter_per_chunk, max_loops)
+        info("  Target ESS per chain: %d", min_eff_size_perchain)
+        info("  Minimum total iterations: %d", min_total_iterations)
         
         # Run initial iterations
-        cat("  Running initial iterations (", init_iter, " iterations) for adaptation...\n")
-        compiled$run(niter = init_iter, thin = thin, nburnin = 0)
-        cat("  Initial iterations completed\n")
+        info("  Running initial iterations (%d iterations) for adaptation...", init_iter)
+        compiled$run(niter = init_iter, thin = thin, thin2 = thin2, nburnin = 0)
+        info("  Initial iterations completed")
         
         # Get initial samples and check convergence
         initial_samples <- as.matrix(compiled$mvSamples)
-        cat("  Initial samples collected, checking convergence...\n")
-        cat("  Initial samples dimensions:", dim(initial_samples), "\n")
+        info("  Initial samples collected, checking convergence...")
+        info("  Initial samples dimensions: %s", paste(dim(initial_samples), collapse = " x "))
         
         # Create output directory for checkpoints
-        cat("  Creating output directory for checkpoints...\n")
+        info("  Creating output directory for checkpoints...")
         
         # Create species-specific subdirectory
         species_output_dir <- file.path(model_output_dir, model_name, species)
@@ -1340,8 +1663,6 @@ run_scenarios_fixed <- function(j, chain_no) {
             stop("CRITICAL: Failed to create checkpoint directory: ", species_output_dir)
         }
         
-        cat("  ✓ Checkpoint directory ready:", species_output_dir, "\n")
-        
         # Create model_id for consistent naming
         model_id <- create_model_id(model_name, species, min.date, max.date, use_legacy_covariate)
         
@@ -1350,14 +1671,8 @@ run_scenarios_fixed <- function(j, chain_no) {
         loop_counter <- 0
         total_iterations <- init_iter
         
-        # Try to check convergence, with fallback if it fails
-        tryCatch({
+        # Check convergence
             continue <- check_continue(initial_samples, min_eff_size = min_eff_size_perchain)
-        }, error = function(e) {
-            cat("  WARNING: Convergence check failed, defaulting to continue sampling\n")
-            cat("  Error:", e$message, "\n")
-            continue <- TRUE
-        })
         
         # Store all samples as we go
         all_samples <- initial_samples
@@ -1366,7 +1681,6 @@ run_scenarios_fixed <- function(j, chain_no) {
         initial_plot_samples <- as.matrix(compiled$mvSamples2)
         all_plot_samples <- initial_plot_samples
         cat("  Starting iterative accumulation with", nrow(all_samples), "initial samples\n")
-        cat("  Starting iterative accumulation with", nrow(all_plot_samples), "initial plot samples\n")
         
         # Save initial samples as checkpoint (including samples2)
         initial_checkpoint_data <- list(
@@ -1376,26 +1690,19 @@ run_scenarios_fixed <- function(j, chain_no) {
             loop = 0
         )
         checkpoint_file <- file.path(species_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_initial.rds"))
-        tryCatch({
             saveRDS(initial_checkpoint_data, checkpoint_file)
             cat("  ✓ Initial checkpoint saved with samples and samples2\n")
-        }, error = function(e) {
-            cat("  ✗ Failed to save initial checkpoint:", e$message, "\n")
-        })
         
         # Also save a simple progress file
         progress_file <- create_progress_file(species_output_dir, model_id, chain_no, init_iter)
         
         while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
             if (continue) {
-                cat("  Effective sample size too low; running for another", iter_per_chunk, "iterations\n")
             } else {
-                cat("  Minimum iterations not reached; running for another", iter_per_chunk, "iterations\n")
             }
-            cat("  Loop", loop_counter + 1, "of", max_loops, "\n")
             
             # Continue sampling without resetting
-            compiled$run(niter = iter_per_chunk, thin = thin, nburnin = 0)
+            compiled$run(niter = iter_per_chunk, thin = thin, thin2 = thin2, nburnin = 0)
             total_iterations <- total_iterations + iter_per_chunk
             
             # Get updated samples and accumulate them
@@ -1407,7 +1714,7 @@ run_scenarios_fixed <- function(j, chain_no) {
             cat("  Current iteration samples:", current_sample_count, "\n")
             cat("  Previous accumulated samples:", previous_sample_count, "\n")
             
-            # CORRECTED LOGIC: Always append all current samples since mvSamples resets
+            # Always append all current samples since mvSamples resets
             if (current_sample_count > 0) {
                 all_samples <- rbind(all_samples, current_samples)
                 cat("  ✓ Added", current_sample_count, "new samples, total accumulated:", nrow(all_samples), "\n")
@@ -1433,25 +1740,13 @@ run_scenarios_fixed <- function(j, chain_no) {
                 loop = loop_counter + 1
             )
             loop_checkpoint_file <- file.path(species_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter + 1, ".rds"))
-            tryCatch({
                 saveRDS(loop_checkpoint_data, loop_checkpoint_file)
-                cat("  ✓ Loop checkpoint saved with samples and samples2\n")
-            }, error = function(e) {
-                cat("  ✗ Failed to save loop checkpoint:", e$message, "\n")
-            })
             
             # Update progress file
             update_progress_file(progress_file, total_iterations, loop_counter + 1)
             
             # Check if we need to continue
-            continue <- TRUE
-            tryCatch({
                 continue <- check_continue(all_samples, min_eff_size = min_eff_size_perchain)
-            }, error = function(e) {
-                cat("  WARNING: Convergence check failed in loop, defaulting to continue sampling\n")
-                cat("  Error:", e$message, "\n")
-                continue <- TRUE
-            })
             loop_counter <- loop_counter + 1
             
             cat("  Total iterations so far:", total_iterations, "\n")
@@ -1487,44 +1782,34 @@ run_scenarios_fixed <- function(j, chain_no) {
         samples <- all_samples
         
         # Use accumulated plot samples instead of just final mvSamples2
-        cat("Using accumulated plot-level estimates from all iterations...\n")
         plot_samples <- all_plot_samples
-        cat("  Plot samples dimensions:", dim(plot_samples), "\n")
-        cat("  Plot samples column names:", paste(colnames(plot_samples), collapse=", "), "\n")
+        
+        # Actually discard burn-in samples
+        if (nrow(samples) > burnin) {
+            samples <- samples[(burnin+1):nrow(samples), , drop=FALSE]
+        }
+        if (nrow(plot_samples) > burnin) {
+            plot_samples <- plot_samples[(burnin+1):nrow(plot_samples), , drop=FALSE]
+        }
         
         # Validate plot samples structure
         if (nrow(plot_samples) == 0) {
-            cat("  WARNING: No plot samples found in accumulated samples\n")
-            plot_samples <- samples  # Fallback to parameter samples if no plot samples
+            warn("WARNING: No plot samples collected - mvSamples2 is empty")
+            warn("This indicates thin2 (%d) may be too large for total iterations (%d)", thin2, total_iterations - burnin)
         } else {
-            cat("  ✓ Plot samples extracted successfully from accumulated samples\n")
-            
             # Validate that samples2 has proper column names for combine_chains
             col_names <- colnames(plot_samples)
-            if (is.null(col_names) || !any(grepl("plot_mu", col_names))) {
-                cat("  WARNING: samples2 missing proper column names (plot_mu), this may cause issues in combine_chains\n")
-                cat("  Available column names:", paste(head(col_names, 10), collapse=", "), "\n")
+            if (is.null(col_names) || !any(grepl("^mu\\[", col_names))) {
+                warn("WARNING: samples2 does not contain mu columns")
             } else {
-                cat("  ✓ samples2 has proper column names for combine_chains\n")
+                info("✓ samples2 contains %d mu columns", sum(grepl("^mu\\[", col_names)))
             }
         }
         
-        cat("MCMC completed successfully\n")
-        cat("Final sample dimensions:", dim(samples), "\n")
-        cat("Plot sample dimensions:", dim(plot_samples), "\n")
-        cat("Total iterations run:", total_iterations, "\n")
-        cat("Convergence loops:", loop_counter, "\n")
-        cat("Final ESS check:\n")
         
         # Final convergence check
-        tryCatch({
-            final_ess <- effectiveSize(as.mcmc(samples))
+        final_ess <- coda::effectiveSize(coda::as.mcmc(samples))
             min_final_ess <- min(final_ess, na.rm = TRUE)
-            cat("  Final minimum ESS:", round(min_final_ess, 1), "\n")
-            cat("  Convergence achieved:", min_final_ess >= min_eff_size_perchain, "\n")
-        }, error = function(e) {
-            cat("  Final ESS check failed:", e$message, "\n")
-        })
         
         cat("=== ITERATIVE SAVING SUMMARY ===\n")
         cat("  Initial samples:", nrow(initial_samples), "iterations\n")
@@ -1532,71 +1817,53 @@ run_scenarios_fixed <- function(j, chain_no) {
         cat("  Total accumulated samples:", nrow(all_samples), "iterations\n")
         cat("  Total accumulated plot samples:", nrow(all_plot_samples), "iterations\n")
         cat("  Checkpoints saved:", loop_counter + 1, "files\n")
-        cat("  Final sample size:", nrow(all_samples), "iterations\n")
-        cat("  Final plot sample size:", nrow(all_plot_samples), "iterations\n")
         
-        # Save MCMC samples with absolute path
-        samples_file <- file.path(model_output_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
+        # Optional safety net: rebuild mu from eta if needed
+        plot_samples <- fix_mu_from_eta(plot_samples, constants$N.plot, constants$N.date)
         
-        # Create the complete chain structure with metadata
-        chain_output <- list(
+        # Use compatibility shim to standardize output structure
+        compat <- ensure_old_schema(
             samples = all_samples,
-            samples2 = plot_samples,  # Plot-level estimates from monitors2 output
-            metadata = list(
+            samples2 = plot_samples,
+            meta = list(
                 rank.name = rank.name,
                 species = species,
                 model_name = model_name,
                 model_id = model_id,
                 use_legacy_covariate = use_legacy_covariate,
-                has_driver_uncertainty = TRUE,  # Flag to identify driver uncertainty models
+                has_driver_uncertainty = driver_uncertainty_mode,
                 scenario = scenario,
                 min.date = min.date,
                 max.date = max.date,
                 niter = total_iterations,
                 nburnin = burnin,
                 thin = thin,
-                thin2 = 20,  # Include thin2 for samples2
+                thin2 = thin2,
                 model_data = model.dat,
                 nimble_code = modelCode,
-                model_structure = "stable_beta_regression_with_driver_uncertainty"
-            )
+                model_structure = if (driver_uncertainty_mode)
+                    "cloglog_beta_regression_with_driver_uncertainty"
+                  else
+                    "cloglog_beta_regression_fixed_drivers"
+            ),
+            model_output_root = model_output_dir,
+            model_name = model_name,
+            species = species,
+            model_id = model_id,
+            chain_no = chain_no
         )
         
-        # Save with error handling
-        tryCatch({
-            saveRDS(chain_output, samples_file)
-            cat("✓ SUCCESS: Saved MCMC samples to:", samples_file, "\n")
-        }, error = function(e) {
-            cat("✗ ERROR: Failed to save samples to", samples_file, "\n")
-            cat("  Error:", e$message, "\n")
-            # Try to save to current directory as fallback
-            fallback_file <- paste0("samples_", model_id, "_chain", chain_no, "_FALLBACK.rds")
-            tryCatch({
-                saveRDS(chain_output, fallback_file)
-                cat("✓ FALLBACK: Saved to current directory:", fallback_file, "\n")
-            }, error = function(e2) {
-                cat("✗ CRITICAL: Failed to save even to fallback location\n")
-                cat("  Fallback error:", e2$message, "\n")
-            })
-        })
+        # Save final samples with standardized structure
+        saveRDS(compat$chain_output, compat$path)
+        cat("✓ SUCCESS: Saved MCMC samples to:", compat$path, "\n")
         
         cat("Sample dimensions:", dim(all_samples), "\n")
-        cat("=== Model fitting completed WITH DRIVER UNCERTAINTY ===\n")
-        cat("  - STABLE: Beta regression with driver uncertainty in environmental predictors\n")
-        cat("  - TEMPORAL UNCERTAINTY: Temperature and moisture (site-level)\n")
-        cat("  - SPATIAL UNCERTAINTY: pH and pC (plot-level, constant over time)\n")
-        cat("  - SMOOTH LINK: cloglog transformation (1 - exp(-exp(eta))) for (0,1) bounds\n")
-        cat("  - CONVERGENCE-BASED: Adaptive sampling until reasonable ESS reached\n")
-        cat("  - ITERATIVE SAVING: Samples accumulated and saved incrementally\n")
-        cat("  - FIXED: Sample accumulation across loops (NIMBLE mvSamples resets)\n")
-        cat("  - FIXED: samples2 (plot estimates) properly monitored and accumulated\n")
-        cat("  - READY: Output structure compatible with 02_combineModelChains.r\n")
-        
+        cat("=== Model fitting completed (cloglog version) ===\n")
         return(list(
             status = "SUCCESS", 
             samples = all_samples,
             samples2 = plot_samples,  # Include plot-level estimates for consistency
-            file = samples_file,
+            file = compat$path,
             model_data = model.dat,
             nimble_code = modelCode,
             metadata = list(
@@ -1611,10 +1878,13 @@ run_scenarios_fixed <- function(j, chain_no) {
                 niter = total_iterations,
                 nburnin = burnin,
                 thin = thin,
-                thin2 = 20,  # Include thin2 for samples2
+                thin2 = thin2,  # Include thin2 for samples2
                 model_data = model.dat,
                 nimble_code = modelCode,
-                model_structure = "stable_beta_regression_with_driver_uncertainty"
+                model_structure = if (driver_uncertainty_mode)
+                    "cloglog_beta_regression_with_driver_uncertainty"
+                  else
+                    "cloglog_beta_regression_fixed_drivers"
             )
         ))
         
@@ -1637,47 +1907,6 @@ run_scenarios_fixed <- function(j, chain_no) {
             runtime = if(exists("start_time")) difftime(error_time, start_time, units="secs") else NA
         )
         
-        # Create detailed error file with absolute path
-        model_name <- if(exists("model_name")) model_name else "unknown"
-        error_dir <- here("data", "model_outputs", "logit_beta_regression", model_name)
-        dir.create(error_dir, showWarnings = FALSE, recursive = TRUE)
-        error_file <- file.path(error_dir, paste0("chain_", j, "_", chain_no, "_ERROR.txt"))
-        
-        # Write comprehensive error report
-        error_report <- c(
-            paste("ERROR DETAILED REPORT -", format(error_time)),
-            paste("Task Index:", error_context$task_idx),
-            paste("Model Index:", j),
-            paste("Chain Number:", error_context$chain_no),
-            paste("Error Message:", error_context$error_message),
-            paste("Error Call:", error_context$error_call),
-            paste("Error Class:", error_context$error_class),
-            paste("Runtime (seconds):", round(error_context$runtime, 2)),
-            paste("R Version:", error_context$system_info$r_version),
-            paste("Working Directory:", error_context$system_info$working_dir),
-            paste("Available Packages:", paste(error_context$system_info$available_packages, collapse=", ")),
-            "",
-            "FULL ERROR OBJECT:",
-            capture.output(str(e))
-        )
-        
-        # Save error report with error handling
-        tryCatch({
-            writeLines(error_report, error_file)
-            cat("✓ ERROR REPORT: Saved detailed error to:", error_file, "\n")
-        }, error = function(e) {
-            cat("✗ ERROR: Failed to save error report to", error_file, "\n")
-            cat("  Error:", e$message, "\n")
-            # Try to save to current directory as fallback
-            fallback_error_file <- paste0("chain_", j, "_", chain_no, "_ERROR_FALLBACK.txt")
-            tryCatch({
-                writeLines(error_report, fallback_error_file)
-                cat("✓ FALLBACK: Saved error report to current directory:", fallback_error_file, "\n")
-            }, error = function(e2) {
-                cat("✗ CRITICAL: Failed to save error report even to fallback location\n")
-                cat("  Fallback error:", e2$message, "\n")
-            })
-        })
         
         # Also log to console with detailed information
         cat("ERROR in Model", j, "Chain", error_context$chain_no, ":\n")
@@ -1685,17 +1914,75 @@ run_scenarios_fixed <- function(j, chain_no) {
         cat("  Call:", error_context$error_call, "\n")
         cat("  Class:", error_context$error_class, "\n")
         cat("  Runtime:", round(error_context$runtime, 2), "seconds\n")
-        cat("  Detailed error saved to:", error_file, "\n")
         
         # Return detailed error information
         return(list(
             status = "ERROR", 
             error = error_context$error_message,
-            error_details = error_context,
-            error_file = error_file
+            error_details = error_context
         ))
     })
 }
+
+# ---------- SINGLE-TASK SELECTION (HPC) ----------
+# Now that run_scenarios_fixed is defined, handle single-task mode
+if (single_task_mode) {
+  # Apply semantic filters if provided
+  if (!is.null(cli_model_id)) {
+    valid_models <- valid_models %>% dplyr::filter(model_id == cli_model_id)
+    info("Filtered to model_id=%s -> %d rows", cli_model_id, nrow(valid_models))
+  }
+  if (!is.null(cli_rank)) {
+    valid_models <- valid_models %>% dplyr::filter(rank.name == cli_rank)
+    info("Filtered to rank.name=%s -> %d rows", cli_rank, nrow(valid_models))
+  }
+  if (!is.null(cli_species)) {
+    valid_models <- valid_models %>% dplyr::filter(species == cli_species)
+    info("Filtered to species=%s -> %d rows", cli_species, nrow(valid_models))
+  }
+  if (!is.null(cli_model_name)) {
+    valid_models <- valid_models %>% dplyr::filter(model_name == cli_model_name)
+    info("Filtered to model_name=%s -> %d rows", cli_model_name, nrow(valid_models))
+  }
+
+  if (nrow(valid_models) == 0) {
+    stop("No models remain after filtering; nothing to run.")
+  }
+
+  # Map array task id to (model_idx, chain_no)
+  n_models <- nrow(valid_models)
+  total_tasks <- n_models * nchains
+  if (array_task_id < 1 || array_task_id > total_tasks) {
+    stop(sprintf("array_task_id=%d out of bounds (1..%d)", array_task_id, total_tasks))
+  }
+  chain_no  <- ((array_task_id - 1) %% nchains) + 1
+  model_idx <- ((array_task_id - 1) %/% nchains) + 1
+
+  info("HPC single-task mode: task=%d of %d -> model_idx=%d / %d, chain_no=%d / %d",
+       array_task_id, total_tasks, model_idx, n_models, chain_no, nchains)
+
+  # Set deterministic seed per (model_idx, chain_no) for reproducibility
+  set.seed(100000 + model_idx*100 + chain_no)
+  info("Set seed to %d for model_idx=%d, chain_no=%d", 100000 + model_idx*100 + chain_no, model_idx, chain_no)
+
+  # run just one (model, chain) and exit
+  res <- run_scenarios_fixed(j = model_idx, chain_no = chain_no)
+
+  # save status summary (optional)
+  out_dir <- file.path(model_output_dir, "job_summaries")
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  status_file <- file.path(out_dir, sprintf("status_task%06d.txt", array_task_id))
+  writeLines(c(
+    sprintf("task_id=%d", array_task_id),
+    sprintf("model_idx=%d", model_idx),
+    sprintf("chain_no=%d", chain_no),
+    sprintf("status=%s", ifelse(is.list(res) && !is.null(res$status), res$status, "UNKNOWN")),
+    sprintf("timestamp=%s", as.character(Sys.time()))
+  ), status_file)
+
+  q(save = "no")  # end this job cleanly
+}
+# ---------- END SINGLE-TASK SELECTION ----------
 
 # Create a combined task list: (model_idx, chain_no) pairs
 all_tasks <- expand.grid(model_idx = 1:nrow(valid_models), chain_no = 1:nchains)
@@ -1705,43 +1992,13 @@ print(all_tasks)
 cat("Cluster size:", n_cores, "workers\n")
 
 # Function to monitor progress in real-time
-monitor_progress <- function() {
-    cat("\n=== REAL-TIME PROGRESS MONITORING ===\n")
-    cat("Press Ctrl+C to stop monitoring\n")
-    
-    while(TRUE) {
-        Sys.sleep(30)  # Check every 30 seconds
-        
-        completed <- 0
-        errors <- 0
-        for (model_idx in 1:nrow(valid_models)) {
-            for (chain_no in 1:nchains) {
-                status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
-                error_file <- paste0("chain_", model_idx, "_", chain_no, "_ERROR.txt")
-                
-                if (file.exists(status_file)) completed <- completed + 1
-                if (file.exists(error_file)) errors <- errors + 1
-            }
-        }
-        
-        total <- nrow(valid_models) * nchains
-        cat(format(Sys.time()), "- Progress:", completed, "/", total, "completed,", 
-            errors, "failed,", total - completed - errors, "running\n")
-    }
-}
 
-# Start progress monitoring in background (optional)
-cat("To monitor progress in real-time, run: monitor_progress()\n")
-cat("Or check status files manually:\n")
-cat("  - chain_[model]_[chain]_status.txt for completed chains\n")
-cat("  - chain_[model]_[chain]_ERROR.txt for failed chains\n")
 
 # Run everything in parallel with incremental saving
 cat("Preparing parallel execution functions...\n")
 
 # Create a function that saves results as they complete
 runAndSave_task <- function(task_idx) {
-    cat("DEBUG: runAndSave_task called with task_idx =", task_idx, "at", Sys.time(), "\n")
     
     # Test if we can access the function
     if (!exists("run_scenarios_fixed")) {
@@ -1749,7 +2006,6 @@ runAndSave_task <- function(task_idx) {
         return(list(error = "run_scenarios_fixed function not found"))
     }
     
-    cat("DEBUG: run_scenarios_fixed function exists in worker\n")
     
     # Initialize error tracking
     error_details <- list()
@@ -1761,7 +2017,6 @@ runAndSave_task <- function(task_idx) {
         model_idx <- task$model_idx
         chain_no <- task$chain_no
         
-        cat("DEBUG: Worker processing Model", model_idx, "Chain", chain_no, "starting at", format(start_time), "\n")
         
         # Log system information for debugging
         cat("Worker: System info - R version:", R.version.string, "\n")
@@ -1792,15 +2047,9 @@ runAndSave_task <- function(task_idx) {
         
         cat("Worker: All checks passed, calling run_scenarios_fixed...\n")
         
-        # Run the model with detailed error context
+        # Run the model
         cat("Worker: About to call run_scenarios_fixed with j =", model_idx, "chain_no =", chain_no, "\n")
-        result <- tryCatch({
-            run_scenarios_fixed(j = model_idx, chain_no = chain_no)
-        }, error = function(e) {
-            cat("Worker: ERROR in run_scenarios_fixed:", e$message, "\n")
-            cat("Worker: Error call:", if(!is.null(e$call)) paste(deparse(e$call), collapse=" ") else "No call info", "\n")
-            stop(e)
-        })
+        result <- run_scenarios_fixed(j = model_idx, chain_no = chain_no)
         
         cat("Worker: run_scenarios_fixed completed successfully\n")
         cat("Worker: Result class:", class(result), "\n")
@@ -1816,39 +2065,6 @@ runAndSave_task <- function(task_idx) {
         
         # Save result immediately if successful
         if (result$status == "SUCCESS") {
-            # Create output directory early with HPC compatibility
-            possible_bases <- c(
-                here("data", "model_outputs"),
-                file.path(here(), "data", "model_outputs"),
-                file.path(Sys.getenv("HOME"), "data", "model_outputs"),
-                file.path(here(), "data", "model_outputs")  # Duplicate for consistency
-            )
-            
-            model_output_dir <- NULL
-            for (base_dir in possible_bases) {
-                if (!is.null(base_dir) && base_dir != "" && base_dir != "NULL") {
-                    test_dir <- file.path(base_dir, "logit_beta_driver_uncertainty", valid_models$model_name[model_idx])
-                    tryCatch({
-                        dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
-                        if (dir.exists(test_dir)) {
-                            model_output_dir <- test_dir
-                            cat("  Created output directory:", model_output_dir, "\n")
-                            break
-                        }
-                    }, error = function(e) {
-                        cat("  Failed to create directory with base:", base_dir, "-", e$message, "\n")
-                    })
-                }
-            }
-            
-            if (is.null(model_output_dir)) {
-                # Fallback: create using here() for consistency
-                fallback_output_dir <- here("data", "model_outputs", "logit_beta_driver_uncertainty", valid_models$model_name[model_idx])
-                dir.create(fallback_output_dir, showWarnings = FALSE, recursive = TRUE)
-                cat("  WARNING: Using fallback output directory:", fallback_output_dir, "\n")
-                model_output_dir <- fallback_output_dir
-            }
-            
             # Create model_id for consistent naming using helper function
             model_id <- create_model_id(
                 valid_models$model_name[model_idx], 
@@ -1857,10 +2073,6 @@ runAndSave_task <- function(task_idx) {
                 valid_models$max.date[model_idx],
                 grepl("Legacy with covariate", valid_models$scenario[model_idx])
             )
-            
-            # Save MCMC samples immediately
-            samples_file <- file.path(model_output_dir, 
-                                      paste0("samples_", model_id, "_chain", chain_no, ".rds"))
             
             # Create the complete chain structure with metadata
             # Use the metadata from the result if available, otherwise create it
@@ -1878,7 +2090,7 @@ runAndSave_task <- function(task_idx) {
                     model_name = valid_models$model_name[model_idx],
                     model_id = model_id,
                     use_legacy_covariate = grepl("Legacy with covariate", valid_models$scenario[model_idx]),
-                    has_driver_uncertainty = TRUE,  # Flag to identify driver uncertainty models
+                    has_driver_uncertainty = driver_uncertainty_mode,  # Flag to identify driver uncertainty mode
                     scenario = valid_models$scenario[model_idx],
                     min.date = valid_models$min.date[model_idx],
                     max.date = valid_models$max.date[model_idx],
@@ -1889,22 +2101,34 @@ runAndSave_task <- function(task_idx) {
                     completed_at = Sys.time(),
                     model_data = result$model_data,  # Include model_data from result
                     nimble_code = result$nimble_code,  # Include nimble_code if available
-                    model_structure = "stable_beta_regression_with_driver_uncertainty"  # Model structure identifier
+                    model_structure = if (driver_uncertainty_mode)
+                    "cloglog_beta_regression_with_driver_uncertainty"
+                  else
+                    "cloglog_beta_regression_fixed_drivers"  # Model structure identifier
                 )
             }
             
-            chain_output <- list(
+            # Optional safety net: rebuild mu from eta if needed
+            samples2_to_use <- if("samples2" %in% names(result)) result$samples2 else result$samples
+            # Note: We don't have access to constants here, so we'll skip the fix_mu_from_eta call
+            # The main fix is in the run_scenarios_fixed function
+            
+            # Use compatibility shim to standardize output structure
+            compat <- ensure_old_schema(
                 samples = result$samples,
-                samples2 = if("samples2" %in% names(result)) result$samples2 else result$samples,  # Plot-level estimates from monitors2 or fallback to parameter samples
-                metadata = metadata
+                samples2 = samples2_to_use,
+                meta = metadata,
+                model_output_root = model_output_dir,
+                model_name = valid_models$model_name[model_idx],
+                species = valid_models$species[model_idx],
+                model_id = model_id,
+                chain_no = chain_no
             )
             
-            saveRDS(chain_output, samples_file)
-            cat("SAVED: Chain", chain_no, "for model", model_idx, "to", samples_file, "\n")
+            # Save MCMC samples with standardized structure
+            saveRDS(compat$chain_output, compat$path)
+            cat("SAVED: Chain", chain_no, "for model", model_idx, "to", compat$path, "\n")
             
-            # Also save a simple status file to track progress
-            status_file <- paste0("chain_", model_idx, "_", chain_no, "_status.txt")
-            writeLines(paste("SUCCESS", Sys.time(), sep = "\t"), status_file)
         }
         
         cat("Worker: Model", model_idx, "Chain", chain_no, "completed at", format(Sys.time()), "\n")
@@ -1930,29 +2154,6 @@ runAndSave_task <- function(task_idx) {
             runtime = if(exists("start_time")) difftime(error_time, start_time, units="secs") else NA
         )
         
-        # Create detailed error file
-        task <- all_tasks[task_idx, ]
-        error_file <- paste0("chain_", task$model_idx, "_task_", task_idx, "_ERROR.txt")
-        
-        # Write comprehensive error report
-        error_report <- c(
-            paste("ERROR DETAILED REPORT -", format(error_time)),
-            paste("Task Index:", error_details$task_idx),
-            paste("Model Index:", error_details$model_idx),
-            paste("Chain Number:", error_details$chain_no),
-            paste("Error Message:", error_details$error_message),
-            paste("Error Call:", error_details$error_call),
-            paste("Error Class:", error_details$error_class),
-            paste("Runtime (seconds):", round(error_details$runtime, 2)),
-            paste("R Version:", error_details$system_info$r_version),
-            paste("Working Directory:", error_details$system_info$working_dir),
-            paste("Available Packages:", paste(error_details$system_info$available_packages, collapse=", ")),
-            "",
-            "FULL ERROR OBJECT:",
-            capture.output(str(e))
-        )
-        
-        writeLines(error_report, error_file)
         
         # Also log to console with detailed information
         cat("ERROR in Model", error_details$model_idx, "Chain", error_details$chain_no, ":\n")
@@ -1960,7 +2161,6 @@ runAndSave_task <- function(task_idx) {
         cat("  Call:", error_details$error_call, "\n")
         cat("  Class:", error_details$error_class, "\n")
         cat("  Runtime:", round(error_details$runtime, 2), "seconds\n")
-        cat("  Detailed error saved to:", error_file, "\n")
         
         # Return detailed error information
         return(list(
@@ -1970,42 +2170,65 @@ runAndSave_task <- function(task_idx) {
                 status = "ERROR", 
                 error = error_details$error_message,
                 error_details = error_details,
-                error_file = error_file
             )
         ))
     })
 }
 
-# Define the global model_output_dir variable
-model_output_dir <- here("data", "model_outputs", "logit_beta_driver_uncertainty")
 
 # Set start time for runtime calculation
 start_time <- Sys.time()
 
 # Create cluster for parallel execution - LOCAL TESTING with 4 cores
 cat("Creating cluster with", n_cores, "cores for", nrow(valid_models), "models ×", nchains, "chains\n")
-cat("LOCAL TESTING: 4 cores allocated for local testing\n")
+cat("LOCAL TESTING: 2 cores allocated for local testing\n")
+
+# Worker initialization function to set up worker environment
+worker_init <- function(project_root, driver_uncertainty_mode) {
+  ## — working directory / here() root —
+  setwd(project_root)
+  if (requireNamespace("here", quietly = TRUE)) {
+    ## anchor here() root properly for workers
+    here::i_am("analysis/model_analysis/worker_sentinel.txt")
+    assign("here", get("here", asNamespace("here")), envir = .GlobalEnv)
+  }
+
+  ## — logging shims if 60_logging.R wasn't sourced —
+  if (!exists("info"))  info  <- function(fmt, ...) cat(sprintf(paste0(fmt, "\n"), ...))
+  if (!exists("warn"))  warn  <- function(fmt, ...) cat(sprintf(paste0("WARNING: ", fmt, "\n"), ...))
+  if (!exists("error")) error <- function(fmt, ...) { msg <- sprintf(fmt, ...); cat("ERROR: ", msg, "\n"); }
+
+  ## if available, wire up your real logger (optional but nice)
+  try({
+    source(here::here("analysis/model_analysis/60_logging.R"))
+    log_setup(logfile = here::here("logs", sprintf("worker_%s.log", Sys.getpid())))
+  }, silent = TRUE)
+
+  ## — packages and nimble options (must run on workers too) —
+  suppressPackageStartupMessages({
+    library(nimble)
+    library(coda)
+    library(microbialForecast)
+    library(tidyverse)
+    library(here)
+  })
+  nimbleOptions(buildInterfacesForCompiledNimbleFunctions = FALSE)
+  nimbleOptions(optimize = TRUE)
+
+  ## prevent thread oversubscription on HPC
+  Sys.setenv(OMP_NUM_THREADS = "1", MKL_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1")
+
+  ## keep a copy of flags workers need
+  assign("driver_uncertainty_mode", driver_uncertainty_mode, envir = .GlobalEnv)
+
+  invisible(TRUE)
+}
 
 # Create cluster with explicit error handling
 tryCatch({
     cl <- makeCluster(n_cores, type = "PSOCK")
     cat("✓ Cluster created successfully with", length(cl), "workers\n")
     
-    # Test cluster functionality
-    cat("Testing cluster functionality...\n")
-    test_result <- tryCatch({
-        clusterEvalQ(cl, Sys.getpid())
-    }, error = function(e) {
-        cat("✗ Cluster test failed:", e$message, "\n")
-        return(NULL)
-    })
-    
-    if (!is.null(test_result)) {
-        cat("✓ Cluster test successful. Worker PIDs:", unlist(test_result), "\n")
-    } else {
-        cat("✗ Cluster test failed\n")
-        cl <- NULL
-    }
     
 }, error = function(e) {
     cat("✗ ERROR creating cluster:", e$message, "\n")
@@ -2013,107 +2236,92 @@ tryCatch({
     cl <- NULL
 })
 
-# Register parallel backend
+# Register parallel backend with explicit fallback
 cat("Registering parallel backend...\n")
-registerDoParallel(cl)
-cat("Parallel backend registered. Checking registration...\n")
+if (is.null(cl)) {
+    doParallel::registerDoSEQ()
+    cat("Cluster creation failed, using sequential backend\n")
+} else {
+    doParallel::registerDoParallel(cl)
+    cat("Parallel backend registered successfully\n")
+}
+cat("Backend registration complete. Checking registration...\n")
 cat("getDoParWorkers():", getDoParWorkers(), "\n")
 cat("getDoParName():", getDoParName(), "\n")
 
-# Export ALL necessary variables and functions to workers
-cat("Exporting all necessary variables to workers...\n")
-clusterExport(cl, c(
-    "runAndSave_task", 
-    "run_scenarios_fixed", 
-    "valid_models", 
-    "all_tasks", 
-    "model_output_dir",
-    "all_ranks",
-    "params",
-    "n_cores",
-    "nchains",
-    # Export helper functions
-    "load_required_packages",
-    "create_directories_safe",
-    "create_model_id",
-    "save_checkpoint_safe",
-    "create_progress_file",
-    "update_progress_file"
-))
-# Also export the here function explicitly
-clusterExport(cl, "here")
+# Only run parallel section if not in single-task mode
+if (!single_task_mode) {
+  # Export ALL necessary variables and functions to workers
+  cat("Exporting all necessary variables to workers...\n")
+must_export <- c(
+  # task plumbing
+  "runAndSave_task", "run_scenarios_fixed", "all_tasks", "valid_models",
+  "all_ranks", "model_output_dir", "nchains",
+
+  # config/flags/roots
+  "project_root", "driver_uncertainty_mode",
+
+  # helpers used inside run_scenarios_fixed
+  "create_nimble_model_with_uncertainty",
+  "sanitize_driver_uncertainty",
+  "assert_matrix_dims", "assert_vector_len",
+  "create_inits_with_uncertainty",
+  "check_continue",
+
+  # any other functions you call (from your script)
+  "load_required_packages", "create_directories_safe",
+  "create_model_id", "save_checkpoint_safe",
+  "create_progress_file", "update_progress_file"
+)
+
+if (!is.null(cl)) {
+  clusterExport(cl, must_export)
+  
+  # Initialize every worker once
+  ## RNG across workers (reproducible & independent)
+  parallel::clusterSetRNGStream(cl, iseed = 12345)
+  
+  ## Make workers look like master
+  clusterEvalQ(cl, {
+    ## We'll define a trivial shim; we'll replace it next line
+    TRUE
+  })
+  clusterCall(cl, worker_init, project_root = project_root,
+              driver_uncertainty_mode = driver_uncertainty_mode)
+  
+  ## (Optional) sanity checks
+  clusterEvalQ(cl, list(
+    wd = getwd(),
+    has_nimble = "nimble" %in% loadedNamespaces(),
+    has_info = exists("info"),
+    here_root = try(here::here(), silent = TRUE)
+  ))
+} else {
+  cat("No cluster available; running sequentially with foreach/doSEQ.\n")
+}
+
 # Run everything in parallel with incremental saving
 cat("Starting foreach loop with", nrow(all_tasks), "tasks\n")
-# Quick validation that workers can access functions and data
-test_export <- tryCatch({
-    clusterEvalQ(cl, exists("runAndSave_task"))
-}, error = function(e) {
-    cat("✗ ERROR testing function export:", e$message, "\n")
-    return(rep(FALSE, length(cl)))
-})
 
-test_data <- tryCatch({
-    clusterEvalQ(cl, exists("valid_models"))
-}, error = function(e) {
-    cat("✗ ERROR testing data export:", e$message, "\n")
-    return(rep(FALSE, length(cl)))
-})
-
-cat("✓ Function export check:", all(unlist(test_export)), "\n")
-cat("✓ Data export check:", all(unlist(test_data)), "\n")
-
-all_results_parallel = foreach(task_idx = 1:nrow(all_tasks), 
-                               .packages = c()) %dopar% {  # Packages loaded by load_required_packages() in worker
-                                   cat("DEBUG: Worker starting task", task_idx, "at", Sys.time(), "\n")
-                                   
-                                   # Load required packages in worker
-                                   load_required_packages()
-                                   
-                                   # Test if we can access the function
-                                   if (!exists("runAndSave_task")) {
-                                       cat("ERROR: runAndSave_task function not found in worker\n")
-                                       return(list(error = "Function not found"))
-                                   }
-                                   
-                                   # Test if we can access the data
-                                   if (!exists("valid_models")) {
-                                       cat("ERROR: valid_models data not found in worker\n")
-                                       return(list(error = "Data not found"))
-                                   }
-                                   
-                                   # Execute the function with error handling
-                                   result <- tryCatch({
-                                       runAndSave_task(task_idx)
-                                   }, error = function(e) {
-                                       cat("ERROR in runAndSave_task:", e$message, "\n")
-                                       return(list(error = e$message))
-                                   })
-                                   
-                                   cat("DEBUG: Worker completed task", task_idx, "at", Sys.time(), "\n")
-                                   
-                                   # Extract the actual status from the nested result structure
-                                   actual_status <- "UNKNOWN"
-                                   if ("result" %in% names(result) && "status" %in% names(result$result)) {
-                                       actual_status <- result$result$status
-                                   } else if ("status" %in% names(result)) {
-                                       actual_status <- result$status
-                                   }
-                                   
-                                   cat("DEBUG: Result status:", actual_status, "\n")
-                                   cat("DEBUG: Result structure:", paste(names(result), collapse=", "), "\n")
-                                   if ("result" %in% names(result)) {
-                                       cat("DEBUG: Nested result structure:", paste(names(result$result), collapse=", "), "\n")
-                                   }
-                                   
-                                   return(result)
+all_results_parallel = foreach(task_idx = 1:nrow(all_tasks),
+                                .packages = c("nimble","coda","tidyverse","here","microbialForecast"),
+                                .export   = character(0)) %dopar% {
+  ## if someone runs this block without worker_init, still be safe:
+  if (!exists("info")) info <- function(fmt, ...) cat(sprintf(paste0(fmt,"\n"), ...))
+  info("DEBUG: Worker %s starting task %d at %s", Sys.getpid(), task_idx, Sys.time())
+  runAndSave_task(task_idx)
                                }
 
 cat("Foreach loop completed. Results length:", length(all_results_parallel), "\n")
 cat("Parallel execution completed at:", format(Sys.time()), "\n")
 
 # Stop cluster
-stopCluster(cl)
+if (!is.null(cl)) stopCluster(cl)
 
+} # End of single_task_mode guard
+
+# Only show progress summary if not in single-task mode
+if (!single_task_mode) {
 # Show progress summary
 cat("\n=== PROGRESS SUMMARY ===\n")
 cat("Checking which chains have been completed...\n")
@@ -2152,7 +2360,6 @@ for (i in 1:length(all_results_parallel)) {
     }
 }
 
-cat("\nProgress Summary:\n")
 cat("  Completed chains:", completed_chains, "/", nrow(valid_models) * nchains, "\n")
 cat("  Failed chains:", error_chains, "/", nrow(valid_models) * nchains, "\n")
 cat("  Success rate:", round(completed_chains / (nrow(valid_models) * nchains) * 100, 1), "%\n")
@@ -2227,11 +2434,5 @@ for (model_idx in 1:nrow(valid_models)) {
     }
 }
 
-# Clean up status files
-for (chain_no in 1:nchains) {
-    status_file <- paste0("chain_", chain_no, "_status.txt")
-    if (file.exists(status_file)) {
-        unlink(status_file)
-    }
-}
+} # End of single_task_mode guard for progress summary
 

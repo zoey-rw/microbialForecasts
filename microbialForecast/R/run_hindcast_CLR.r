@@ -422,6 +422,16 @@ fcast_clr <- function(plotID,
            taxon_name = taxon_name,
            new_site = ifelse(is_new_site, T, F))
   colnames(ci)[1:5] <- c("lo","lo_25","med","hi_75","hi")
+  
+  # CRITICAL FIX: Ensure confidence interval columns are numeric, not lists
+  # This prevents the list column issue that causes plotting problems
+  ci$lo <- as.numeric(ci$lo)
+  ci$lo_25 <- as.numeric(ci$lo_25)
+  ci$med <- as.numeric(ci$med)
+  ci$hi_75 <- as.numeric(ci$hi_75)
+  ci$hi <- as.numeric(ci$hi)
+  ci$mean <- as.numeric(ci$mean)
+  ci$sd <- as.numeric(ci$sd)
 
   # Assign sequential date_num values and join with date_key
   ci$date_num <- as.numeric(1:NT)

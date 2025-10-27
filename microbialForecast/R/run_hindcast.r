@@ -2,75 +2,308 @@
 # HELPER FUNCTIONS
 # =============================================================================
 
-#' Vectorized Monte Carlo simulation for improved performance
-vectorized_forecast <- function(params, covar, initial_conditions, timepoints, Nmc, use_cloglog = FALSE) {
-  n_timepoints <- length(timepoints)
-  all_predictions <- matrix(NA, nrow = Nmc, ncol = n_timepoints)
+#' Comprehensive validation function for forecasting inputs
+#' @param param_samples Parameter samples matrix
+#' @param model.inputs Model inputs list
+#' @param plotID Plot identifier
+#' @param model_name Model type name
+#' @param Nmc Number of Monte Carlo samples
+#' @return List of validation results
+validate_forecast_inputs <- function(param_samples, model.inputs, plotID, model_name, Nmc) {
+  validation_results <- list(
+    param_samples_valid = FALSE,
+    model_inputs_valid = FALSE,
+    plot_data_valid = FALSE,
+    model_type_valid = FALSE,
+    dimensions_valid = FALSE,
+    errors = character(0),
+    warnings = character(0)
+  )
   
-  # Set initial conditions
-  all_predictions[, 1] <- initial_conditions
+  # Validate parameter samples
+  if (is.null(param_samples) || !is.matrix(param_samples) || nrow(param_samples) == 0) {
+    validation_results$errors <- c(validation_results$errors, "Parameter samples are invalid or empty")
+  } else {
+    validation_results$param_samples_valid <- TRUE
+  }
   
-  # Pre-allocate vectors for efficiency
-  linear_predictor <- numeric(Nmc)
-  log_x_prev <- numeric(Nmc)
-  log_Ex_mean <- numeric(Nmc)
-  shape1 <- numeric(Nmc)
-  shape2 <- numeric(Nmc)
+  # Validate model inputs
+  required_inputs <- c("N.date", "truth.plot.long")
+  missing_inputs <- setdiff(required_inputs, names(model.inputs))
+  if (length(missing_inputs) > 0) {
+    validation_results$errors <- c(validation_results$errors, 
+                                  paste("Missing required model inputs:", paste(missing_inputs, collapse=", ")))
+  } else {
+    validation_results$model_inputs_valid <- TRUE
+  }
   
-  # Vectorized computation across all timepoints
-  for (t in 2:n_timepoints) {
-    time_idx <- timepoints[t]
-    
-    if (time_idx <= dim(covar)[3]) {
-      # Handle both 2D (old) and 3D (new) covariate arrays
-      if (length(dim(covar)) == 3) {
-        # New 3D array: [Nmc, N.beta, NT] - each MC sample has its own covariate realization
-        Z <- covar[, , time_idx]  # Shape: [Nmc, N.beta]
-      } else {
-        # Old 2D array: [N.beta, NT] - same covariate realization for all MC samples
-        Z <- matrix(covar[, time_idx], nrow = Nmc, ncol = nrow(covar), byrow = TRUE)
+  # Validate plot data
+  if (is.null(plotID) || !is.character(plotID) || nchar(plotID) == 0) {
+    validation_results$errors <- c(validation_results$errors, "PlotID is invalid")
+  } else {
+    validation_results$plot_data_valid <- TRUE
+  }
+  
+  # Validate model type
+  valid_model_types <- c("cycl_only", "env_cov", "env_cycl")
+  if (!model_name %in% valid_model_types) {
+    validation_results$errors <- c(validation_results$errors, 
+                                  paste("Invalid model type:", model_name, ". Expected one of:", paste(valid_model_types, collapse=", ")))
+  } else {
+    validation_results$model_type_valid <- TRUE
+  }
+  
+  # Validate dimensions
+  if (Nmc <= 0 || !is.finite(Nmc)) {
+    validation_results$errors <- c(validation_results$errors, "Nmc must be a positive finite number")
+  } else {
+    validation_results$dimensions_valid <- TRUE
+  }
+  
+  # Check for potential issues
+  if (validation_results$param_samples_valid && nrow(param_samples) < Nmc) {
+    validation_results$warnings <- c(validation_results$warnings, 
+                                    paste("Parameter samples (", nrow(param_samples), ") < Nmc (", Nmc, "). Will sample with replacement."))
+  }
+  
+  return(validation_results)
+}
+
+#' Comprehensive data validation function for hindcast output
+#' @param hindcast_data Data frame with hindcast predictions
+#' @param plotID Plot identifier
+#' @param model_id Model identifier
+#' @return List of validation results
+validate_hindcast_output <- function(hindcast_data, plotID, model_id) {
+  validation_results <- list(
+    data_integrity_valid = FALSE,
+    column_consistency_valid = FALSE,
+    value_ranges_valid = FALSE,
+    date_consistency_valid = FALSE,
+    errors = character(0),
+    warnings = character(0)
+  )
+  
+  # Check if data is a data frame
+  if (!is.data.frame(hindcast_data)) {
+    validation_results$errors <- c(validation_results$errors, "Hindcast data is not a data frame")
+    return(validation_results)
+  }
+  
+  # Check for empty data
+  if (nrow(hindcast_data) == 0) {
+    validation_results$errors <- c(validation_results$errors, "Hindcast data is empty")
+    return(validation_results)
+  }
+  
+  # Check essential columns
+  essential_cols <- c("plotID", "siteID", "dateID", "species", "med", "lo", "hi")
+  missing_cols <- setdiff(essential_cols, colnames(hindcast_data))
+  if (length(missing_cols) > 0) {
+    validation_results$errors <- c(validation_results$errors, 
+                                  paste("Missing essential columns:", paste(missing_cols, collapse=", ")))
+  } else {
+    validation_results$column_consistency_valid <- TRUE
+  }
+  
+  # Check for duplicate columns (should not exist after cleanup)
+  duplicate_cols <- grep("\\.(x|y)(\\.|$)", colnames(hindcast_data), value = TRUE)
+  if (length(duplicate_cols) > 0) {
+    validation_results$errors <- c(validation_results$errors, 
+                                  paste("Found duplicate columns:", paste(duplicate_cols, collapse=", ")))
+  }
+  
+  # Validate value ranges for prediction columns
+  prediction_cols <- c("med", "lo", "hi", "lo_25", "hi_75", "mean", "sd")
+  for (col in prediction_cols) {
+    if (col %in% colnames(hindcast_data)) {
+      values <- hindcast_data[[col]]
+      if (any(is.na(values)) && !all(is.na(values))) {
+        validation_results$warnings <- c(validation_results$warnings, 
+                                        paste("Column", col, "has some NA values"))
       }
-      
-      # OPTIMIZATION 1: Vectorized linear predictor calculation
-      # Handle dimension compatibility gracefully
-      n_beta_use <- min(ncol(Z), ncol(params$betas))
-      linear_predictor[] <- rowSums(
-        Z[, 1:n_beta_use, drop = FALSE] * params$betas[, 1:n_beta_use, drop = FALSE]
-      )
-      
-      # OPTIMIZATION 2: Vectorized AR(1) process
-      log_x_prev[] <- log(pmax(0.01, pmin(0.99, all_predictions[, t-1])))
-      log_Ex_mean[] <- params$rho * log_x_prev + linear_predictor + params$site_effects + params$intercept
-      
-      # OPTIMIZATION 3: Vectorized beta distribution sampling
-      # Apply appropriate link function based on model type
-      if (use_cloglog) {
-        # Cloglog inverse: 1 - exp(-exp(eta)) for driver uncertainty models
-        mu <- 1 - exp(-exp(log_Ex_mean))
-      } else {
-        # Logit inverse: 1 / (1 + exp(-eta)) for regular models
-        mu <- 1 / (1 + exp(-log_Ex_mean))
+      if (any(is.infinite(values), na.rm = TRUE)) {
+        validation_results$errors <- c(validation_results$errors, 
+                                      paste("Column", col, "has infinite values"))
       }
-      shape1[] <- mu * params$precision
-      shape2[] <- (1 - mu) * params$precision
-      
-      # Ensure positive parameters
-      shape1[] <- pmax(shape1, 1e-6)
-      shape2[] <- pmax(shape2, 1e-6)
-      
-      # Sample from beta distribution with probability clamping
-      all_predictions[, t] <- pmin(0.999, pmax(0.001, rbeta(Nmc, shape1, shape2)))
+      if (any(values < 0 | values > 1, na.rm = TRUE)) {
+        validation_results$warnings <- c(validation_results$warnings, 
+                                        paste("Column", col, "has values outside [0,1] range"))
+      }
     }
   }
   
-  return(all_predictions)
+  # Check date consistency
+  if ("dateID" %in% colnames(hindcast_data)) {
+    dateIDs <- hindcast_data$dateID
+    if (any(is.na(dateIDs))) {
+      validation_results$warnings <- c(validation_results$warnings, "Some dateID values are NA")
+    }
+    if (any(!is.numeric(dateIDs), na.rm = TRUE)) {
+      validation_results$errors <- c(validation_results$errors, "dateID values are not numeric")
+    }
+  }
+  
+  # Check plotID consistency
+  if ("plotID" %in% colnames(hindcast_data)) {
+    unique_plots <- unique(hindcast_data$plotID)
+    if (length(unique_plots) > 1) {
+      validation_results$warnings <- c(validation_results$warnings, 
+                                      paste("Multiple plotIDs found:", paste(unique_plots, collapse=", ")))
+    }
+    if (!all(hindcast_data$plotID == plotID, na.rm = TRUE)) {
+      validation_results$errors <- c(validation_results$errors, 
+                                    "plotID in data doesn't match function parameter")
+    }
+  }
+  
+  # Check species consistency
+  if ("species" %in% colnames(hindcast_data)) {
+    unique_species <- unique(hindcast_data$species)
+    unique_species <- unique_species[!is.na(unique_species) & unique_species != ""]
+    if (length(unique_species) > 1) {
+      validation_results$warnings <- c(validation_results$warnings, 
+                                      paste("Multiple species found:", paste(unique_species, collapse=", ")))
+    }
+  }
+  
+  # Overall validation
+  if (length(validation_results$errors) == 0) {
+    validation_results$data_integrity_valid <- TRUE
+  }
+  
+  if (length(validation_results$warnings) == 0 && length(validation_results$errors) == 0) {
+    validation_results$value_ranges_valid <- TRUE
+    validation_results$date_consistency_valid <- TRUE
+  }
+  
+  return(validation_results)
+}
+
+#' Vectorized Monte Carlo simulation (robust, supports cloglog + legacy)
+vectorized_forecast <- function(params, covar, initial_conditions, timepoints, Nmc,
+                                use_cloglog = FALSE, legacy = NULL) {
+  n_timepoints <- length(timepoints)
+  all_predictions <- matrix(NA_real_, nrow = Nmc, ncol = n_timepoints)
+  
+  # Set ICs
+  all_predictions[, 1] <- pmin(0.999, pmax(0.001, initial_conditions))
+  
+  # Pre-allocate
+  linear_predictor <- numeric(Nmc)
+  log_x_prev <- numeric(Nmc)
+  eta <- numeric(Nmc)
+  shape1 <- numeric(Nmc)
+  shape2 <- numeric(Nmc)
+  
+  for (t in 2:n_timepoints) {
+    time_idx <- timepoints[t]
+    
+    # CRITICAL FIX: Add comprehensive bounds checking and error handling
+    if (length(dim(covar)) != 3L) {
+      warning("Covariate array is not 3D as expected. Dimensions: ", paste(dim(covar), collapse="x"))
+      next
+    }
+    
+    if (time_idx > dim(covar)[3] || time_idx < 1) {
+      warning("Time index ", time_idx, " is out of bounds for covariate array (max: ", dim(covar)[3], ")")
+      next
+    }
+    
+    # Z: [Nmc, Nbeta] at this time
+    Z <- covar[, , time_idx, drop = FALSE]
+    
+    # CRITICAL FIX: Ensure Z is 2D matrix with proper dimension handling
+    if (length(dim(Z)) == 3) {
+      Z <- Z[, , 1, drop = FALSE]
+    }
+    
+    # Additional safety check for 3D arrays
+    if (length(dim(Z)) == 3) {
+      Z <- matrix(Z, nrow = dim(Z)[1], ncol = dim(Z)[2])
+    }
+    
+    # CRITICAL FIX: Validate dimensions before proceeding
+    if (ncol(Z) == 0 || nrow(Z) == 0) {
+      warning("Empty covariate matrix at time ", time_idx)
+      next
+    }
+    
+    # Match dimensions with params$betas
+    n_beta_use <- min(ncol(Z), ncol(params$betas))
+    if (n_beta_use == 0) {
+      warning("No matching beta parameters for covariates at time ", time_idx)
+      next
+    }
+    
+    Z <- Z[, seq_len(n_beta_use), drop = FALSE]
+    betas_use <- params$betas[, seq_len(n_beta_use), drop = FALSE]
+
+    # CRITICAL FIX: Enhanced validation for finite values
+    if (any(!is.finite(Z))) {
+      warning("Non-finite values detected in covariates at time ", time_idx, ". Replacing with 0.")
+      Z[!is.finite(Z)] <- 0
+    }
+
+      # rowwise dot-product
+      linear_predictor[] <- rowSums(Z * betas_use)
+
+      # AR(1) on log scale
+      prev_values <- all_predictions[, t - 1]
+      if (any(!is.finite(prev_values))) {
+        # If previous values are not finite, use initial conditions
+        prev_values[!is.finite(prev_values)] <- initial_conditions[!is.finite(prev_values)]
+      }
+      log_x_prev[] <- log(pmin(0.99, pmax(0.01, prev_values)))
+
+      # legacy term for this time index (scalar)
+      legacy_t <- if (!is.null(legacy) && length(legacy) >= time_idx && is.finite(legacy[time_idx]))
+                    legacy[time_idx] else 0
+
+      # full η (with site + intercept + legacy)
+      eta[] <- params$rho * log_x_prev + linear_predictor +
+               params$site_effects + params$intercept +
+               params$legacy_effect * legacy_t
+      
+      # Fix non-finite eta values
+      if (any(!is.finite(eta))) {
+        eta[!is.finite(eta)] <- 0
+      }
+
+      # cap η to avoid exp overflow
+      eta_cap <- pmin(eta, 700)
+
+      # inverse link
+      mu <- if (use_cloglog) {
+        1 - exp(-exp(eta_cap))              # cloglog^-1
+      } else {
+        pmin(0.999, pmax(0.001, exp(eta_cap)))
+      }
+      
+      # Fix non-finite mu values
+      if (any(!is.finite(mu))) {
+        mu[!is.finite(mu)] <- 0.5
+      }
+      
+
+      # Beta shapes (guard positivity)
+      shape1[] <- pmax(mu * params$precision, 1e-6)
+      shape2[] <- pmax((1 - mu) * params$precision, 1e-6)
+
+      # draw
+      all_predictions[, t] <- pmin(0.999, pmax(0.001, rbeta(Nmc, shape1, shape2)))
+    }
+  
+  all_predictions
 }
 
 #' Pre-extract and cache parameters with proper dimension handling
 extract_all_parameters <- function(param_samples, row_samples, model_name) {
+  cat("DEBUG: extract_all_parameters started\n")
   # rho
   rho <- param_samples[row_samples, grep("^rho(\\[|$)", colnames(param_samples))]
   if (is.matrix(rho)) rho <- as.numeric(rho)
+  cat("DEBUG: rho extracted\n")
 
   # betas (preserve matrix shape)
   beta_cols <- grep("^beta\\[", colnames(param_samples))
@@ -420,11 +653,21 @@ create_covariate_samples_fixed <- function(model.inputs, plotID = NULL, siteID,
   N.beta <- 8
   covariate_names <- c("temp", "mois", "pH", "pC", "relEM", "LAI", "sin_mo", "cos_mo")
   
-  # CRITICAL FIX: Create 3D array for covariate samples instead of overwriting
+  # CRITICAL FIX: Create 3D array for covariate samples with comprehensive validation
   # Each Monte Carlo sample gets its own covariate realization
   if (length(covariate_samples) > 0) {
     # Create 3D array: [Nmc, N.beta, NT]
     covariate_samples_array <- array(NA, dim = c(Nmc, N.beta, NT))
+    
+    # CRITICAL FIX: Validate input dimensions before processing
+    if (Nmc <= 0 || N.beta <= 0 || NT <= 0) {
+      stop("Invalid dimensions: Nmc=", Nmc, ", N.beta=", N.beta, ", NT=", NT)
+    }
+    
+    # Debug: Check what covariates are available
+    cat("DEBUG: Available covariates:", names(covariate_samples), "\n")
+    cat("DEBUG: Expected covariates:", covariate_names, "\n")
+    cat("DEBUG: Array dimensions: [", Nmc, ", ", N.beta, ", ", NT, "]\n")
     
     for (i in 1:Nmc) {
       for (j in 1:N.beta) {
@@ -432,7 +675,12 @@ create_covariate_samples_fixed <- function(model.inputs, plotID = NULL, siteID,
         if (cov_name %in% names(covariate_samples)) {
           # Get mean and sd for this covariate
           mean_val <- covariate_samples[[cov_name]]
-          sd_val <- covariate_samples[[paste0(cov_name, "_sd")]]
+          sd_name <- paste0(cov_name, "_sd")
+          sd_val <- if (sd_name %in% names(covariate_samples)) {
+            covariate_samples[[sd_name]]
+          } else {
+            rep(0.1, length(mean_val))  # Default SD if not available
+          }
           
           # Ensure we're working with vectors, not lists
           if (is.list(mean_val)) {
@@ -442,29 +690,57 @@ create_covariate_samples_fixed <- function(model.inputs, plotID = NULL, siteID,
             sd_val <- unlist(sd_val)
           }
           
-          if (is.null(sd_val)) {
-            sd_val <- rep(0.1, length(mean_val))
+          # Ensure sd_val has the same length as mean_val
+          if (length(sd_val) != length(mean_val)) {
+            sd_val <- rep(sd_val[1], length(mean_val))
           }
           
-          # Sample from normal distribution - handle NA values
+          # CRITICAL FIX: Enhanced validation and error handling for covariate sampling
           if (any(is.na(mean_val)) || any(is.na(sd_val))) {
             # Use default values for NA entries
             mean_val[is.na(mean_val)] <- 0
             sd_val[is.na(sd_val)] <- 0.1
+            warning("NA values detected in ", cov_name, " - replaced with defaults")
           }
           
           # Debug: check for invalid values before rnorm
           if (any(is.infinite(mean_val)) || any(is.infinite(sd_val))) {
             mean_val[is.infinite(mean_val)] <- 0
             sd_val[is.infinite(sd_val)] <- 0.1
+            warning("Infinite values detected in ", cov_name, " - replaced with defaults")
           }
           
           if (any(sd_val <= 0)) {
             sd_val[sd_val <= 0] <- 0.1
+            warning("Non-positive standard deviation detected in ", cov_name, " - replaced with 0.1")
+          }
+          
+          # CRITICAL FIX: Validate array dimensions before assignment
+          if (length(mean_val) != NT || length(sd_val) != NT) {
+            warning("Length mismatch for ", cov_name, ": mean_val=", length(mean_val), ", sd_val=", length(sd_val), ", NT=", NT)
+            # Pad or truncate to match NT
+            if (length(mean_val) < NT) {
+              mean_val <- c(mean_val, rep(mean_val[length(mean_val)], NT - length(mean_val)))
+            } else {
+              mean_val <- mean_val[1:NT]
+            }
+            if (length(sd_val) < NT) {
+              sd_val <- c(sd_val, rep(sd_val[length(sd_val)], NT - length(sd_val)))
+            } else {
+              sd_val <- sd_val[1:NT]
+            }
           }
           
           # Store samples in the 3D array for this specific MC sample
-          covariate_samples_array[i, j, ] <- rnorm(NT, mean_val, sd_val)
+          tryCatch({
+            covariate_samples_array[i, j, ] <- rnorm(NT, mean_val, sd_val)
+          }, error = function(e) {
+            warning("Error sampling ", cov_name, " for MC sample ", i, ": ", e$message)
+            covariate_samples_array[i, j, ] <<- rep(0, NT)
+          })
+        } else {
+          # If covariate not available, fill with zeros
+          covariate_samples_array[i, j, ] <- rep(0, NT)
         }
       }
     }
@@ -498,10 +774,28 @@ fcast_logit_beta <- function(plotID,
 													metadata = NULL,
 													...) {
 
+  cat("DEBUG: fcast_logit_beta function started\n")
+  
+  # Extract samples2 if the combined file object was passed
+  if (is.list(param_samples) && "samples2" %in% names(param_samples)) {
+    samples2_from_file <- param_samples$samples2
+    param_samples_actual <- param_samples$samples
+  } else {
+    samples2_from_file <- NULL
+    param_samples_actual <- param_samples
+  }
+  
   # Convert param_samples if needed
-	if (inherits(param_samples, "mcmc.list")) {
-		param_samples <- as.matrix(param_samples)
+	if (inherits(param_samples_actual, "mcmc.list")) {
+		# Convert each chain to matrix and combine
+		param_matrices <- lapply(param_samples_actual, as.matrix)
+		param_samples_actual <- do.call(rbind, param_matrices)
 	}
+	
+	# Update param_samples variable to use the actual samples
+	param_samples <- param_samples_actual
+	
+	cat("DEBUG: param_samples converted successfully\n")
 
 	siteID <- substr(plotID, 1, 4)
 
@@ -521,13 +815,28 @@ fcast_logit_beta <- function(plotID,
 		}
 	truth_data <- as.data.frame(truth_data)
 	
-  # Extract taxon name
+  # Extract taxon name with enhanced validation
   taxon_name <- if (!is.null(metadata) && is.list(metadata) && "species" %in% names(metadata)) {
     metadata$species
   } else if (length(unique(truth_data$species)) > 0) {
     unique(truth_data$species)[1]
 	} else {
     "unknown_taxon"
+  }
+  
+  # CRITICAL FIX: Validate taxon name consistency
+  # Check if taxon_name matches what's in truth_data to prevent mismatched information
+  if (nrow(truth_data) > 0) {
+    truth_species <- unique(truth_data$species)
+    truth_species <- truth_species[!is.na(truth_species) & truth_species != ""]
+    
+    if (length(truth_species) > 0 && !taxon_name %in% truth_species) {
+      warning("Taxon name mismatch detected: function parameter '", taxon_name, 
+              "' does not match truth_data species: ", paste(truth_species, collapse=", "))
+      # Use the most common species from truth_data as the authoritative taxon name
+      taxon_name <- names(sort(table(truth_data$species), decreasing = TRUE))[1]
+      cat("DEBUG: Corrected taxon_name to:", taxon_name, "\n")
+    }
   }
   
   # CRITICAL FIX: Use the rank.name parameter directly instead of loading data
@@ -546,15 +855,20 @@ fcast_logit_beta <- function(plotID,
   }
   
   # Sample parameters
+  cat("DEBUG: About to sample parameters...\n")
   Nmc_large <- min(3000, nrow(param_samples))
+  cat("DEBUG: Nmc_large =", Nmc_large, "\n")
   row_samples <- if (Nmc > Nmc_large) {
     sample.int(Nmc_large, Nmc, replace = TRUE)
 	} else {
     sample.int(Nmc_large, Nmc, replace = FALSE)
 	}
+  cat("DEBUG: row_samples created, length =", length(row_samples), "\n")
 
   # OPTIMIZATION 1: Pre-extract all parameters
+  cat("DEBUG: About to call extract_all_parameters...\n")
   params <- extract_all_parameters(param_samples, row_samples, model_name)
+  cat("DEBUG: extract_all_parameters completed successfully\n")
   
   # Handle site effects for new vs observed sites
 	if (is_new_site) {
@@ -587,8 +901,10 @@ fcast_logit_beta <- function(plotID,
   }
   
   # OPTIMIZATION 2: Get covariates directly (bypass cache for parallel compatibility)
+  cat("DEBUG: About to call create_covariate_samples_fixed...\n")
   covar <- create_covariate_samples_fixed(model.inputs, plotID = plotID, siteID = siteID,
                                          Nmc_large, Nmc, model_name)
+  cat("DEBUG: create_covariate_samples_fixed completed successfully\n")
   
   # Select covariates based on model type
 	if (model_name == "cycl_only") {
@@ -599,16 +915,30 @@ fcast_logit_beta <- function(plotID,
     covar <- covar[, 1:8, ]   # all 8
   }
   
-  # Assert shape before simulation
-  stopifnot(length(dim(covar)) == 3L, dim(covar)[2] %in% c(2,6,8))
+  # CRITICAL FIX: Enhanced validation with detailed error messages
+  if (length(dim(covar)) != 3L) {
+    stop("Covariate array must be 3D. Got dimensions: ", paste(dim(covar), collapse="x"))
+  }
+  if (dim(covar)[1] != Nmc) {
+    stop("Covariate array first dimension (", dim(covar)[1], ") must match Nmc (", Nmc, ")")
+  }
+  if (dim(covar)[3] != model.inputs$N.date) {
+    stop("Covariate array third dimension (", dim(covar)[3], ") must match model.inputs$N.date (", model.inputs$N.date, ")")
+  }
+  
+  # Additional validation for parameter dimensions
+  if (ncol(params$betas) != dim(covar)[2]) {
+    warning("Beta parameter count (", ncol(params$betas), ") doesn't match covariate count (", dim(covar)[2], ")")
+  }
+  
+  cat("DEBUG: Covariate array validation passed. Dimensions: [", dim(covar)[1], ", ", dim(covar)[2], ", ", dim(covar)[3], "]\n")
   
   # Create date key - use trained time map if provided, otherwise fallback
   if (!is.null(metadata) && is.list(metadata) && !is.null(metadata$trained_time_map)) {
     date_key <- metadata$trained_time_map %>%
       dplyr::transmute(
         date_num = trained_date_num,
-        dateID,
-        dates = as.Date(paste0(dateID, "01"), "%Y%m%d")
+        dateID = as.numeric(as.character(dateID))  # Ensure numeric type
       )
   } else {
     date_sequence <- seq.Date(from = as.Date("2013-06-01"), by = "month", 
@@ -657,11 +987,29 @@ fcast_logit_beta <- function(plotID,
       # Falls back to defaults already set
     })
   } else {
-    # For observed sites: EXTRACT FROM PLOT_MU IN RECONSTRUCTED SAMPLES
+    # For observed sites: EXTRACT FROM PLOT_MU SAMPLES
     tryCatch({
-      if (!is.null(plot_summary) && is.list(plot_summary) && !is.null(plot_summary$plot_mu)) {
-        # NEW: Extract from plot_mu matrix in reconstructed samples
-        plot_mu_matrix <- plot_summary$plot_mu
+      # First try to get samples2 (raw plot estimates) if available
+      samples2_matrix <- NULL
+      if (!is.null(samples2_from_file)) {
+        # samples2 was extracted from combined file
+        samples2_raw <- samples2_from_file
+        if (inherits(samples2_raw, "mcmc.list")) {
+          samples2_matrix <- as.matrix(do.call(rbind, samples2_raw))
+        } else if (is.matrix(samples2_raw)) {
+          samples2_matrix <- samples2_raw
+        }
+      }
+      
+      # Check if samples2 was passed separately or in plot_summary
+      if (is.null(samples2_matrix) && !is.null(plot_summary)) {
+        if (is.list(plot_summary) && "plot_mu" %in% names(plot_summary)) {
+          samples2_matrix <- plot_summary$plot_mu
+        }
+      }
+      
+      if (!is.null(samples2_matrix) && is.matrix(samples2_matrix)) {
+        # Extract from samples2 matrix
         
         # Get plot index for this plotID
         plot_indices <- unique(truth.plot.long$plot_num[truth.plot.long$plotID == plotID])
@@ -672,12 +1020,12 @@ fcast_logit_beta <- function(plotID,
           if (!is.null(metadata) && is.list(metadata) && "model_data" %in% names(metadata)) {
             calibration_timepoints <- unique(metadata$model_data$truth.plot.long$timepoint)
           } else {
-            calibration_timepoints <- 1:ncol(plot_mu_matrix)
+            calibration_timepoints <- 1:ncol(samples2_matrix)
           }
           
           # Extract plot_mu values for this plot during calibration period
-          valid_timepoints <- calibration_timepoints[calibration_timepoints <= ncol(plot_mu_matrix)]
-          plot_mu_values <- plot_mu_matrix[plot_idx, valid_timepoints]
+          valid_timepoints <- calibration_timepoints[calibration_timepoints <= ncol(samples2_matrix)]
+          plot_mu_values <- samples2_matrix[plot_idx, valid_timepoints]
           
           # Find last non-NA value
           last_valid_idx <- which(!is.na(plot_mu_values))
@@ -812,6 +1160,28 @@ fcast_logit_beta <- function(plotID,
     }
   }
   
+  
+  # Build legacy vector (length NT) from model inputs/metadata
+  NT <- model.inputs$N.date
+  legacy_vec <- NULL
+
+  if (!is.null(model.inputs$legacy)) {
+    # preferred: plot x time matrix, use the row for this plot if available
+    if (!is.null(plotID) && plotID %in% rownames(model.inputs$legacy)) {
+      legacy_vec <- as.numeric(model.inputs$legacy[plotID, seq_len(NT)])
+    } else {
+      # fallback: site-level or overall mean across plots
+      legacy_vec <- as.numeric(colMeans(model.inputs$legacy[, seq_len(NT), drop = FALSE], na.rm = TRUE))
+    }
+  } else if (!is.null(metadata) && is.list(metadata) && "legacy_by_time" %in% names(metadata)) {
+    legacy_vec <- as.numeric(metadata$legacy_by_time)[seq_len(NT)]
+  } else {
+    # last-resort heuristic: first 60% legacy = 1, then 0
+    legacy_vec <- as.numeric(seq_len(NT) <= floor(0.6 * NT))
+  }
+
+  legacy_vec[!is.finite(legacy_vec)] <- 0
+  
   # OPTIMIZATION 3: Vectorized Monte Carlo simulation
   all_predictions <- vectorized_forecast(
 		params = params,
@@ -819,28 +1189,95 @@ fcast_logit_beta <- function(plotID,
 		initial_conditions = ic,
 		timepoints = valid_timepoints,
 		Nmc = Nmc,
-		use_cloglog = use_cloglog
+		use_cloglog = use_cloglog,
+		legacy = legacy_vec
 	)
 
 	# Create output dataframe
-  ci <- as.data.frame(t(apply(all_predictions, 2, quantile, 
-                              c(0.025, 0.25, 0.5, 0.75, 0.975), na.rm = TRUE))) %>%
-    mutate(
-      mean = apply(all_predictions, 2, mean, na.rm = TRUE),
-      sd = apply(all_predictions, 2, sd, na.rm = TRUE),
-												plotID = plotID,
-												siteID = siteID,
-												species = taxon_name,
-      new_site = is_new_site
+  # Check if we have any valid predictions
+  if (ncol(all_predictions) == 0 || nrow(all_predictions) == 0) {
+    warning("No valid predictions generated for plotID ", plotID, " - returning empty data frame")
+    ci <- data.frame(
+      lo = numeric(0), lo_25 = numeric(0), med = numeric(0), hi_75 = numeric(0), hi = numeric(0),
+      mean = numeric(0), sd = numeric(0), plotID = character(0), siteID = character(0), 
+      species = character(0), new_site = logical(0)
     )
+  } else {
+    ci <- as.data.frame(t(apply(all_predictions, 2, quantile, 
+                                c(0.025, 0.25, 0.5, 0.75, 0.975), na.rm = TRUE))) %>%
+      mutate(
+        mean = apply(all_predictions, 2, mean, na.rm = TRUE),
+        sd = apply(all_predictions, 2, sd, na.rm = TRUE),
+        plotID = plotID,
+        siteID = siteID,
+        species = taxon_name,
+        new_site = is_new_site
+      )
+  }
   
-  colnames(ci)[1:5] <- c("lo", "lo_25", "med", "hi_75", "hi")
+  # Only proceed with column assignments if we have data
+  if (nrow(ci) > 0) {
+    colnames(ci)[1:5] <- c("lo", "lo_25", "med", "hi_75", "hi")
+    
+    # CRITICAL FIX: Ensure confidence interval columns are numeric, not lists
+    # This prevents the list column issue that causes plotting problems
+    ci$lo <- as.numeric(ci$lo)
+    ci$lo_25 <- as.numeric(ci$lo_25)
+    ci$med <- as.numeric(ci$med)
+    ci$hi_75 <- as.numeric(ci$hi_75)
+    ci$hi <- as.numeric(ci$hi)
+    ci$mean <- as.numeric(ci$mean)
+    ci$sd <- as.numeric(ci$sd)
+  }
+  
+  # FIX: Replace calibration period with fitted posterior instead of re-simulation
+  # Use samples2 matrix if available, otherwise fall back to plot_summary
+  plot_mu_samples <- NULL
+  if (!is.null(samples2_matrix)) {
+    plot_mu_samples <- samples2_matrix
+  } else if (!is.null(plot_summary) && is.list(plot_summary) && !is.null(plot_summary$plot_mu)) {
+    plot_mu_samples <- plot_summary$plot_mu
+  }
+  
+  if (!is.null(plot_mu_samples) && nrow(ci) > 0) {
+    # Determine calibration boundary
+    cal_end <- if (!is.null(metadata) && "cal_end_dateID" %in% names(metadata)) {
+      as.numeric(metadata$cal_end_dateID)
+    } else {
+      201801  # legacy fallback
+    }
+    
+    # Find which timepoints are in calibration period
+    cal_timepoints <- valid_timepoints[valid_timepoints <= which(date_key$dateID == cal_end)]
+    
+    if (length(cal_timepoints) > 0 && ncol(plot_mu_samples) >= max(cal_timepoints)) {
+      # Extract fitted posterior for calibration period
+      cal_mu_samples <- plot_mu_samples[, cal_timepoints, drop = FALSE]
+      
+      # Calculate quantiles from fitted posterior
+      cal_quantiles <- t(apply(cal_mu_samples, 2, quantile, 
+                              c(0.025, 0.25, 0.5, 0.75, 0.975), na.rm = TRUE))
+      cal_mean <- apply(cal_mu_samples, 2, mean, na.rm = TRUE)
+      cal_sd <- apply(cal_mu_samples, 2, sd, na.rm = TRUE)
+      
+      # Replace calibration rows with fitted posterior
+      cal_rows <- which(valid_timepoints %in% cal_timepoints)
+      if (length(cal_rows) > 0) {
+        ci[cal_rows, 1:5] <- cal_quantiles
+        ci[cal_rows, "mean"] <- cal_mean
+        ci[cal_rows, "sd"] <- cal_sd
+      }
+    }
+  }
   
   # Add date information
   ci$date_num <- valid_timepoints
   
   ci <- left_join(ci, date_key, by = "date_num") %>%
-    mutate(dates = as.Date(paste0(dateID, "01"), format = "%Y%m%d"))
+    mutate(
+      dates = as.Date(paste0(dateID, "01"), format = "%Y%m%d"),
+      dateID = as.numeric(as.character(dateID))  # Ensure consistent numeric type
+    )
   
   # Add truth values - ensure dateID format matches
   plot_obs <- truth_data %>% filter(plotID == !!plotID)
@@ -885,6 +1322,21 @@ fcast_logit_beta <- function(plotID,
                               model.inputs$site_start[siteID], NA))
   )
   
+  # CRITICAL FIX: Validate output data before returning to prevent mismatched information
+  validation_results <- validate_hindcast_output(ci, plotID, model_id)
+  
+  if (!validation_results$data_integrity_valid) {
+    stop("Data validation failed for plotID ", plotID, ": ", 
+         paste(validation_results$errors, collapse="; "))
+  }
+  
+  if (length(validation_results$warnings) > 0) {
+    warning("Data validation warnings for plotID ", plotID, ": ", 
+            paste(validation_results$warnings, collapse="; "))
+  }
+  
+  cat("DEBUG: Data validation passed for plotID", plotID, "\n")
+  
   return(ci)
 }
 
@@ -896,239 +1348,216 @@ fcast_logit_beta <- function(plotID,
 #' @param hindcast_data Data frame with hindcast predictions
 #' @param model_id Model identifier
 #' @param taxon Taxon name
+#' @param out_dir Optional output directory. If not provided, will create default structure
 #' @export
-generate_hindcast_diagnostics <- function(hindcast_data, model_id, taxon) {
-  # Get unique sites and select one plot from each site
-  unique_sites <- unique(hindcast_data$siteID)
-  
-  selected_plots <- hindcast_data %>%
-    group_by(siteID) %>%
-    slice_head(n = 1) %>%
-    pull(plotID)
-  
-  # Create visualization directory based on site type
-  # Check if this is for observed or unobserved sites based on the data
-  unobserved_sites <- c("ABBY", "BARR", "BONA", "DEJU", "HEAL", "KONA", 
-                        "LAJA", "LENO", "MLBS", "RMNP", "SOAP", "TOOL", 
-                        "WREF", "YELL")
-  
-  # Determine if this is for observed or unobserved sites
-  unique_sites_in_data <- unique(hindcast_data$siteID)
-  is_unobserved_data <- any(unique_sites_in_data %in% unobserved_sites)
-  
-  site_type <- if (is_unobserved_data) "unobserved_sites" else "observed_sites"
-  viz_dir <- here("figures", "hindcast_diagnostics", site_type, model_id)
-  if (!dir.exists(viz_dir)) {
-    dir.create(viz_dir, recursive = TRUE)
+generate_hindcast_diagnostics <- function(hindcast_data, model_id, taxon, out_dir = NULL) {
+  # Ensure out_dir is provided and valid
+  stopifnot(!is.null(out_dir) && nzchar(out_dir))
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  out_dir <- normalizePath(out_dir, winslash = "/", mustWork = TRUE)
+
+  # Sanity columns
+  need <- c("plotID","siteID","dates","med","lo","hi","fcast_period")
+  miss <- setdiff(need, names(hindcast_data))
+  if (length(miss)) stop("hindcast_data missing: ", paste(miss, collapse=", "))
+
+  # Dates must be Date
+  if (!inherits(hindcast_data$dates, "Date")) {
+    # handle numeric YYYYMM or POSIX-ish numbers
+    if (is.numeric(hindcast_data$dates) && all(hindcast_data$dates > 10000, na.rm = TRUE) &&
+        !"dateID" %in% names(hindcast_data)) {
+      hindcast_data$dates <- as.Date(hindcast_data$dates, origin = "1970-01-01")
+    } else if ("dateID" %in% names(hindcast_data)) {
+      hindcast_data$dates <- as.Date(paste0(hindcast_data$dateID, "01"), "%Y%m%d")
+    } else {
+      hindcast_data$dates <- as.Date(hindcast_data$dates)
+    }
   }
-  
-  # Generate plots for each selected plot
-  picked <- hindcast_data %>%
-    group_by(siteID) %>%
-    slice_head(n = 1) %>%
-    ungroup() %>%
-    select(siteID, plotID)
-  
-  for (i in seq_len(nrow(picked))) {
-    plot_id <- picked$plotID[i]
-    site_id <- picked$siteID[i]
+
+  # Pick one plot per site (your original behavior)
+  sel_plots <- hindcast_data |>
+    dplyr::group_by(siteID) |>
+    dplyr::slice_head(n = 1) |>
+    dplyr::pull(plotID)
+
+  # If nothing to plot, leave a breadcrumb and return
+  if (!length(sel_plots)) {
+    marker <- file.path(out_dir, "_NO_PLOTS_FOUND.txt")
+    writeLines("No selected plots in hindcast_data.", marker)
+    return(invisible(out_dir))
+  }
+
+  # Has truth?
+  has_truth <- "truth" %in% names(hindcast_data)
+
+  for (plot_id in sel_plots) {
+    site_id <- hindcast_data$siteID[match(plot_id, hindcast_data$plotID)]
+    df <- dplyr::filter(hindcast_data, plotID == plot_id)
     
-    # Filter data for this plot - keep ALL data, not just non-NA predictions
-    plot_data <- hindcast_data %>%
-      filter(plotID == plot_id) %>%
-      mutate(plot_date = as.Date(dates))
-    
-    if (nrow(plot_data) == 0) {
-      next
-    }
-    
-    # Separate calibration and hindcast data for plotting
-    calibration_data <- plot_data %>%
-      filter(fcast_period == "calibration" & !is.na(med) & !is.na(lo) & !is.na(hi))
-    
-    hindcast_period_data <- plot_data %>%
-      filter(fcast_period == "hindcast" & !is.na(med) & !is.na(lo) & !is.na(hi))
-    
-    # For unobserved sites, create a combined factor for site effect type
-    if (is_unobserved_data && nrow(hindcast_period_data) > 0) {
-      hindcast_period_data <- hindcast_period_data %>%
-        mutate(
-          effect_type = ifelse(predicted_site_effect, "predicted", "random"),
-          period_effect = paste(fcast_period, effect_type, sep = "_")
-        )
-    }
-    
-    if (nrow(calibration_data) == 0 && nrow(hindcast_period_data) == 0) {
-      next
-    }
-    
-    # For unobserved sites, show full time series (2013-2020) to include all truth data
-    # No filtering needed - show complete time series for unobserved sites
-    
-    # Create time series plot with both calibration and hindcast periods
-    p1 <- ggplot(plot_data, aes(x = plot_date)) +
-      # Add calibration period confidence intervals and predictions
-      {if(nrow(calibration_data) > 0) {
-        list(
-          geom_ribbon(data = calibration_data, aes(ymin = lo, ymax = hi), alpha = 0.3, fill = "lightblue"),
-          geom_line(data = calibration_data, aes(y = med), color = "blue", linewidth = 1),
-          geom_point(data = calibration_data, aes(y = med), color = "blue", size = 1, alpha = 0.7)
-        )
-      }} +
-      # Add hindcast period confidence intervals and predictions
-      {if(nrow(hindcast_period_data) > 0) {
-        if (is_unobserved_data && "effect_type" %in% colnames(hindcast_period_data)) {
-          # For unobserved sites, use different colors for random vs predicted effects
-          list(
-            geom_ribbon(data = hindcast_period_data, aes(ymin = lo, ymax = hi, fill = effect_type), alpha = 0.3),
-            geom_line(data = hindcast_period_data, aes(y = med, color = effect_type), linewidth = 1),
-            geom_point(data = hindcast_period_data, aes(y = med, color = effect_type), size = 1, alpha = 0.7),
-            scale_fill_manual(values = c("random" = "lightgreen", "predicted" = "lightcoral"), name = "Site Effect"),
-            scale_color_manual(values = c("random" = "green", "predicted" = "red"), name = "Site Effect")
-          )
-        } else {
-          # For observed sites, use single green color
-          list(
-            geom_ribbon(data = hindcast_period_data, aes(ymin = lo, ymax = hi), alpha = 0.3, fill = "lightgreen"),
-            geom_line(data = hindcast_period_data, aes(y = med), color = "green", linewidth = 1),
-            geom_point(data = hindcast_period_data, aes(y = med), color = "green", size = 1, alpha = 0.7)
-          )
-        }
-      }}
-    
-    # Add truth values if available (for both periods)
-    all_valid_data <- bind_rows(calibration_data, hindcast_period_data) %>%
-      mutate(plot_date = as.Date(paste0(dateID, "01"), format = "%Y%m%d"))
-    if(sum(!is.na(all_valid_data$truth)) > 0) {
-      p1 <- p1 + 
-        geom_point(data = all_valid_data, aes(y = truth), color = "red", size = 2, alpha = 0.8) +
-        geom_line(data = all_valid_data, aes(y = truth), color = "red", linewidth = 1, alpha = 0.8)
-    }
-    
-    # Add vertical line to separate calibration and hindcast periods
-    if(nrow(calibration_data) > 0 && nrow(hindcast_period_data) > 0) {
-      # build Date for boundary line
-      boundary_date_id <- max(calibration_data$dateID)
-      boundary_date <- as.Date(paste0(boundary_date_id, "01"), format = "%Y%m%d")
-      p1 <- p1 + geom_vline(xintercept = as.numeric(boundary_date), linetype = "dashed", 
-                            color = "gray", linewidth = 1)
-    }
-    
-    p1 <- p1 +
-      labs(title = paste("Hindcast Predictions vs Truth for", plot_id, "(", site_id, ")"),
-           subtitle = paste("Taxon:", taxon, "| Model:", model_id, "|", 
-                           nrow(calibration_data), "calibration predictions |", 
-                           nrow(hindcast_period_data), "hindcast predictions |", 
-                           sum(!is.na(all_valid_data$truth)), "truth values"),
-           x = "Date", y = "Abundance",
-           caption = if (is_unobserved_data && "effect_type" %in% colnames(hindcast_period_data)) {
-             "Blue: Calibration | Green: Hindcast (random effects) | Red: Hindcast (predicted effects) | Black: Observed truth"
-           } else {
-             "Blue: Calibration period | Green: Hindcast period | Red: Observed truth"
-           }) +
-      theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
-    
-    # Create prediction distribution plot (combine both periods)
-    if (is_unobserved_data && "effect_type" %in% colnames(all_valid_data)) {
-      # For unobserved sites, use effect type for coloring
-      p2 <- ggplot(all_valid_data, aes(x = med, fill = period_effect)) +
-        geom_histogram(bins = 20, alpha = 0.7, position = "identity") +
-        scale_fill_manual(values = c("calibration" = "lightblue", 
-                                   "hindcast_random" = "lightgreen", 
-                                   "hindcast_predicted" = "lightcoral"), 
-                         name = "Period & Effect") +
-        labs(title = paste("Distribution of Predictions for", plot_id),
-             x = "Predicted Abundance", y = "Count", fill = "Period & Effect") +
-        theme_minimal()
+    # Check if we have both site effect types
+    has_site_effects <- "predicted_site_effect" %in% names(df)
+    if (has_site_effects) {
+      modeled_df <- dplyr::filter(df, predicted_site_effect == TRUE)
+      random_df <- dplyr::filter(df, predicted_site_effect == FALSE)
     } else {
-      # For observed sites, use period only
-      p2 <- ggplot(all_valid_data, aes(x = med, fill = fcast_period)) +
-        geom_histogram(bins = 20, alpha = 0.7, position = "identity") +
-        scale_fill_manual(values = c("calibration" = "lightblue", "hindcast" = "lightgreen"), drop = FALSE) +
-        labs(title = paste("Distribution of Predictions for", plot_id),
-             x = "Predicted Abundance", y = "Count", fill = "Period") +
-        theme_minimal()
+      modeled_df <- df
+      random_df <- NULL
     }
-    
-    # Create uncertainty plot (combine both periods)
-    all_valid_data$uncertainty <- all_valid_data$hi - all_valid_data$lo
-    if (is_unobserved_data && "effect_type" %in% colnames(all_valid_data)) {
-      # For unobserved sites, use effect type for coloring
-      p3 <- ggplot(all_valid_data, aes(x = dateID, y = uncertainty, color = period_effect)) +
-        geom_line(linewidth = 1) +
-        geom_point(size = 1) +
-        scale_color_manual(values = c("calibration" = "blue", 
-                                    "hindcast_random" = "green", 
-                                    "hindcast_predicted" = "red"), 
-                          name = "Period & Effect") +
-        labs(title = paste("Prediction Uncertainty for", plot_id),
-             x = "Date", y = "Uncertainty (95% CI width)", color = "Period & Effect") +
-        theme_minimal() +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
-    } else {
-      # For observed sites, use period only
-      p3 <- ggplot(all_valid_data, aes(x = dateID, y = uncertainty, color = fcast_period)) +
-        geom_line(linewidth = 1) +
-        geom_point(size = 1) +
-        scale_color_manual(values = c("calibration" = "blue", "hindcast" = "green"), drop = FALSE) +
-        labs(title = paste("Prediction Uncertainty for", plot_id),
-             x = "Date", y = "Uncertainty (95% CI width)", color = "Period") +
-        theme_minimal() +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
-    }
-    
-    # Add vertical line to separate periods in uncertainty plot
-    if(nrow(calibration_data) > 0 && nrow(hindcast_period_data) > 0) {
-      boundary_date <- max(calibration_data$dateID)
-      p3 <- p3 + geom_vline(xintercept = boundary_date, linetype = "dashed", color = "gray", linewidth = 1)
-    }
-    
-    # Create validation plot (predictions vs truth) if truth values are available
-    if(sum(!is.na(all_valid_data$truth)) > 0) {
-      if (is_unobserved_data && "effect_type" %in% colnames(all_valid_data)) {
-        # For unobserved sites, use effect type for coloring with better point separation
-        p4 <- ggplot(all_valid_data, aes(x = truth, y = med, color = period_effect)) +
-          geom_point(size = 3, alpha = 0.8, position = position_jitter(width = 0.0005, height = 0.0005)) +
-          geom_abline(slope = 1, intercept = 0, color = "black", linewidth = 1, linetype = "dashed") +
-          scale_color_manual(values = c("calibration" = "blue", 
-                                      "hindcast_random" = "green", 
-                                      "hindcast_predicted" = "red"), 
-                            name = "Period & Effect") +
-          labs(title = paste("Predictions vs Truth for", plot_id),
-               x = "Observed Truth", y = "Predicted Abundance", color = "Period & Effect") +
-          theme_minimal() +
-          theme(legend.position = "bottom")
+
+    # Convert to numeric if needed, with better error handling
+    convert_numeric <- function(data_df) {
+      if (is.list(data_df$med)) {
+        data_df$med <- sapply(data_df$med, function(x) {
+          if (is.numeric(x) && length(x) > 0 && !is.na(x[1])) x[1] else NA_real_
+        })
       } else {
-        # For observed sites, use period only
-        p4 <- ggplot(all_valid_data, aes(x = truth, y = med, color = fcast_period)) +
-          geom_point(size = 2, alpha = 0.7) +
-          geom_abline(slope = 1, intercept = 0, color = "red", linewidth = 1, linetype = "dashed") +
-          scale_color_manual(values = c("calibration" = "blue", "hindcast" = "green"), drop = FALSE) +
-          labs(title = paste("Predictions vs Truth for", plot_id),
-               x = "Observed Truth", y = "Predicted Abundance", color = "Period") +
-          theme_minimal()
+        data_df$med <- as.numeric(data_df$med)
       }
       
-      # For observed sites, create a single time series plot only
-      if (!is_unobserved_data) {
-        combined_plot <- p1  # Single time series plot for observed sites
+      if (is.list(data_df$lo)) {
+        data_df$lo <- sapply(data_df$lo, function(x) {
+          if (is.numeric(x) && length(x) > 0 && !is.na(x[1])) x[1] else NA_real_
+        })
       } else {
-        # For unobserved sites, create a 2x2 grid (jitter already applied in p4)
-        combined_plot <- gridExtra::grid.arrange(p1, p2, p3, p4, ncol = 2, heights = c(2, 1, 1, 1))
+        data_df$lo <- as.numeric(data_df$lo)
       }
-		} else {
-      # For observed sites without validation plot, use single time series
-      if (!is_unobserved_data) {
-        combined_plot <- p1  # Single time series plot for observed sites
+      
+      if (is.list(data_df$hi)) {
+        data_df$hi <- sapply(data_df$hi, function(x) {
+          if (is.numeric(x) && length(x) > 0 && !is.na(x[1])) x[1] else NA_real_
+        })
       } else {
-        # For unobserved sites without validation plot
-        combined_plot <- gridExtra::grid.arrange(p1, p2, p3, ncol = 1, heights = c(2, 1, 1))
+        data_df$hi <- as.numeric(data_df$hi)
       }
+      return(data_df)
     }
     
-    # Save plot
-    plot_file <- file.path(viz_dir, paste0("hindcast_", plot_id, "_", taxon, ".png"))
-    ggsave(plot_file, combined_plot, width = 12, height = 10, dpi = 300)
+    # Convert both dataframes
+    modeled_df <- convert_numeric(modeled_df)
+    if (!is.null(random_df)) {
+      random_df <- convert_numeric(random_df)
+    }
+    
+    # Filter data for both site effect types
+    filter_data <- function(data_df) {
+      cal <- dplyr::filter(data_df, fcast_period == "calibration", !is.na(med), !is.na(lo), !is.na(hi), 
+                           is.finite(med), is.finite(lo), is.finite(hi))
+      hin <- dplyr::filter(data_df, fcast_period == "hindcast",    !is.na(med), !is.na(lo), !is.na(hi),
+                           is.finite(med), is.finite(lo), is.finite(hi))
+      return(list(cal = cal, hin = hin))
+    }
+    
+    modeled_data <- filter_data(modeled_df)
+    random_data <- if (!is.null(random_df)) filter_data(random_df) else list(cal = data.frame(), hin = data.frame())
+    
+    # Skip this plot if there's insufficient valid data
+    total_cal <- nrow(modeled_data$cal) + nrow(random_data$cal)
+    total_hin <- nrow(modeled_data$hin) + nrow(random_data$hin)
+    if (total_cal == 0 && total_hin == 0) {
+      cat("Skipping plot", plot_id, "- no valid data (all values are NA or non-finite)\n")
+      next
+    }
+
+    # Only create plot if we have at least some valid data
+    if (total_cal > 0 || total_hin > 0) {
+      p <- ggplot2::ggplot(modeled_df, ggplot2::aes(x = dates))
+      
+      # Add modeled effects (blue)
+      if (nrow(modeled_data$cal) > 0) {
+        p <- p + 
+          ggplot2::geom_ribbon(data = modeled_data$cal, ggplot2::aes(ymin = lo, ymax = hi), alpha = 0.3, fill = "lightblue") +
+          ggplot2::geom_line(  data = modeled_data$cal, ggplot2::aes(y = med), linewidth = 1, color = "blue")
+      }
+      if (nrow(modeled_data$hin) > 0) {
+        p <- p + 
+          ggplot2::geom_ribbon(data = modeled_data$hin, ggplot2::aes(ymin = lo, ymax = hi), alpha = 0.3, fill = "lightgreen") +
+          ggplot2::geom_line(  data = modeled_data$hin, ggplot2::aes(y = med), linewidth = 1, color = "green")
+      }
+      
+      # Add random effects (red/orange) - only if we have both types
+      if (!is.null(random_df) && nrow(random_data$cal) > 0) {
+        p <- p + 
+          ggplot2::geom_ribbon(data = random_data$cal, ggplot2::aes(ymin = lo, ymax = hi), alpha = 0.2, fill = "lightcoral") +
+          ggplot2::geom_line(  data = random_data$cal, ggplot2::aes(y = med), linewidth = 1, color = "red", linetype = "dashed")
+      }
+      if (!is.null(random_df) && nrow(random_data$hin) > 0) {
+        p <- p + 
+          ggplot2::geom_ribbon(data = random_data$hin, ggplot2::aes(ymin = lo, ymax = hi), alpha = 0.2, fill = "lightyellow") +
+          ggplot2::geom_line(  data = random_data$hin, ggplot2::aes(y = med), linewidth = 1, color = "orange", linetype = "dashed")
+      }
+      
+      # Add truth data (same for both site effect types)
+      if (has_truth && any(!is.na(modeled_df$truth))) {
+        # CRITICAL FIX: Validate and correct truth values to prevent dateID corruption
+        truth_values <- modeled_df$truth
+        
+        # Check if truth values look like dateIDs (large numbers > 10000)
+        if (is.numeric(truth_values) && any(truth_values > 10000, na.rm = TRUE)) {
+          # This is dateID corruption - set all truth values to NA to prevent plotting
+          cat("WARNING: Truth values appear to be corrupted with dateID values (range:", 
+              min(truth_values, na.rm = TRUE), "to", max(truth_values, na.rm = TRUE), 
+              "). Setting truth values to NA.\n")
+          modeled_df$truth <- NA_real_
+          has_truth <- FALSE
+        } else if (is.numeric(truth_values) && any(truth_values < 0 | truth_values > 1, na.rm = TRUE)) {
+          # Truth values should be in [0,1] range
+          cat("WARNING: Truth values outside [0,1] range (range:", 
+              min(truth_values, na.rm = TRUE), "to", max(truth_values, na.rm = TRUE), 
+              "). Setting out-of-range values to NA.\n")
+          modeled_df$truth[modeled_df$truth < 0 | modeled_df$truth > 1] <- NA_real_
+        }
+        
+        if (has_truth && any(!is.na(modeled_df$truth))) {
+          p <- p +
+            ggplot2::geom_point(data = modeled_df, ggplot2::aes(y = truth), color = "red", size = 1.8, alpha = 0.8) +
+            ggplot2::geom_line( data = modeled_df, ggplot2::aes(y = truth), color = "red", linewidth = 0.8, alpha = 0.8)
+        }
+      }
+
+      # boundary line
+      if (nrow(modeled_data$cal) && nrow(modeled_data$hin)) {
+        boundary <- max(modeled_data$cal$dates, na.rm = TRUE)
+        p <- p + ggplot2::geom_vline(xintercept = boundary, linetype = "dashed", color = "gray", linewidth = 1)
+      }
+
+      # Use the actual taxon from the data, not the parameter
+      actual_taxon <- unique(df$species)[1]
+      if (is.na(actual_taxon) || actual_taxon == "") {
+        actual_taxon <- unique(df$taxon)[1]
+      }
+      if (is.na(actual_taxon) || actual_taxon == "") {
+        actual_taxon <- taxon  # fallback to parameter
+      }
+      
+      # Create a more informative title that shows both the actual taxon and model ID
+      title_text <- paste("Hindcast vs Truth —", plot_id, "(", site_id, ")")
+      if (actual_taxon != taxon && actual_taxon != model_id) {
+        subtitle_text <- paste("Taxon:", actual_taxon, "| Model ID:", model_id, "| Functional Group:", taxon)
+      } else {
+        subtitle_text <- paste("Taxon:", actual_taxon, "| Model:", model_id)
+      }
+      
+      p <- p +
+        ggplot2::labs(
+          title = title_text,
+          subtitle = subtitle_text,
+          x = "Date", y = "Abundance"
+        ) +
+        ggplot2::scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+        ggplot2::theme_minimal() +
+        ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
+      
+      # Create filename that includes both actual taxon and model ID for clarity
+      if (actual_taxon != taxon && actual_taxon != model_id) {
+        filename <- paste0("hindcast_", plot_id, "_", actual_taxon, "_", gsub("env_cycl_", "", model_id), ".png")
+      } else {
+        filename <- paste0("hindcast_", plot_id, "_", actual_taxon, ".png")
+      }
+      outfile <- file.path(out_dir, filename)
+      # Force a headless-safe device
+      ggplot2::ggsave(filename = outfile, plot = p, width = 12, height = 6, dpi = 300, device = "png")
+    }
   }
+
+  invisible(out_dir)
 }

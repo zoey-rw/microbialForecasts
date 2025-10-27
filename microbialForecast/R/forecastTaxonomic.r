@@ -166,6 +166,13 @@ taxa_fcast <- function(plotID,
 												taxon_name = taxon_name,
 												new_site = ifelse(is_new_site, T, F))
 		colnames(ci)[1:3] <- c("lo","med","hi")
+		
+		# CRITICAL FIX: Ensure confidence interval columns are numeric, not lists
+		ci$lo <- as.numeric(ci$lo)
+		ci$med <- as.numeric(ci$med)
+		ci$hi <- as.numeric(ci$hi)
+		ci$mean <- as.numeric(ci$mean)
+		ci$sd <- as.numeric(ci$sd)
 
 
 		ci <- left_join(ci, date_key, by=c("date_num"))

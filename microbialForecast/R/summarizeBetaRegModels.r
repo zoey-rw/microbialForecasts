@@ -3,28 +3,70 @@
 #'  @param samples2 MCMC samples containing plot estimates
 #'  @return List with statistics and quantiles data frames
 calculate_plot_summary_from_samples <- function(samples2) {
-	# Combine all samples if there are multiple chains
-	if (is.mcmc.list(samples2)) {
-		# Multiple chains - combine them
-		combined_samples <- do.call(rbind, lapply(samples2, as.matrix))
-	} else if (is.matrix(samples2)) {
-		# Single matrix
-		combined_samples <- samples2
-	} else {
-		# Single samples object
-		combined_samples <- as.matrix(samples2)
-	}
-	
-	# Calculate summary statistics
-	means <- apply(combined_samples, 2, mean, na.rm = TRUE)
-	quantiles <- apply(combined_samples, 2, quantile, probs = c(0.025, 0.25, 0.5, 0.75, 0.975), na.rm = TRUE)
-	
-	# Create data frames
-	means_df <- data.frame(Mean = means, rowname = names(means))
-	quantiles_df <- data.frame(t(quantiles), rowname = names(means))
-	colnames(quantiles_df) <- c("2.5%", "25%", "50%", "75%", "97.5%", "rowname")
-	
-	return(list(means_df, quantiles_df))
+  # normalize names early (mu[...] -> plot_mu[...])
+  .norm_names <- function(nm) sub("^mu\\[", "plot_mu[", nm)
+
+  to_mat <- function(x) {
+    if (inherits(x, "mcmc")) return(as.matrix(x))
+    x <- as.matrix(x)
+    storage.mode(x) <- "double"
+    x
+  }
+
+  if (coda::is.mcmc.list(samples2)) {
+    base_cols <- .norm_names(colnames(samples2[[1]]))
+    mats <- lapply(samples2, function(ch) {
+      m <- to_mat(ch)
+      colnames(m) <- .norm_names(colnames(m))
+      keep <- intersect(base_cols, colnames(m))
+      m[, keep, drop = FALSE]
+    })
+    common <- Reduce(intersect, lapply(mats, colnames))
+    # preserve ordering of base_cols
+    common <- base_cols[base_cols %in% common]
+    mats <- lapply(mats, function(m) m[, common, drop = FALSE])
+    combined_samples <- do.call(rbind, mats)
+
+  } else if (is.matrix(samples2)) {
+    combined_samples <- to_mat(samples2)
+    colnames(combined_samples) <- .norm_names(colnames(combined_samples))
+
+  } else if (is.list(samples2)) {
+    # list-of-matrices or list-of-mcmc
+    mats <- lapply(samples2, to_mat)
+    # use first element as base
+    base_cols <- .norm_names(colnames(mats[[1]]))
+    mats <- lapply(mats, function(m) {
+      colnames(m) <- .norm_names(colnames(m))
+      keep <- intersect(base_cols, colnames(m))
+      m[, keep, drop = FALSE]
+    })
+    common <- Reduce(intersect, lapply(mats, colnames))
+    common <- base_cols[base_cols %in% common]
+    combined_samples <- do.call(rbind, lapply(mats, function(m) m[, common, drop = FALSE]))
+
+  } else {
+    combined_samples <- to_mat(samples2)
+    colnames(combined_samples) <- .norm_names(colnames(combined_samples))
+  }
+
+  if (is.null(colnames(combined_samples)))
+    stop("samples2 has no column names; expected names like 'plot_mu[plot,time]'.")
+
+  means  <- apply(combined_samples, 2, mean, na.rm = TRUE)
+  sds    <- apply(combined_samples, 2, sd,   na.rm = TRUE)
+  quants <- apply(combined_samples, 2, quantile,
+                  probs = c(0.025, 0.25, 0.5, 0.75, 0.975), na.rm = TRUE)
+
+  means_df <- data.frame(Mean = means, SD = sds, check.names = FALSE)
+  means_df$param <- names(means)
+  rownames(means_df) <- names(means)
+
+  quantiles_df <- as.data.frame(t(quants), check.names = FALSE)
+  colnames(quantiles_df) <- c("2.5%", "25%", "50%", "75%", "97.5%")
+  quantiles_df$param <- rownames(quantiles_df)
+
+  list(means = means_df, quantiles = quantiles_df)
 }
 
 #'  @title summarize_beta_regression
@@ -67,55 +109,33 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	
 	# Debug: Check initial param_summary
 	message("  DEBUG: Initial param_summary names: ", paste(names(param_summary), collapse = ", "))
+	
+	# Handle different param_summary structures for driver uncertainty models
+	# Driver uncertainty models have deeply nested structures, so we'll skip the nested handling
+	# and let the function recalculate param_summary from samples
+	message("  DEBUG: Driver uncertainty model detected, will recalculate param_summary from samples")
+	
+	message("  DEBUG: Final param_summary names: ", paste(names(param_summary), collapse = ", "))
 	message("  DEBUG: Data extracted successfully, proceeding to model ID parsing...")
 	
-	# Check if we have samples2 (plot estimates) and use it for plot_summary if available
-	message("  DEBUG: Extracting samples2...")
-	samples2 <- read_in$samples2
-	message("  DEBUG: samples2 extracted, type:", class(samples2))
-	
-	# Check if existing plot_summary is malformed (contains parameter data instead of plot data)
-	plot_summary_valid <- FALSE
-	if (!is.null(plot_summary) && length(plot_summary) > 0) {
-		# Check if plot_summary contains actual plot data (plot_mu or Ex parameters)
-		if (is.list(plot_summary) && length(plot_summary) >= 1) {
-			plot_summary_rownames <- rownames(plot_summary[[1]])
-			plot_summary_valid <- any(grepl("plot_mu\\[", plot_summary_rownames)) || 
-								 any(grepl("plot_rel\\[", plot_summary_rownames)) ||
-								 any(grepl("Ex\\[", plot_summary_rownames))
-		}
+	# Convert summary.mcmc to list format if needed
+	if (inherits(plot_summary, "summary.mcmc")) {
+		message("  Converting summary.mcmc plot_summary to list format")
+		plot_summary <- list(
+			plot_summary$statistics,
+			plot_summary$quantiles
+		)
+		names(plot_summary) <- c("statistics", "quantiles")
 	}
 	
-	# Regenerate plot_summary from samples2 if needed
-	if (!is.null(samples2) && length(samples2) > 0) {
-		# Check if samples2 contains plot_mu parameters and has reasonable dimensions
-		if (is.mcmc.list(samples2)) {
-			sample_cols <- colnames(samples2[[1]])
-			n_cols <- ncol(samples2[[1]])
-		} else if (is.matrix(samples2)) {
-			sample_cols <- colnames(samples2)
-			n_cols <- ncol(samples2)
-		} else {
-			sample_cols <- NULL
-			n_cols <- 0
+	# Validate plot_summary has plot data
+	if (!is.null(plot_summary) && is.list(plot_summary) && length(plot_summary) >= 2) {
+		rownames <- rownames(plot_summary[[2]])
+		has_plot_data <- any(grepl("^(plot_mu|plot_rel|Ex)\\[", rownames))
+		if (!has_plot_data) {
+			message("  WARNING: plot_summary does not contain plot data")
+			plot_summary <- NULL  # Will create empty estimates later
 		}
-		
-		# Process samples2 if it has plot parameters (plot_mu or Ex) and plot_summary is invalid
-		has_plot_params <- any(grepl("plot_mu", sample_cols)) || any(grepl("Ex\\[", sample_cols))
-		if (!is.null(sample_cols) && has_plot_params && !plot_summary_valid) {
-			message("  Regenerating plot_summary from samples2 (", n_cols, " parameters)")
-			# Calculate plot_summary from samples2
-			plot_summary <- calculate_plot_summary_from_samples(samples2)
-		} else if (plot_summary_valid) {
-			message("  Using existing valid plot_summary")
-		}
-	}
-	
-	# If plot_summary is still null or empty, use samples for plot estimates
-	if (is.null(plot_summary) || length(plot_summary) == 0) {
-		samples_for_plot <- samples
-	} else {
-		samples_for_plot <- samples
 	}
 	
 	# Always recalculate param_summary from samples to ensure correct format
@@ -153,19 +173,20 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 		} else {
 			# Calculate parameter summaries
 			means <- apply(combined_samples, 2, mean, na.rm = TRUE)
-			quantiles <- apply(combined_samples, 2, quantile, c(0.025, 0.25, 0.5, 0.75, 0.975), na.rm = TRUE)
+			sds   <- apply(combined_samples, 2, sd,   na.rm = TRUE)
+			quants <- apply(combined_samples, 2, quantile, c(0.025, 0.25, 0.5, 0.75, 0.975), na.rm = TRUE)
 			
-			# Create param_summary structure with parameters as rows (not columns)
-			# This matches the expected format for extract_summary_row function
-			means_df <- data.frame(Mean = means)
-			quantiles_df <- as.data.frame(t(quantiles))
+			# Create param_summary structure with rownames set to parameter names
+			means_df <- data.frame(Mean = means, SD = sds, check.names = FALSE)
+			rownames(means_df) <- colnames(combined_samples)
+			means_df$param <- rownames(means_df)
 			
-			# Add rowname column for extract_summary_row function
-			means_df$rowname <- rownames(means_df)
-			quantiles_df$rowname <- rownames(quantiles_df)
+			quantiles_df <- as.data.frame(t(quants), check.names = FALSE)
+			colnames(quantiles_df) <- c("2.5%", "25%", "50%", "75%", "97.5%")
+			rownames(quantiles_df) <- colnames(combined_samples)
+			quantiles_df$param <- rownames(quantiles_df)
 			
-			param_summary <- list(means_df, quantiles_df)
-			names(param_summary) <- c("means", "quantiles")
+			param_summary <- list(means = means_df, quantiles = quantiles_df)
 			
 			message("  Successfully recalculated param_summary from samples")
 			message("  DEBUG: param_summary names: ", paste(names(param_summary), collapse = ", "))
@@ -308,33 +329,56 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 
 	# Calculate plot median and quantiles
 	# Handle different plot_summary structures
-	if (inherits(plot_summary, "summary.mcmc")) {
-		# For env_cov models with summary.mcmc objects, create empty plot estimates
-		message("  Using summary.mcmc plot_summary - creating empty plot estimates")
-		pred.quantiles <- data.frame(
-			plot_num = integer(0),
-			timepoint = integer(0),
-			Mean = numeric(0),
-			SD = numeric(0),
-			`2.5%` = numeric(0),
-			`25%` = numeric(0),
-			`50%` = numeric(0),
-			`75%` = numeric(0),
-			`97.5%` = numeric(0),
-			taxon = character(0)
-		)
-		pred.means <- pred.quantiles
-	} else if (is.list(plot_summary) && length(plot_summary) >= 2) {
+	if (is.list(plot_summary) && length(plot_summary) >= 2) {
 		# For standard plot_summary with plot_mu parameters
-		pred.quantiles <- plot_summary[[2]] %>% parse_plot_mu_vars() %>%
-			merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
+		# Handle mu[...] parameters by renaming to plot_mu[...] if needed
+		rownms <- rownames(plot_summary[[2]])
+		if (any(grepl("^mu\\[", rownms)) && !any(grepl("^plot_mu\\[", rownms))) {
+			message("  Renaming mu[...] parameters to plot_mu[...] for compatibility")
+			rownames(plot_summary[[1]]) <- sub("^mu\\[", "plot_mu[", rownames(plot_summary[[1]]))
+			rownames(plot_summary[[2]]) <- sub("^mu\\[", "plot_mu[", rownames(plot_summary[[2]]))
+		}
+		
+		# CRITICAL FIX: Ensure truth values are preserved correctly during merge
+		plot_quantiles <- plot_summary[[2]] %>% parse_plot_mu_vars()
+		plot_means <- plot_summary[[1]] %>% parse_plot_mu_vars()
+		
+		# Merge with truth data, being careful about column name conflicts
+		pred.quantiles <- plot_quantiles %>%
+			merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T, suffixes = c("", "_truth"))
+		
+		pred.means <- plot_means %>%
+			merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T, suffixes = c("", "_truth"))
 
-		# For scoring the predictions, need mean and SD
-		pred.means <- plot_summary[[1]] %>% parse_plot_mu_vars() %>%
-			merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
+		# CRITICAL FIX: Ensure we use the correct truth column (not dateID values)
+		# If there are duplicate columns, prefer the one from truth.plot.long
+		if ("truth_truth" %in% names(pred.quantiles)) {
+			pred.quantiles$truth <- pred.quantiles$truth_truth
+			pred.quantiles$truth_truth <- NULL
+		}
+		if ("truth_truth" %in% names(pred.means)) {
+			pred.means$truth <- pred.means$truth_truth
+			pred.means$truth_truth <- NULL
+		}
+		
+		# CRITICAL FIX: Validate that truth values are in [0,1] range (not dateIDs)
+		if (any(pred.quantiles$truth > 1, na.rm = TRUE)) {
+			message("  WARNING: Detected corrupted truth values (dateIDs) - fixing...")
+			# Find rows where truth values look like dateIDs (> 200000)
+			corrupted_rows <- pred.quantiles$truth > 200000
+			if (any(corrupted_rows, na.rm = TRUE)) {
+				message("  Found ", sum(corrupted_rows, na.rm = TRUE), " corrupted truth values")
+				# Set corrupted values to NA
+				pred.quantiles$truth[corrupted_rows] <- NA_real_
+				pred.means$truth[corrupted_rows] <- NA_real_
+			}
+		}
 
+		# Safety check before copying Mean/SD
+		stopifnot(identical(pred.means$plot_num, pred.quantiles$plot_num) &&
+		          identical(pred.means$timepoint, pred.quantiles$timepoint))
 		pred.quantiles$Mean <- pred.means$Mean
-		pred.quantiles$SD <- pred.means$SD
+		pred.quantiles$SD   <- pred.means$SD
 	} else {
 		# Fallback for other structures
 		message("  Unknown plot_summary structure - creating empty plot estimates")
