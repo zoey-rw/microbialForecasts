@@ -36,4 +36,4 @@ export LOCAL_TEST=false
 cd /projectnb/dietzelab/zrwerbin/microbialForecasts/
 
 module load R/4.3.1
-Rscript /projectnb/dietzelab/zrwerbin/microbialForecasts/01_fitModels_driverUncertainty.R $SGE_TASK_ID
+Rscript /projectnb/talbot-lab-data/zrwerbin/microbialForecasts/analysis/model_analysis/01_fitModels_driverUncertainty.R $SGE_TASK_ID
