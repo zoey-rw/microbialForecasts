@@ -18,8 +18,14 @@ log_setup(logfile = here("logs", paste0("model_fitting_", format(Sys.time(), "%Y
 here::i_am("analysis/model_analysis/01_fitModels_driverUncertainty.R")
 project_root <- here()
 
+# Validate that the script path matches the expected location
+if (!file.exists(here::here("analysis/model_analysis/01_fitModels_driverUncertainty.R"))) {
+    stop("Script path validation failed: analysis/model_analysis/01_fitModels_driverUncertainty.R not found at here() root")
+}
+
 info("here() starts at %s", project_root)
 info("Project root set to: %s", getwd())
+info("Script path validated: analysis/model_analysis/01_fitModels_driverUncertainty.R exists")
 
 # Load the microbialForecast package to access helper functions
 library(microbialForecast)
@@ -40,6 +46,16 @@ driver_uncertainty_mode <- TRUE  # Set FALSE for fixed drivers
 ensure_old_schema <- function(samples, samples2, meta,
                               model_output_root, model_name, species,
                               model_id, chain_no) {
+
+  # 0) Validation guards - prevent empty/NA directory names
+  .ensure_nonempty <- function(x, nm) {
+    if (is.null(x) || is.na(x) || !nzchar(as.character(x))) {
+      stop(sprintf("ensure_old_schema(): '%s' is empty/NA; refusing to save.", nm))
+    }
+  }
+  .ensure_nonempty(model_name, "model_name")
+  .ensure_nonempty(species, "species")
+  .ensure_nonempty(model_id, "model_id")
 
   # 1) Ensure matrices
   if (inherits(samples, "mcmc.list")) samples <- as.matrix(do.call(rbind, samples))
@@ -90,7 +106,15 @@ ensure_old_schema <- function(samples, samples2, meta,
   dir.create(species_dir, recursive = TRUE, showWarnings = FALSE)
   samples_file <- file.path(species_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
 
-  # 5) Return final list and path
+  # 5) Belt-and-suspenders parent directory validation
+  expected_parent <- normalizePath(species_dir, mustWork = FALSE)
+  actual_parent <- normalizePath(dirname(samples_file), mustWork = FALSE)
+  if (!identical(expected_parent, actual_parent)) {
+    stop(sprintf("Path validation failed: refusing to save outside expected directory.\n  expected parent: %s\n  actual parent:   %s",
+                 expected_parent, actual_parent))
+  }
+
+  # 6) Return final list and path
   list(
     chain_output = list(samples = samples, samples2 = samples2, metadata = required_meta),
     path = samples_file
@@ -355,6 +379,16 @@ print(valid_models)
 
 # Store single-task mode flag for later use
 single_task_mode <- !is.na(array_task_id)
+
+info("=== EXECUTION MODE DEBUGGING ===")
+info("array_task_id=%s", ifelse(is.na(array_task_id), "NULL", as.character(array_task_id)))
+info("single_task_mode=%s", as.character(single_task_mode))
+info("SGE_TASK_ID=%s", Sys.getenv("SGE_TASK_ID", "NULL"))
+info("PBS_ARRAYID=%s", Sys.getenv("PBS_ARRAYID", "NULL"))
+info("SLURM_ARRAY_TASK_ID=%s", Sys.getenv("SLURM_ARRAY_TASK_ID", "NULL"))
+info("Resolved here() root: %s", here::here())
+info("model_output_dir: %s", model_output_dir)
+info("=================================")
 
 info("HPC PRODUCTION: Running %d models across all ranks with beta regression approach", nrow(valid_models))
 
@@ -2063,8 +2097,16 @@ runAndSave_task <- function(task_idx) {
             stop("Invalid result structure from run_scenarios_fixed")
         }
         
-        # Save result immediately if successful
-        if (result$status == "SUCCESS") {
+        # Skip re-saving if run_scenarios_fixed already saved the file
+        if (is.list(result) && identical(result$status, "SUCCESS")) {
+            if (!is.null(result$file) && file.exists(result$file)) {
+                # File already saved by run_scenarios_fixed - skip duplicate save
+                if (exists("info")) info("Worker: chain already saved at %s; skipping duplicate save", result$file)
+                cat("Worker: chain already saved by run_scenarios_fixed, skipping duplicate save\n")
+                return(list(model_idx = model_idx, chain_no = chain_no, result = result))
+            }
+            
+            # Fallback: If for some reason the file wasn't saved, save it now
             # Create model_id for consistent naming using helper function
             model_id <- create_model_id(
                 valid_models$model_name[model_idx], 
@@ -2127,7 +2169,7 @@ runAndSave_task <- function(task_idx) {
             
             # Save MCMC samples with standardized structure
             saveRDS(compat$chain_output, compat$path)
-            cat("SAVED: Chain", chain_no, "for model", model_idx, "to", compat$path, "\n")
+            cat("SAVED (fallback): Chain", chain_no, "for model", model_idx, "to", compat$path, "\n")
             
         }
         
