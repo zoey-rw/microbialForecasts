@@ -7,8 +7,8 @@ library(kableExtra)
 sum.in <- readRDS(here("data", paste0("summary/logit_beta_fixed_priors_summaries.rds")))
 sum.all <- sum.in$summary_df  %>% mutate(tax_rank = rank,
 																				 time_period = recode(time_period, !!!microbialForecast:::date_recode))
-df <- sum.all %>%
-	mutate(pretty_group = ifelse(group %in% c("16S","bac"), "Bacteria", "Fungi"))
+# Use existing pretty_group column (already has correct Bacteria/Fungi values)
+df <- sum.all
 
 # Add prettier data values
 df$pretty_name <- recode(df$rank_only, !!!microbialForecast:::pretty_rank_names) %>%

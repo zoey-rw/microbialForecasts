@@ -1,198 +1,295 @@
-# read in seasonal values
-library(lubridate)
-library(ggrepel)
+# Latitude × phenophase figure
+# Shows how microbial abundance patterns across plant phenological phases
+# differ with site latitude — testing whether microbes track plant phenology
+# similarly at high vs low latitudes.
+
+library(tidyverse)
+library(ggpubr)
+
 source("source.R")
-source("microbialForecast/R/assignPhenology.r")
-source("microbialForecast/R/load_plot_estimates.r")
 
-sum.in <- readRDS(here("data", "summary/logit_beta_fixed_priors_summaries.rds"))
+# ── Data loading ─────────────────────────────────────────────────────────────
+phenophase_in <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))
+site_descr    <- readRDS(here("data/clean/site_effect_predictors.rds"))
 
-# Load plot estimates using new memory-efficient functions
-cat("Loading plot estimates for latitude phenophase analysis...\n")
-plot_estimates_env_cycl <- load_plot_estimates_for_phenology("env_cycl")
-plot_estimates_cycl_only <- load_plot_estimates_for_phenology("cycl_only")
+# Element 4 has per-observation abundance + all metadata
+abun_data <- phenophase_in[[4]]   # siteID, dates, mean_modeled_abun, sampling_season,
+                                   # fcast_type, pretty_group, model_name, taxon, amplitude,
+                                   # significant_sin, significant_cos
 
-# Combine plot estimates from both model types
-plot_estimates <- rbind(plot_estimates_env_cycl, plot_estimates_cycl_only, fill = TRUE)
+# Element 1 has per-model modal phenophase + amplitude
+mode_data <- phenophase_in[[1]]   # one row per model_id
 
-# Filter to only converged models
-plot_estimates <- plot_estimates %>% filter(model_name != "all_covariates") %>% filter(model_id %in% sum.in$keep_models)
-plot_estimates$month = lubridate::month(plot_estimates$dates)
-plot_estimates$year = lubridate::year(plot_estimates$dates)
-cycl_only_est = plot_estimates %>% filter(grepl("cycl_only",model_name))
+# ── Latitude categories ───────────────────────────────────────────────────────
+lat_df <- site_descr %>%
+  select(siteID, latitude, MAT, MAP) %>%
+  mutate(
+    latitude_category = case_when(
+      latitude > 44  ~ "High (>44\u00b0N)",
+      latitude < 31  ~ "Low (<31\u00b0N)",
+      TRUE           ~ "Mid (31-44\u00b0N)"
+    ),
+    latitude_category = factor(
+      latitude_category,
+      levels = c("Low (<31\u00b0N)", "Mid (31-44\u00b0N)", "High (>44\u00b0N)")
+    )
+  )
 
-model_info_key <- plot_estimates %>% select(c("model_id","fcast_type","time_period","pretty_group","rank_only","model_name","taxon")) %>% distinct()
+# ── Display settings ──────────────────────────────────────────────────────────
+pheno_levels <- c("greenup", "peak", "greendown", "dormancy")
+pheno_labels <- c("Green-up", "Peak", "Senescence", "Dormancy")
+pheno_colors <- c(
+  "Green-up"    = "#009E73",
+  "Peak"        = "#E69F00",
+  "Senescence"  = "#D55E00",
+  "Dormancy"    = "#56B4E9"
+)
 
-read_in <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))
-full_phenophase_abundance = read_in[[1]] %>% merge(model_info_key, all.x=T)
-pheno_info_key <- full_phenophase_abundance[,c("siteID","year","month","site_cat")] %>% distinct()
-# This factor should be ordered (so that phenophases are sequential)
-pheno_info_key$sampling_season =
-	factor(pheno_info_key$site_cat, ordered = T, levels = c("dormancy","greenup","peak","greendown"))
+lat_colors <- c(
+  "Low (<31\u00b0N)"  = "#D55E00",
+  "Mid (31-44\u00b0N)" = "#E69F00",
+  "High (>44\u00b0N)" = "#56B4E9"
+)
 
+# ── Panel A: seasonal abundance profiles for key fungal FGs × latitude ────────
+focal_fg <- c("ectomycorrhizal", "plant_pathogen", "saprotroph", "animal_pathogen")
+fg_labels <- c(
+  ectomycorrhizal = "Ectomycorrhizal",
+  plant_pathogen  = "Plant pathogen",
+  saprotroph      = "Saprotroph",
+  animal_pathogen = "Animal pathogen"
+)
 
-# Read in descriptions of NEON site-level soil chemistry, NCLD class, climate
-site_descr <- readRDS(here("data/summary/site_effect_predictors.rds"))
-site_descr$latitude_bin = cut(site_descr$latitude, breaks = 10) 	# Bin latitudes into groups
+pA_data <- abun_data %>%
+  filter(
+    model_name  == "cycl_only",
+    fcast_type  == "Functional",
+    pretty_group == "Fungi",
+    taxon       %in% focal_fg,
+    !is.na(mean_modeled_abun),
+    !is.na(sampling_season)
+  ) %>%
+  left_join(lat_df, by = "siteID") %>%
+  filter(!is.na(latitude_category)) %>%
+  mutate(
+    sampling_season = factor(sampling_season, levels = pheno_levels, labels = pheno_labels),
+    taxon           = recode(taxon, !!!fg_labels)
+  ) %>%
+  group_by(taxon, latitude_category, sampling_season) %>%
+  summarise(
+    mean_abun = mean(mean_modeled_abun, na.rm = TRUE),
+    se_abun   = sd(mean_modeled_abun,   na.rm = TRUE) / sqrt(sum(!is.na(mean_modeled_abun))),
+    .groups   = "drop"
+  )
 
+pA <- ggplot(pA_data,
+             aes(x = sampling_season, y = mean_abun,
+                 color = latitude_category, group = latitude_category)) +
+  geom_line(linewidth = 0.8) +
+  geom_errorbar(aes(ymin = mean_abun - se_abun, ymax = mean_abun + se_abun),
+                width = 0.15, linewidth = 0.5) +
+  geom_point(size = 2.5) +
+  facet_wrap(~taxon, scales = "free_y", nrow = 1) +
+  scale_color_manual(values = lat_colors, name = "Latitude") +
+  labs(
+    x = "Plant phenophase",
+    y = "Mean modeled abundance"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    strip.background  = element_rect(fill = "grey92", color = NA),
+    strip.text        = element_text(face = "bold"),
+    axis.text.x       = element_text(angle = 30, hjust = 1),
+    panel.grid.major.x = element_blank(),
+    legend.position   = "right"
+  )
 
-site_descr$latitude_category = ifelse(site_descr$latitude > 44, "High-latitude",
-																			ifelse(site_descr$latitude < 31, "Low-latitude",
-																						 "Mid-latitude"))
-# This factor should be ordered
-site_descr$latitude_category =
-	factor(site_descr$latitude_category, ordered = T, levels = c("Low-latitude",  "Mid-latitude","High-latitude"))
-pheno_info_key <- merge(pheno_info_key, site_descr, all=T)
+# ── Panel B: same for bacterial functional groups ─────────────────────────────
+focal_bac <- c("cellulolytic", "n_fixation", "denitrification", "nitrification")
+bac_labels <- c(
+  cellulolytic   = "Cellulolytic",
+  n_fixation     = "N-fixation",
+  denitrification = "Denitrification",
+  nitrification  = "Nitrification"
+)
+bac_present <- intersect(focal_bac, unique(abun_data$taxon))
 
+if (length(bac_present) >= 2) {
+  pB_data <- abun_data %>%
+    filter(
+      model_name   == "cycl_only",
+      fcast_type   == "Functional",
+      pretty_group == "Bacteria",
+      taxon        %in% bac_present,
+      !is.na(mean_modeled_abun),
+      !is.na(sampling_season)
+    ) %>%
+    left_join(lat_df, by = "siteID") %>%
+    filter(!is.na(latitude_category)) %>%
+    mutate(
+      sampling_season = factor(sampling_season, levels = pheno_levels, labels = pheno_labels),
+      taxon           = recode(taxon, !!!bac_labels)
+    ) %>%
+    group_by(taxon, latitude_category, sampling_season) %>%
+    summarise(
+      mean_abun = mean(mean_modeled_abun, na.rm = TRUE),
+      se_abun   = sd(mean_modeled_abun,   na.rm = TRUE) / sqrt(sum(!is.na(mean_modeled_abun))),
+      .groups   = "drop"
+    )
 
-plot_phenophase_abundance <- merge(plot_estimates, pheno_info_key, all.x=T)
+  pB <- ggplot(pB_data,
+               aes(x = sampling_season, y = mean_abun,
+                   color = latitude_category, group = latitude_category)) +
+    geom_line(linewidth = 0.8) +
+    geom_errorbar(aes(ymin = mean_abun - se_abun, ymax = mean_abun + se_abun),
+                  width = 0.15, linewidth = 0.5) +
+    geom_point(size = 2.5) +
+    facet_wrap(~taxon, scales = "free_y", nrow = 1) +
+    scale_color_manual(values = lat_colors, name = "Latitude") +
+    labs(
+      x = "Plant phenophase",
+      y = "Mean modeled abundance"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+      strip.background   = element_rect(fill = "grey92", color = NA),
+      strip.text         = element_text(face = "bold"),
+      axis.text.x        = element_text(angle = 30, hjust = 1),
+      panel.grid.major.x = element_blank(),
+      legend.position    = "bottom",
+      legend.key.size    = unit(0.8, "lines")
+    )
+} else {
+  pB <- NULL
+}
 
+# ── Panel C: seasonal CV by latitude — Bacteria and Fungi combined ────────────
+# For each site × significantly seasonal taxon, compute seasonal CV.
+# Bacteria and Fungi are shown together (colored), faceted by model type.
+# Kruskal-Wallis p-value tests whether CV differs across latitude bands.
+sig_models <- mode_data %>%
+  filter(model_name == "env_cycl",
+         significant_sin == 1 | significant_cos == 1) %>%
+  pull(model_id)
 
-plot_phenophase_abundance_cal <- plot_phenophase_abundance %>%  #full_phenophase_abundance %>%
-	filter(time_period=="2015-11_2018-01")
+site_cv <- abun_data %>%
+  filter(model_id %in% sig_models,
+         !is.na(mean_modeled_abun), !is.na(sampling_season)) %>%
+  group_by(model_id, fcast_type, pretty_group, siteID) %>%
+  summarise(
+    seasonal_cv = sd(mean_modeled_abun, na.rm = TRUE) /
+                  mean(mean_modeled_abun, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(lat_df, by = "siteID") %>%
+  filter(!is.na(latitude_category), is.finite(seasonal_cv))
 
-phenophase_fg_abundance_fungi <- plot_phenophase_abundance %>%  #full_phenophase_abundance %>%
-	filter(pretty_group=="Fungi" & fcast_type == "Functional" &
-				 	time_period=="2015-11_2018-01")
+kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
 
+# Compute KW p-values per fcast_type × pretty_group stratum
+kw_annot <- site_cv %>%
+  group_by(fcast_type, pretty_group) %>%
+  summarise(
+    p_val = kruskal.test(seasonal_cv ~ latitude_category)$p.value,
+    n     = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = paste0(pretty_group, " KW p=", format.pval(p_val, digits = 2, eps = 0.001)),
+    # Place annotation at top of each facet, centered on mid latitude
+    latitude_category = factor("Mid (31-44\u00b0N)",
+                               levels = levels(site_cv$latitude_category)),
+    seasonal_cv = max(site_cv$seasonal_cv, na.rm = TRUE) *
+                  ifelse(pretty_group == "Bacteria", 0.98, 0.88)
+  )
 
-for_stats <- plot_phenophase_abundance_cal  %>%
-	filter(!is.na(`50%`) & !is.na(site_cat))
-tukey_median_pheno = for_stats %>%
-	group_by(fcast_type,model_name,taxon,model_id) %>%
-	summarize(tukey(x = sampling_season, y = `50%`)) %>%
-	rename(sampling_season = x)
-tukey_median_pheno_sig <- tukey_median_pheno %>%
-	group_by(fcast_type,model_name,taxon,model_id) %>%
-	mutate(significant_diff = ifelse(n_distinct(Letters_Tukey) > 1, T, F)) %>% select(model_id, significant_diff) %>% distinct()
+pC <- ggplot(site_cv,
+             aes(x = latitude_category, y = seasonal_cv, fill = pretty_group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.55, width = 0.6,
+               position = position_dodge(width = 0.75)) +
+  geom_point(aes(color = pretty_group),
+             position = position_jitterdodge(jitter.width = 0.12, dodge.width = 0.75),
+             alpha = 0.15, size = 0.8) +
+  geom_text(data = kw_annot,
+            aes(x = latitude_category, y = seasonal_cv, label = label,
+                color = pretty_group),
+            inherit.aes = FALSE, size = 3, hjust = 0.5, show.legend = FALSE) +
+  facet_wrap(~fcast_type) +
+  scale_fill_manual(values  = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, guide = "none") +
+  labs(
+    x = "Site latitude",
+    y = "Seasonal CV\n(SD / mean across phenophases)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    strip.background   = element_rect(fill = "grey92", color = NA),
+    strip.text         = element_text(face = "bold"),
+    panel.grid.major.x = element_blank(),
+    legend.position    = "right"
+  )
 
-# core_cal_hindcast_seas <- merge(core_cal_hindcast,
-# 																tukey_median_pheno_sig, all = T, by=c("taxon", "model_name", "model_id", "fcast_type"))
+# ── Panel D: functional group lollipop (from fig_peak_phenophase Panel C) ─────
+# All functional groups ranked by cycl_only seasonal amplitude,
+# colored by peak phenophase, faded if not significant.
+pheno_levels <- c("greenup", "peak", "greendown", "dormancy")
+pheno_labels <- c("Green-up", "Peak", "Senescence", "Dormancy")
+pheno_colors <- c(
+  "Green-up"   = "#009E73",
+  "Peak"       = "#E69F00",
+  "Senescence" = "#D55E00",
+  "Dormancy"   = "#56B4E9"
+)
 
+fg_ranked <- mode_data %>%
+  filter(model_name == "cycl_only", fcast_type == "Functional",
+         significant_sin == 1 | significant_cos == 1,
+         !is.na(amplitude)) %>%
+  arrange(desc(amplitude)) %>%
+  mutate(
+    label      = tools::toTitleCase(gsub("_", " ", taxon)),
+    peak_phase = factor(sampling_season, levels = pheno_levels, labels = pheno_labels)
+  )
 
-fcast_horizon = readRDS(here("data/summary/fcast_horizon_df_core.rds"))
+pD <- ggplot(fg_ranked,
+             aes(x = amplitude,
+                 y = reorder(label, amplitude),
+                 color = peak_phase)) +
+  geom_segment(aes(xend = 0, yend = reorder(label, amplitude)),
+               color = "grey75", linewidth = 0.5) +
+  geom_point(aes(shape = pretty_group), size = 3) +
+  scale_color_manual(values = pheno_colors, name = "Peak phenophase",
+                     na.value = "grey60") +
+  scale_shape_manual(values = c(Bacteria = 16, Fungi = 17), name = "Kingdom") +
+  labs(x = "Seasonal amplitude", y = NULL) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey90", linewidth = 0.3),
+    panel.grid.major.x = element_blank(),
+    legend.position    = "right",
+    axis.text.y        = element_text(size = 9)
+  )
 
-core_horizon_seas <- merge(fcast_horizon[[1]],
-																tukey_median_pheno_sig, all.y = T, by=c("taxon", "model_name", "model_id"))
-ggplot(core_horizon_seas,
-			 aes(x = significant_diff,#color = latitude_category,
-			 		y = rsq_fcast_horizon)) +
+# ── Combine and save ──────────────────────────────────────────────────────────
+pB_noleg <- if (!is.null(pB)) pB + theme(legend.position = "none") else NULL
 
-	geom_boxplot(alpha=.5, show.legend = F) +
-	geom_point(#aes(color = siteID),
-		size=1, alpha=.3, #show.legend = F,
-		position=position_jitter(height=0), show.legend = F) + facet_grid(pretty_group~model_name) +coord_flip()
+top_row <- if (!is.null(pB_noleg)) {
+  ggarrange(pA, pB_noleg, nrow = 2, labels = c("A", "B"))
+} else {
+  pA
+}
 
+bottom_row <- ggarrange(pC, pD, ncol = 2, labels = c("C", "D"), widths = c(1, 1))
 
-for_stats <- phenophase_fg_abundance_fungi  %>%
-	filter(model_name=="cycl_only" & !is.na(`50%`) & !is.na(site_cat) & !is.na(pretty_group))
-for_stats <- merge(for_stats, site_descr, all.x=T)
+fig_lat <- ggarrange(
+  top_row, bottom_row,
+  nrow = 2, heights = c(1.6, 1)
+)
 
+out_dir <- here("data", "figures")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-tukey_median_pheno_evergreen = for_stats %>%
-	group_by(fcast_type,model_name,taxon,latitude_category) %>%
-	summarize(tukey(x = sampling_season, y = `50%`)) %>%
-	rename(sampling_season = x)
-plot_median_abun <- ggplot(for_stats %>% filter(taxon %in% c("ectomycorrhizal","plant_pathogen","saprotroph","endophyte")),
-													 aes(y = `50%`,#color = latitude_category,
-													 		x = sampling_season)) +
+ggsave(file.path(out_dir, "fig_latitude_phenophases.png"),
+       fig_lat, width = 15, height = 12, dpi = 200)
 
-	geom_boxplot(alpha=.5, show.legend = F) +
-	geom_point(#aes(color = siteID),
-						 size=1, alpha=.3, #show.legend = F,
-						 position=position_jitter(height=0), show.legend = F) +
-	#geom_line(aes(color = taxon), size=3, alpha=.5, show.legend = F) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	facet_grid(~taxon, scales="free") +
-	ylab("Median abundance across all sites") +
-	xlab("Plant phenophase")  +
-	geom_text(data = tukey_median_pheno_evergreen %>% filter(taxon %in% c("ectomycorrhizal","plant_pathogen","saprotroph","endophyte")),
-						aes(x = sampling_season, y = tot-.1, label = Letters_Tukey),
-						show.legend = F, color = 1, size =4)
-plot_median_abun
-
-
-
-
-site_descr$latitude_bin = cut(site_descr$latitude, breaks = 10) 	# Bin latitudes into groups
-
-
-
-
-core_scores_in = readRDS(here("data", paste0("summary/scoring_metrics_core_level.rds")))
-core_cal_hindcast = core_scores_in[[4]]
-
-
-# Wide format taxonomic
-truth_vals <- core_cal_hindcast %>%
-	filter(!is.na(core_truth)) %>%
-	filter(model_name == "env_cycl")
-
-truth_vals <- merge(truth_vals, site_descr, all.x=T, by="siteID")
-
-pheno_info_key <- full_phenophase_abundance[,c("siteID","year","month","site_cat")] %>% distinct()
-
-truth_vals$month = month(truth_vals$dates)
-truth_vals$year = year(truth_vals$dates)
-truth_vals <- merge(truth_vals, pheno_info_key, all.x=T, by=c("siteID","year","month"))
-# This factor should be ordered (so that phenophases are sequential)
-truth_vals$sampling_season =
-	factor(truth_vals$site_cat, ordered = T, levels = c("dormancy","greenup","peak","greendown"))
-
-saveRDS(truth_vals, here("data", paste0("summary/truth_vals_phenophase.rds")))
-
-
-ggplot(truth_vals %>%
-			 	filter(!is.na(sampling_season)) %>%
-			 	filter(taxon_name %in% c("ectomycorrhizal","plant_pathogen","saprotroph","endophyte")),
-													 aes(y = core_truth,color = latitude_category,
-													 		x = sampling_season)) +
-
-	geom_boxplot(alpha=.5, show.legend = F) +
-	geom_point(#aes(color = siteID),
-		size=1, alpha=.3, #show.legend = F,
-		position=position_jitter(height=0), show.legend = F) +
-	#geom_line(aes(color = taxon), size=3, alpha=.5, show.legend = F) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	facet_grid(taxon~latitude_category, scales="free") +
-	ylab("Median abundance across all sites") +
-	xlab("Plant phenophase")
-	# geom_text(data = tukey_median_pheno_evergreen %>% filter(taxon %in% c("ectomycorrhizal","plant_pathogen","saprotroph","endophyte")),
-	# 					aes(x = sampling_season, y = tot-.1, label = Letters_Tukey),
-	# 					show.legend = F, color = 1, size =4)
-
-
-
-
-scores_list = readRDS(here("data", "summary/scoring_metrics_cv.rds"))
-
-
-site_cv = scores_list$scoring_metrics_cv_site
-site_cv_simple <- merge(site_cv, site_descr, all.x=T, by="siteID") %>%
-	select(-c(metric,score,mean_crps_sample)) %>% distinct()
-
-
-
-ggplot(site_cv_simple,
-			 aes(y = per_site_cv,color = pretty_group,
-			 		x = latitude)) +
-
-	geom_boxplot(alpha=.5, show.legend = F) +
-	geom_point(#aes(color = siteID),
-		size=1, alpha=.3, #show.legend = F,
-		position=position_jitter(height=0), show.legend = F) +
-	#geom_line(aes(color = taxon), size=3, alpha=.5, show.legend = F) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) #+
-	#facet_grid(taxon~latitude_category, scales="free")
+cat("Saved: data/figures/fig_latitude_phenophases.png\n")

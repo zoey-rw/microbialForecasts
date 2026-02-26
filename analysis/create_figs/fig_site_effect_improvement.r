@@ -1,246 +1,143 @@
+# Site effect improvement: CRPS improvement from modeled vs random site effects
+# For each taxon, computes (random CRPS - modeled CRPS) / random CRPS.
+# Positive = modeled site effect is more accurate than random.
+#
+# Panel A: Distribution of improvement (%) across taxa, faceted by model type
+# Panel B: Overall mean ± SD improvement by model type and kingdom
+# Panel C: Prediction vs truth scatter (env_cycl, unobserved sites)
+
 source("source.R")
-library(ggallin)
-old_scores_list <- readRDS(here("data/summary/scoring_metrics_cv.rds"))
-new_scores_list <- readRDS(here("data/summary/scoring_metrics_plsr2.rds"))
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(patchwork)
 
-# Check if Parquet files exist, otherwise use RDS
-old_parquet <- here("data/summary/parquet/all_hindcasts.parquet")
-old_rds <- here("data/summary/all_hindcasts.rds")
-new_parquet <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
-new_rds <- here("data/summary/all_hindcasts_plsr2.rds")
+# ── Data ──────────────────────────────────────────────────────────────────────
+scores_list    <- readRDS(here("data/summary/scoring_metrics_plsr2.rds"))
+converged_base <- gsub("_beta_regression$", "", scores_list$converged_list)
 
-if (file.exists(old_parquet)) {
-  cat("Using old hindcast Parquet file...\n")
-  old_hindcast <- arrow::read_parquet(old_parquet)
-} else if (file.exists(old_rds)) {
-  cat("Old hindcast Parquet not found, using RDS...\n")
-  old_hindcast <- readRDS(old_rds)
-} else {
-  stop("Old hindcast file not found!")
-}
+model_labels <- c(cycl_only = "Cycl. only", env_cov = "Env. only",
+                  env_cycl  = "Env. + Cycl.")
 
-if (file.exists(new_parquet)) {
-  cat("Using new hindcast Parquet file...\n")
-  new_hindcast <- arrow::read_parquet(new_parquet)
-} else if (file.exists(new_rds)) {
-  cat("New hindcast Parquet not found, using RDS...\n")
-  new_hindcast <- readRDS(new_rds)
-} else {
-  stop("New hindcast file not found!")
-}
+scores_wide <- scores_list$scoring_metrics %>%
+  filter(model_id %in% converged_base,
+         site_prediction %in% c("New time x site (modeled effect)",
+                                "New time x site (random effect)"),
+         !is.na(mean_crps_sample),
+         is.finite(mean_crps_sample),
+         !is.na(pretty_group)) %>%
+  group_by(model_id, pretty_group, model_name, site_prediction) %>%
+  summarise(crps = mean(mean_crps_sample, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = site_prediction, values_from = crps) %>%
+  rename(modeled = `New time x site (modeled effect)`,
+         random  = `New time x site (random effect)`) %>%
+  filter(!is.na(modeled), !is.na(random)) %>%
+  mutate(
+    improvement_pct = (random - modeled) / random * 100,
+    improved        = improvement_pct > 0,
+    model_label     = recode(model_name, !!!model_labels)
+  )
 
+cat("Taxa included:", nrow(scores_wide), "\n")
 
+# ── Shared aesthetics ─────────────────────────────────────────────────────────
+kingdom_colors   <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
+improve_colors   <- c("TRUE" = "#0072B2", "FALSE" = "#D55E00")
+model_colors     <- c("Cycl. only" = "#0072B2", "Env. only" = "#D55E00",
+                      "Env. + Cycl." = "#009E73")
 
+base_theme <- theme_bw(base_size = 12) +
+  theme(
+    strip.background = element_rect(fill = "grey92", color = NA),
+    strip.text       = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
 
-# Check if Parquet files exist, otherwise use RDS
-old_parquet <- here("data/summary/parquet/all_hindcasts.parquet")
-old_rds <- here("data/summary/all_hindcasts.rds")
-new_parquet <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
-new_rds <- here("data/summary/all_hindcasts_plsr2.rds")
+# ── Panel A: Histogram of CRPS improvement % by model type × kingdom ─────────
+panel_a <- ggplot(scores_wide,
+                  aes(x = improvement_pct, fill = improved)) +
+  geom_histogram(bins = 25, color = "white", linewidth = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.8,
+             color = "grey20") +
+  facet_grid(pretty_group ~ model_label, scales = "free_y") +
+  scale_fill_manual(values = improve_colors,
+                    labels = c("TRUE" = "Improved", "FALSE" = "Worsened"),
+                    name   = NULL) +
+  labs(x = "CRPS improvement (%)   [positive = modeled site effect is better]",
+       y = "Number of taxa") +
+  base_theme +
+  theme(legend.position = "top")
 
-if (file.exists(old_parquet)) {
-  cat("Using old hindcast Parquet file...\n")
-  old_hindcast <- arrow::read_parquet(old_parquet)
-} else if (file.exists(old_rds)) {
-  cat("Old hindcast Parquet not found, using RDS...\n")
-  old_hindcast <- readRDS(old_rds)
-} else {
-  stop("Old hindcast file not found!")
-}
+# ── Panel B: Mean ± SD improvement by model type (per kingdom) ───────────────
+improvement_summary <- scores_wide %>%
+  group_by(pretty_group, model_name, model_label) %>%
+  summarise(
+    mean_pct = mean(improvement_pct, na.rm = TRUE),
+    sd_pct   = sd(improvement_pct,   na.rm = TRUE),
+    pct_improved = 100 * mean(improved, na.rm = TRUE),
+    n        = n(),
+    .groups  = "drop"
+  )
 
-if (file.exists(new_parquet)) {
-  cat("Using new hindcast Parquet file...\n")
-  new_hindcast <- arrow::read_parquet(new_parquet)
-} else if (file.exists(new_rds)) {
-  cat("New hindcast Parquet not found, using RDS...\n")
-  new_hindcast <- readRDS(new_rds)
-} else {
-  stop("New hindcast file not found!")
-}
+panel_b <- ggplot(improvement_summary,
+                  aes(x = model_label, y = mean_pct, color = pretty_group)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_pointrange(aes(ymin = mean_pct - sd_pct,
+                      ymax = mean_pct + sd_pct),
+                  position = position_dodge(width = 0.4),
+                  linewidth = 0.8, size = 0.7) +
+  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  labs(x = "Model type",
+       y = "Mean CRPS improvement (%)") +
+  base_theme +
+  theme(legend.position = "right")
 
+# ── Panel C: Prediction vs truth scatter (env_cycl, unobserved sites) ─────────
+hindcasts <- readRDS(here("data/summary/all_hindcasts_plsr2.rds"))
 
-converged <- new_scores_list$converged_list
+scatter_df <- hindcasts %>%
+  filter(model_name == "env_cycl",
+         site_prediction %in% c("New time x site (modeled effect)",
+                                "New time x site (random effect)"),
+         !is.na(truth), !is.na(mean),
+         is.finite(truth), is.finite(mean)) %>%
+  mutate(
+    site_prediction = recode(site_prediction,
+      "New time x site (modeled effect)" = "Modeled site effect",
+      "New time x site (random effect)"  = "Random site effect"
+    )
+  ) %>%
+  sample_frac(0.3)   # downsample for speed; remove if you want all points
 
-ggplot(new_hindcast %>%
-			 	filter(plotID %in% c("DEJU_001") &
-			 		model_id %in% c("env_cycl_copiotroph_20151101_20180101"))
-) +
-	#facet_grid(rows=vars(species), drop=T, scales="free") +
-	geom_line(aes(x = dates, y = med), show.legend = F, na.rm = T) +
-	geom_ribbon(aes(x = dates, ymin = lo, ymax = hi), alpha=0.6, fill="blue", na.rm = T) +
-	geom_ribbon(aes(x = dates, ymin = lo_25, ymax = hi_75),fill="red", alpha=0.6, na.rm = T) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	facet_grid(model_id+plotID~predicted_site_effect) +
-	geom_point(aes(x = dates, y = as.numeric(truth))) + xlab(NULL) + labs(fill='')
+panel_c <- ggplot(scatter_df,
+                  aes(x = truth, y = mean, color = pretty_group)) +
+  geom_point(alpha = 0.15, size = 0.6) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+              color = "grey30", linewidth = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.9) +
+  facet_grid(pretty_group ~ site_prediction) +
+  scale_color_manual(values = kingdom_colors, guide = "none") +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = "Observed relative abundance",
+       y = "Predicted relative abundance") +
+  base_theme
 
-# These variables are not defined - skipping these plots
-cat("hindcast_plsr and hindcast not defined - skipping related plots\n")
+# ── Combine and save ──────────────────────────────────────────────────────────
+fig_improvement <- (panel_a) / (panel_b | panel_c) +
+  plot_annotation(
+    tag_levels = "A",
+    theme = theme(plot.tag = element_text(face = "bold", size = 14))
+  ) +
+  plot_layout(heights = c(1.2, 1))
 
+out_dir <- here("data", "figures")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
+ggsave(file.path(out_dir, "fig_site_effect_improvement.png"), fig_improvement,
+       width = 13, height = 13, dpi = 200)
+cat("Saved: data/figures/fig_site_effect_improvement.pdf / .png\n")
 
-old_hindcast_not_na <- old_hindcast %>% filter(!is.na(crps)) %>%
-	filter(new_site==T) %>%
-	group_by(new_site, pretty_group,model_name,predicted_site_effect) %>% summarize(mean(crps))
-new_hindcast_not_na <- new_hindcast %>% filter(!is.na(crps)) %>%
-	filter(new_site==T) %>%
-	group_by(pretty_group,model_name,predicted_site_effect) %>% summarize(mean(crps))
-# new_hindcast2 is not defined - skipping this calculation
-cat("new_hindcast2 not defined - skipping this calculation\n")
-
-# This plot will be created after stat_pvalue is defined
-# ggplot(new_hindcast_not_na) + geom_point(aes(x = predicted_site_effect, y = `mean(crps)`, color = pretty_group)) + facet_grid(pretty_group~model_name) + stat_pvalue_manual(stat_pvalue, y.position = .023)
-
-new_hindcast <- new_hindcast %>% mutate(site_effect = ifelse(predicted_site_effect==T,"Modeled (PLSR)","Random"))
-
-# Define stat_pvalue for the plots
-stat_pvalue <- new_hindcast %>% filter(!is.na(crps)) %>%
-	filter(new_site==T & !is.na(site_effect))  %>%
-	ungroup() %>%
-	group_by(pretty_group,model_name) %>%
-	compare_means(crps ~ site_effect, data =.,
-								group.by = c("pretty_group","model_name"))
-
-ggplot(new_hindcast %>% filter(!is.na(crps)) %>%
-			 	filter(new_site==T & !is.na(site_effect)),
-			 aes(x = site_effect, y = crps, color = pretty_group)) +
-	#geom_point(aes(x = `site effect`, y = crps, color = pretty_group), position = position_jitter(), alpha=.1) +
-	geom_boxplot(outlier.shape = NA) +
-	#	geom_point(aes(x = predicted_site_effect, y = `mean(crps)`, color = pretty_group)) +
-	facet_grid(pretty_group~model_name) +
-	scale_y_continuous(trans = pseudolog10_trans) +
-	stat_compare_means(method = "t.test", aes(label = ..p.signif..),
-										 show.legend = F, hide.ns = F, size=4)
-
-
-
-
-ggplot(new_hindcast %>% filter(!is.na(crps)) %>%
-			 	filter(new_site==T & !is.na(site_effect)), aes(x = site_effect, y = crps, color = pretty_group)) +
-	#geom_point(aes(x = `site effect`, y = crps, color = pretty_group), position = position_jitter(), alpha=.1) +
-	#	geom_point(aes(x = predicted_site_effect, y = `mean(crps)`, color = pretty_group)) +
-	facet_grid(pretty_group~model_name) +
-	scale_y_continuous(trans = pseudolog10_trans,limits = c(0,.035)) +
-	#geom_violin(draw_quantiles = c(.5), show.legend = F) +
-
-	geom_boxplot(outlier.shape = NA) +
-	stat_pvalue_manual(stat_pvalue, y.position = .005, label="p.signif") + theme_bw(base_size = 22)
-	#coord_cartesian(ylim = c(0, .1))
-
-
-stat_pvalue <- new_hindcast %>% filter(!is.na(crps)) %>%
-	filter(new_site==T & !is.na(site_effect))  %>%
-	ungroup() %>%
-	group_by(pretty_group,model_name) %>%
-	#mutate(modeled_site_effect = as.factor(predicted_site_effect)) %>%
-	#filter(fcast_type=="Functional") %>%
-	#group_by(pretty_group) %>%
-	compare_means(crps ~ site_effect, data =.,
-								group.by = c("pretty_group","model_name"))
-#	rstatix::tukey_hsd(crps ~ modeled_site_effect)
-
-new_hindcast_wide <- new_hindcast %>% pivot_wider(names_from = site_effect, values_from = crps) %>%
-	mutate(site_eff_improvement = Random - `Modeled (PLSR)`)
-ggplot(new_hindcast_wide,
-			 aes(x = pretty_group, y = site_eff_improvement, group = model_id)) +
-	geom_line(alpha=.2) +
-	geom_point(size = 2,position = position_jitter(width = .05), alpha=.5) +
-	facet_wrap( ~ pretty_group, switch = "x") +
-	scale_x_discrete("") +
-	theme_minimal() +
-	scale_y_continuous(trans = pseudolog10_trans)
-
-# scores_list is not defined - using new_scores_list instead
-newsite_scores_taxon = new_scores_list$scoring_metrics_cv %>%
-	filter(model_id %in% converged) %>%
-	filter(site_prediction != "New time (observed site)" & model_name=="env_cycl") %>%
-	select(-c(metric, score)) %>% distinct()
-
-newsite_scores_taxon_wide <- newsite_scores_taxon %>%
-	pivot_wider(names_from = site_prediction, values_from = mean_crps_sample) %>%
-	mutate(site_eff_improvement = `New time x site (modeled effect)` - `New time x site (random effect)`)
-
-# THIS IS THE APPROACH
-# scores_list is not defined - using new_scores_list instead
-skill_scores = new_scores_list$skill_score_taxon %>%
-	filter(model_name=="env_cycl") %>%
-
-	filter(model_id %in% converged) %>% pivot_longer(cols = c(skill_score,skill_score_random))
-ggplot(skill_scores,
-			 aes(x = name, y = value, group = model_id)) +
-	geom_line(alpha=.2) +
-	geom_point(size = 2, aes(color = name), position = position_jitter(width = .05), alpha=.5) +
-	facet_wrap( ~ pretty_group, switch = "x") +
-	scale_x_discrete("") +
-	theme_minimal() +
-	theme(legend.position = "top",
-				panel.grid = element_blank(),
-				axis.text.x = element_blank(),
-				axis.line.y = element_line(size = .5)) +
-	scale_y_continuous(trans = pseudolog10_trans)#+
-#	scale_y_log10()
-
-stat_pvalue <- skill_scores %>% filter(!is.na(mean_crps_sample)) %>%
-
-	#filter(new_site==T & !is.na(site_effect))  %>%
-	ungroup() %>%
-	group_by(pretty_group,model_name) %>%
-	#mutate(modeled_site_effect = as.factor(predicted_site_effect)) %>%
-	#filter(fcast_type=="Functional") %>%
-	#group_by(pretty_group) %>%
-	compare_means(value ~ name, data =.,
-								group.by = c("pretty_group","model_name"))
-
-stat_pvalue <- newsite_scores_taxon %>% filter(!is.na(mean_crps_sample)) %>%
-	filter(site_prediction != "New time (observed site)" & model_name=="env_cycl") %>%
-
-	#filter(new_site==T & !is.na(site_effect))  %>%
-	ungroup() %>%
-	group_by(pretty_group,model_name) %>%
-	#mutate(modeled_site_effect = as.factor(predicted_site_effect)) %>%
-	#filter(fcast_type=="Functional") %>%
-	#group_by(pretty_group) %>%
-	compare_means(mean_crps_sample ~ site_prediction, data =.,
-								group.by = c("pretty_group","model_name"))
-ggplot(newsite_scores_taxon,
-			 aes(x = site_prediction, y = mean_crps_sample, group = model_id)) +
-	geom_line(alpha=.2) +
-	geom_point(size = 2, aes(color = site_prediction), position = position_jitter(width = .05), alpha=.5) +
-	facet_wrap( ~ pretty_group, switch = "x") +
-	scale_x_discrete("") +
-	theme_minimal() +
-	theme(legend.position = "top",
-				panel.grid = element_blank(),
-				axis.text.x = element_blank(),
-				axis.line.y = element_line(size = .5)) +
-	scale_y_log10()
-
-stat_pvalue_univ <- new_hindcast %>% filter(!is.na(crps)) %>%
-	filter(new_site==T & !is.na(site_effect))  %>%
-	ungroup() %>%
-	group_by(pretty_group,model_name) %>%
-	#mutate(modeled_site_effect = as.factor(predicted_site_effect)) %>%
-	#filter(fcast_type=="Functional") %>%
-	#group_by(pretty_group) %>%
-	compare_means(crps ~ site_effect, data =.)
-#	rstatix::tukey_hsd(crps ~ modeled_site_effect)
-
-
-ggplot(new_hindcast %>% filter(!is.na(crps)) %>%
-			 	filter(new_site==T & !is.na(site_effect)), aes(x = site_effect, y = crps)) +
-	#geom_point(position = position_jitter(), alpha=.1) +
-	#	geom_point(aes(x = predicted_site_effect, y = `mean(crps)`, color = pretty_group)) +
-	#geom_violin(draw_quantiles = c(.5), show.legend = F) +
-
-	geom_boxplot(outlier.shape = NA) +
-	stat_pvalue_manual(stat_pvalue_univ, y.position = .005, label="p.signif") + theme_bw(base_size = 22) +
-	scale_y_continuous(trans = pseudolog10_trans,limits = c(0,.035))
-
-hindcast_crps_wide = new_hindcast %>%
-	filter(new_site==T & !is.na(site_effect)) %>%
-	select(pretty_group, model_name, model_id, plotID, timepoint, site_effect, crps) %>%
-	pivot_wider(names_from = site_effect, values_from = crps)
-
+# ── Summary stats ─────────────────────────────────────────────────────────────
+cat("\n=== Improvement by model type ===\n")
+print(as.data.frame(improvement_summary), digits = 3)

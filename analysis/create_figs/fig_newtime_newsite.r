@@ -1,151 +1,148 @@
+# Site prediction types: observed, modeled, and random site effects
+# Central question: do PLSR-modeled site effects improve new-site forecasts
+# relative to random/mean effects? Panels show RSQ and CRPS across prediction types.
+#
+# Site prediction types:
+#   "New time (observed site)"          — hindcast at a site seen during calibration
+#   "New time x site (modeled effect)"  — new site, PLSR-predicted site effect
+#   "New time x site (random effect)"   — new site, mean (random) site effect
 
 source("source.R")
-#p_load(forestmangr)
-scores_list = readRDS(here("data/summary/scoring_metrics_cv.rds"))
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ggpubr)
+library(patchwork)
 
-library(ggallin)
+# ── Data ──────────────────────────────────────────────────────────────────────
+scores_list    <- readRDS(here("data/summary/scoring_metrics_plsr2.rds"))
+converged_base <- gsub("_beta_regression$", "", scores_list$converged_list)
 
-#keep = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/summary/converged_taxa_list.rds")
-unconverged = scores_list$unconverged_list
-converged = scores_list$converged_list
-converged_strict = scores_list$converged_strict_list
+site_pred_order <- c(
+  "New time (observed site)",
+  "New time x site (modeled effect)",
+  "New time x site (random effect)"
+)
+site_pred_labels <- c(
+  "New time\n(observed site)",
+  "New time × site\n(modeled effect)",
+  "New time × site\n(random effect)"
+)
 
+scores_df <- scores_list$scoring_metrics %>%
+  filter(model_id %in% converged_base,
+         model_name == "env_cycl",
+         site_prediction %in% site_pred_order,
+         !is.na(pretty_group)) %>%
+  mutate(
+    site_prediction = factor(site_prediction,
+                             levels = site_pred_order,
+                             labels = site_pred_labels)
+  )
 
-# Get mean values for plotting
-site_time_scores_to_plot = scores_list$scoring_metrics %>%
-	filter(model_id %in% converged_strict) %>%
-	filter(model_name=="env_cycl" &
-				 	!grepl("random", site_prediction))
+# ── Shared aesthetics ─────────────────────────────────────────────────────────
+kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
 
+site_colors <- c(
+  "New time\n(observed site)"       = "#009E73",
+  "New time × site\n(modeled effect)" = "#0072B2",
+  "New time × site\n(random effect)"  = "#CC79A7"
+)
 
-rank_vals = site_time_scores_to_plot %>%
-	filter(grepl("observed", site_prediction))
-rank_means = rank_vals %>% ungroup() %>%
-	group_by(fcast_type, pretty_group, model_name, pretty_name) %>%
-	summarize(mean_RSQ=mean(RSQ, na.rm=T),
-						sd_RSQ = sd(RSQ, na.rm=T)) %>%
-	mutate(ymax = mean_RSQ + 1.96*sd_RSQ,
-				 ymin = mean_RSQ - 1.96*sd_RSQ) %>% arrange(pretty_group, pretty_name)
+base_theme <- theme_bw(base_size = 12) +
+  theme(
+    strip.background = element_rect(fill = "grey92", color = NA),
+    strip.text       = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(size = 9)
+  )
 
-# Get mean values for plotting
-skill_score_vals = scores_list$skill_score_taxon %>%
-	filter(model_id %in% converged_strict & model_name=="env_cycl")
-skill_score_to_plot = skill_score_vals %>% ungroup() %>%
-	group_by(fcast_type, pretty_group, model_name, pretty_name) %>%
-	summarize(mean_skill_score=mean(skill_score, na.rm=T),
-						sd_skill_score = sd(skill_score, na.rm=T)) %>%
-	mutate(ymax = mean_skill_score + 1.96*sd_skill_score,
-				 ymin = mean_skill_score - 1.96*sd_skill_score) %>% arrange(pretty_group, pretty_name)
+comparisons_mods <- list(
+  c("New time × site\n(modeled effect)", "New time × site\n(random effect)")
+)
 
+# ── Panel A: RSQ by prediction type ──────────────────────────────────────────
+panel_a <- ggplot(scores_df,
+                  aes(x = site_prediction, y = RSQ, fill = site_prediction)) +
+  geom_boxplot(alpha = 0.6, outlier.shape = NA, width = 0.55) +
+  geom_point(aes(color = site_prediction),
+             position = position_jitter(width = 0.15, height = 0),
+             alpha = 0.25, size = 1) +
+  stat_compare_means(comparisons = comparisons_mods,
+                     method = "wilcox.test", label = "p.signif", size = 4) +
+  facet_wrap(~pretty_group) +
+  scale_fill_manual(values  = site_colors, guide = "none") +
+  scale_color_manual(values = site_colors, guide = "none") +
+  labs(x = NULL, y = expression(R^2)) +
+  base_theme
 
+# ── Panel B: CRPS by prediction type ─────────────────────────────────────────
+panel_b <- ggplot(scores_df %>% filter(!is.na(mean_crps_sample)),
+                  aes(x = site_prediction, y = mean_crps_sample,
+                      fill = site_prediction)) +
+  geom_boxplot(alpha = 0.6, outlier.shape = NA, width = 0.55) +
+  geom_point(aes(color = site_prediction),
+             position = position_jitter(width = 0.15, height = 0),
+             alpha = 0.25, size = 1) +
+  stat_compare_means(comparisons = comparisons_mods,
+                     method = "wilcox.test", label = "p.signif", size = 4) +
+  facet_wrap(~pretty_group) +
+  scale_fill_manual(values  = site_colors, guide = "none") +
+  scale_color_manual(values = site_colors, guide = "none") +
+  labs(x = NULL, y = "Probabilistic forecast error (CRPS)") +
+  base_theme
 
+# ── Panel C: Paired slope graph — random → modeled per taxon (env_cycl) ──────
+# Each line = one taxon; blue = improved (modeled < random CRPS), red = worsened
+paired <- scores_df %>%
+  filter(site_prediction %in% c("New time × site\n(modeled effect)",
+                                "New time × site\n(random effect)"),
+         !is.na(mean_crps_sample)) %>%
+  pivot_wider(id_cols     = c(model_id, pretty_group),
+              names_from  = site_prediction,
+              values_from = mean_crps_sample,
+              values_fn   = mean) %>%
+  rename(modeled = `New time × site\n(modeled effect)`,
+         random  = `New time × site\n(random effect)`) %>%
+  filter(!is.na(modeled), !is.na(random)) %>%
+  mutate(improved = modeled < random)
 
-# Calculate Tukey groups
-tukey_list <- list()
-for (pretty_group in c("Bacteria","Fungi")){
-	group_df <- rank_vals %>% filter(pretty_group == !!pretty_group)
-	out <- tukey2(group_df$pretty_name, group_df$RSQ	, y.offset = .1)
-	tukey_list[[pretty_group]] <- out %>% mutate(pretty_group = !!pretty_group)
-}
-tukey_list_newtime <- data.table::rbindlist(tukey_list)
+panel_c <- paired %>%
+  pivot_longer(cols = c(random, modeled),
+               names_to  = "method",
+               values_to = "crps") %>%
+  mutate(method = factor(method,
+                         levels = c("random", "modeled"),
+                         labels = c("Random\nsite effect", "Modeled site\neffect (PLSR)"))) %>%
+  ggplot(aes(x = method, y = crps, group = model_id)) +
+  geom_line(aes(color = improved), alpha = 0.3, linewidth = 0.5) +
+  geom_point(aes(color = improved), alpha = 0.45, size = 1.5) +
+  facet_wrap(~pretty_group) +
+  scale_color_manual(values = c("TRUE" = "#0072B2", "FALSE" = "#D55E00"),
+                     labels = c("TRUE" = "Improved", "FALSE" = "Worsened"),
+                     name = "CRPS outcome") +
+  scale_y_log10() +
+  labs(x = NULL, y = "Mean CRPS (log scale)") +
+  base_theme +
+  theme(legend.position = "right")
 
-tukey_list <- list()
-for (pretty_group in c("Bacteria","Fungi")){
-	group_df <- skill_score_vals %>% filter(pretty_group == !!pretty_group)
-	out <- tukey(group_df$pretty_name, group_df$skill_score	, y.offset = .1)
-	tukey_list[[pretty_group]] <- out %>% mutate(pretty_group = !!pretty_group)
-}
-tukey_list_newsite <- data.table::rbindlist(tukey_list)
+# ── Combine and save ──────────────────────────────────────────────────────────
+# Add percentage improved annotation
+pct_improved <- paired %>%
+  group_by(pretty_group) %>%
+  summarise(pct = round(100 * mean(improved, na.rm = TRUE), 1), .groups = "drop")
+cat("Percent of taxa improved by modeled site effects:\n")
+print(pct_improved)
 
+fig_newsite <- panel_a / panel_b / panel_c +
+  plot_annotation(
+    tag_levels = "A",
+    theme = theme(plot.tag = element_text(face = "bold", size = 14))
+  )
 
-# Compare new-time only across taxonomic ranks and functional groups
-newtime_by_rank = ggplot(rank_means,
-												 aes(x = pretty_name, y = mean_RSQ, color = pretty_group)) +
-	facet_grid(cols=vars(pretty_group), scales="free") +
-	theme_minimal(base_size = 18) +
-	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05)) +
-	ylab("RSQ at new times") + xlab("Rank") +
-	#scale_color_discrete(name=NULL, labels=c("Within-site","New site")) +
-	#scale_y_continuous(trans=scales::pseudo_log_trans(base = 2)) +
-	geom_pointrange(aes(ymin = ymin, ymax = ymax, color = pretty_group), show.legend = F) + ggtitle(NULL)  +
-	stat_compare_means(data = rank_vals,
-										 aes(x = pretty_name, y = RSQ),
-										 method = "anova", inherit.aes = F, size=5) + # Add global p-value
-	theme(plot.margin = margin(1,2,.5,1, "cm")) +
-	geom_rug(data = rank_vals %>% filter(pretty_group == "Bacteria"),
-					 aes(x = pretty_name, y = RSQ), alpha=.5, sides="r", show.legend = F, color = "#F8766D") +
-	geom_rug(data = rank_vals %>% filter(pretty_group == "Fungi"),
-					 aes(x = pretty_name, y = RSQ), alpha=.5, sides="l", show.legend = F, color = "#00BFC4") #+
-#geom_rug(data = rank_vals, aes(x = pretty_name, y = RSQ, color = pretty_group), alpha=.5, sides="l", show.legend = F)
-newtime_by_rank +
-	geom_point(data = rank_vals,
-						 aes(x = pretty_name, y = RSQ, color = pretty_group), size=3, alpha=.1, show.legend = F) +
-	geom_text(data = tukey_list_newtime,
-																																																																	 aes(x = x, y = tot + .1,
-																																																																	 		label = Letters_Tukey), show.legend = F,
-																																																																	 color = 1, size =6)
+out_dir <- here("data", "figures")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-
-
-
-# Compare new-time only across taxonomic ranks and functional groups
-newsite_by_rank = ggplot(skill_score_to_plot,
-												 aes(x = pretty_name, y = mean_skill_score, color = pretty_group)) +
-	facet_grid(cols=vars(pretty_group), scales="free") +
-	theme_minimal(base_size = 18) +
-	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05)) +
-	ylab("Relative skill at new sites") + xlab("Rank") +
-	#scale_color_discrete(name=NULL, labels=c("Within-site","New site")) +
-	#scale_y_continuous(trans=scales::pseudo_log_trans(base = 2)) +
-	geom_pointrange(aes(ymin = ymin, ymax = ymax, color = pretty_group), show.legend = F) + ggtitle(NULL)  +
-	stat_compare_means(data = skill_score_vals,
-										 aes(x = pretty_name, y = skill_score),
-										 method = "anova", inherit.aes = F, size=5) + # Add global p-value
-	theme(plot.margin = margin(1,2,.5,1, "cm")) +
-	geom_rug(data = skill_score_vals %>% filter(pretty_group == "Bacteria"),
-					 aes(x = pretty_name, y = skill_score), alpha=.5, sides="r", show.legend = F, color = "#F8766D") +
-	geom_rug(data = skill_score_vals %>% filter(pretty_group == "Fungi"),
-					 aes(x = pretty_name, y = skill_score), alpha=.5, sides="l", show.legend = F, color = "#00BFC4") #+
-#geom_rug(data = rank_vals, aes(x = pretty_name, y = RSQ, color = pretty_group), alpha=.5, sides="l", show.legend = F)
-newsite_by_rank +
-	# geom_point(data = skill_score_vals,
-	# 														aes(x = pretty_name, y = skill_score, color = pretty_group), size=3, alpha=.1, show.legend = F) +
-	scale_y_continuous(trans = pseudolog10_trans)  + geom_text(data = tukey_list_newsite,
-																														 aes(x = x, y = tot + 1.5,
-																														 		label = Letters_Tukey), show.legend = F,
-																														 color = 1, size =6)
-
-
-
-
-cal_scores = scores_list$calibration_metrics
-
-# Get mean values for plotting
-cal_score_vals = scores_list$calibration_metrics %>%
-	filter(model_name=="env_cycl") %>%
-	filter(model_id %in% converged & model_name=="env_cycl")
-
-cal_score_vals_to_plot = cal_score_vals %>% ungroup() %>%
-	group_by(fcast_type, pretty_group, model_name, pretty_name, rank_name)  %>%
-	summarize(mean_RSQ=mean(RSQ, na.rm=T),
-						sd_RSQ = sd(RSQ, na.rm=T)) %>%
-	mutate(ymax = mean_RSQ + 1.96*sd_RSQ,
-				 ymin = mean_RSQ - 1.96*sd_RSQ) %>% arrange(pretty_group, pretty_name)
-
-
-ggplot(cal_score_vals_to_plot,
-			 aes(x = pretty_name, y = mean_RSQ, color = pretty_group)) +
-	facet_grid(cols=vars(pretty_group), scales="free") +
-	theme_minimal(base_size = 18) +
-	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05)) +
-	ylab("Calibration RSQ") + xlab("Rank") +
-	#scale_color_discrete(name=NULL, labels=c("Within-site","New site")) +
-	#scale_y_continuous(trans=scales::pseudo_log_trans(base = 2)) +
-	geom_pointrange(aes(ymin = ymin, ymax = ymax, color = pretty_group), show.legend = F) + ggtitle(NULL)  +
-	theme(plot.margin = margin(1,2,.5,1, "cm")) +
-	geom_rug(data = cal_score_vals %>% filter(pretty_group == "Bacteria"),
-					 aes(x = pretty_name, y = RSQ), alpha=.5, sides="r", show.legend = F, color = "#F8766D") +
-	geom_rug(data = cal_score_vals %>% filter(pretty_group == "Fungi"),
-					 aes(x = pretty_name, y = RSQ), alpha=.5, sides="l", show.legend = F, color = "#00BFC4") #+
-#geom_rug(data = rank_vals, aes(x = pretty_name, y = RSQ, color = pretty_group), alpha=.5, sides="l", show.legend = F)
-
+ggsave(file.path(out_dir, "fig_newtime_newsite.png"), fig_newsite,
+       width = 10, height = 13, dpi = 200)
+cat("Saved: data/figures/fig_newtime_newsite.pdf / .png\n")

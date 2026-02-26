@@ -1093,6 +1093,7 @@ run_scenarios_with_restart <- function(j, chain_no) {
 			model_name = model_name,
 			model_id = model_id,
 			use_legacy_covariate = use_legacy_covariate,
+			has_driver_uncertainty = FALSE,  # Flag to identify regular models (no driver uncertainty)
 			scenario = scenario,
 			min.date = min.date,
 			max.date = max.date,
@@ -1230,16 +1231,26 @@ cat("DEBUG: After scenario filtering, params has", nrow(params_with_full_names),
 cat("DEBUG: Sample full_model_names:", head(params_with_full_names$full_model_name, 3), "\n")
 
 # Filter for unconverged models
-params <- params_with_full_names %>% filter(full_model_name %in% rerun_list)
-cat("DEBUG: After rerun_list filtering, params has", nrow(params), "rows\n")
+params_filtered <- params_with_full_names %>% filter(full_model_name %in% rerun_list)
+cat("DEBUG: After rerun_list filtering, params has", nrow(params_filtered), "rows\n")
 
 # Remove duplicate model entries
-params <- params %>% distinct(full_model_name, .keep_all = TRUE)
-cat("DEBUG: After deduplication, params has", nrow(params), "rows\n")
+params_filtered <- params_filtered %>% distinct(full_model_name, .keep_all = TRUE)
+cat("DEBUG: After deduplication, params has", nrow(params_filtered), "rows\n")
 
 # Filter out already converged models (using full model names)
-params <- params %>% filter(!full_model_name %in% converged_list)
-cat("DEBUG: After converged_list filtering, params has", nrow(params), "rows\n")
+params_filtered <- params_filtered %>% filter(!full_model_name %in% converged_list)
+cat("DEBUG: After converged_list filtering, params has", nrow(params_filtered), "rows\n")
+
+# CRITICAL FIX: Order params to match the shell script order (rerun_list order)
+# The shell script uses the order from rerun_list, so we must match that exactly
+params_filtered$rerun_order <- match(params_filtered$full_model_name, rerun_list)
+params <- params_filtered %>% arrange(rerun_order) %>% select(-rerun_order)
+
+cat("DEBUG: Final params order (matching shell script):\n")
+for (i in 1:min(5, nrow(params))) {
+  cat("  ", i, ":", params$full_model_name[i], "(", params$species[i], ")\n")
+}
 
 # Set valid_models for compatibility with runAndSave_task function
 valid_models <- params
@@ -1537,6 +1548,7 @@ run_sequential_task <- function(task_idx) {
           model_name = params$model_name[model_idx],
           model_id = model_id,
           use_legacy_covariate = grepl("Legacy with covariate", params$scenario[model_idx]),
+          has_driver_uncertainty = FALSE,  # Flag to identify regular models (no driver uncertainty)
           scenario = params$scenario[model_idx],
           min.date = params$min.date[model_idx],
           max.date = params$max.date[model_idx],

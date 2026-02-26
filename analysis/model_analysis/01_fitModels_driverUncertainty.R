@@ -62,23 +62,62 @@ ensure_old_schema <- function(samples, samples2, meta,
   if (inherits(samples, "mcmc"))      samples <- as.matrix(samples)
   if (!is.matrix(samples))            samples <- as.matrix(samples)
 
-  if (missing(samples2) || is.null(samples2)) samples2 <- samples
+  # CRITICAL FIX: Don't fall back to samples if samples2 is missing/empty
+  # samples2 should contain plot-level estimates (mu[plot, time]), not parameters
+  if (missing(samples2) || is.null(samples2)) {
+    # Don't fall back to samples - samples2 should be separate
+    warning("samples2 is missing or NULL - expected mu[plot, time] columns from mvSamples2")
+    samples2 <- matrix(nrow = 0, ncol = 0)
+  }
   if (inherits(samples2, "mcmc.list")) samples2 <- as.matrix(do.call(rbind, samples2))
   if (inherits(samples2, "mcmc"))      samples2 <- as.matrix(samples2)
   if (!is.matrix(samples2))            samples2 <- as.matrix(samples2)
+  # CRITICAL FIX: Don't fall back to samples if samples2 is empty - this causes wrong data
+  # If mvSamples2 is empty, we should detect this as an error, not silently use parameters
+  if (is.matrix(samples2) && nrow(samples2) == 0) {
+    warning("samples2 is empty (0 rows) - mvSamples2 may not have been populated. ",
+            "This may indicate thin2 is too large or monitors2 is not working correctly.")
+    # Keep empty matrix instead of falling back to parameters
+    samples2 <- matrix(nrow = 0, ncol = 0)
+  }
 
   # 2) Rename latent columns to plot_mu[*] (drop Ex if present)
   cn2 <- colnames(samples2)
   if (!is.null(cn2)) {
-    # keep only mu[...] (or plot_mu[...]) columns
+    # CRITICAL FIX: Check for mu/plot_mu columns first
     keep <- grepl("^mu\\[", cn2) | grepl("^plot_mu\\[", cn2)
+    
+    # CRITICAL FIX: If samples2 contains parameter columns instead of mu columns, this is wrong
+    # Check for parameter columns to detect when samples2 was incorrectly populated
+    has_param_cols <- any(grepl("^beta\\[", cn2)) || any(grepl("^intercept", cn2)) || 
+                      any(grepl("^site_effect\\[", cn2)) || any(grepl("^precision", cn2)) ||
+                      any(grepl("^rho", cn2)) || any(grepl("^legacy_effect", cn2))
+    
+    if (has_param_cols && !any(keep)) {
+      # CRITICAL ERROR: samples2 contains parameters, not plot estimates
+      # This means mvSamples2 was empty or wrong, and we fell back to samples (parameters)
+      stop("CRITICAL: samples2 contains parameter columns (beta, intercept, etc.) instead of mu[plot, time] columns.\n",
+           "This indicates mvSamples2 was empty or incorrectly populated.\n",
+           "Found columns like: ", paste(head(cn2[grepl("^beta\\[|^intercept|^site_effect", cn2)], 5), collapse=", "), "\n",
+           "Expected mu[plot, time] columns from mvSamples2 monitors2.")
+    }
+    
     if (any(keep)) {
       samples2 <- samples2[, keep, drop = FALSE]
       cn2      <- colnames(samples2)
+    } else {
+      # No mu columns found - set to empty matrix with warning
+      warning("No mu[...] or plot_mu[...] columns found in samples2. ",
+              "This may indicate mvSamples2 was empty or not properly monitored.")
+      samples2 <- matrix(nrow = nrow(samples2), ncol = 0)
+      cn2 <- character(0)
     }
+    
     # convert mu[...] -> plot_mu[...]
-    cn2 <- sub("^mu\\[", "plot_mu[", cn2)
-    colnames(samples2) <- cn2
+    if (length(cn2) > 0) {
+      cn2 <- sub("^mu\\[", "plot_mu[", cn2)
+      colnames(samples2) <- cn2
+    }
   }
 
   # 3) Minimal metadata set with consistent keys/types
@@ -106,10 +145,11 @@ ensure_old_schema <- function(samples, samples2, meta,
   dir.create(species_dir, recursive = TRUE, showWarnings = FALSE)
   samples_file <- file.path(species_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
 
-  # 5) Belt-and-suspenders parent directory validation
-  expected_parent <- normalizePath(species_dir, mustWork = FALSE)
-  actual_parent <- normalizePath(dirname(samples_file), mustWork = FALSE)
-  if (!identical(expected_parent, actual_parent)) {
+  # 5) Belt-and-suspenders parent directory validation (resilient to symlinks/trailing slashes)
+  canon <- function(p) normalizePath(p, winslash = "/", mustWork = FALSE)
+  expected_parent <- sub("/+$", "", canon(species_dir))
+  actual_parent <- sub("/+$", "", canon(dirname(samples_file)))
+  if (expected_parent != actual_parent) {
     stop(sprintf("Path validation failed: refusing to save outside expected directory.\n  expected parent: %s\n  actual parent:   %s",
                  expected_parent, actual_parent))
   }
@@ -122,6 +162,21 @@ ensure_old_schema <- function(samples, samples2, meta,
 }
 
 `%||%` <- function(a,b) if(is.null(a)) b else a
+
+# Atomic save wrapper for safe writes on distributed filesystems
+atomic_saveRDS <- function(object, path, compress = "xz") {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  tmp <- paste0(path, ".tmp_", Sys.getpid(), "_", sample.int(1e6, 1))
+  on.exit({ if (file.exists(tmp)) try(unlink(tmp), silent = TRUE) }, add = TRUE)
+  saveRDS(object, tmp, compress = compress)
+  if (!file.rename(tmp, path)) {
+    # On some FS, file.rename across devices fails; try copy
+    ok <- file.copy(tmp, path, overwrite = TRUE)
+    unlink(tmp)
+    if (!ok) stop("Atomic save failed: rename/copy both failed for ", path)
+  }
+  invisible(path)
+}
 
 # Optional safety net: rebuild mu from eta if needed
 fix_mu_from_eta <- function(S2, N.plot, N.date) {
@@ -151,10 +206,19 @@ create_directories_safe(
       else "cloglog_beta_fixed_drivers")
 )
 
-# Define output directory based on mode
-model_output_dir <- here("data", "model_outputs", 
-                         if (driver_uncertainty_mode) "cloglog_beta_driver_uncertainty"
-                         else "cloglog_beta_fixed_drivers")
+# Define output directory based on mode (optional suffix for rho dunif prior test)
+base_dir_name <- if (driver_uncertainty_mode) "cloglog_beta_driver_uncertainty" else "cloglog_beta_fixed_drivers"
+if (nzchar(Sys.getenv("RHO_PRIOR_UNIF", ""))) {
+  base_dir_name <- paste0(base_dir_name, "_rho_unif")
+  cat("RHO_PRIOR_UNIF set: writing to", base_dir_name, "\n")
+}
+model_output_dir <- here("data", "model_outputs", base_dir_name)
+dir.create(model_output_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Diagnostic: confirm writeability + actual target path
+cat("model_output_dir =", model_output_dir, "\n")
+cat("file.exists(dir)?", dir.exists(model_output_dir), "\n")
+cat("writable? (0 means ok) =>", file.access(model_output_dir, 2), "\n")
 
 info("==================================================")
 info("Microbial forecasts environment setup complete!")
@@ -168,8 +232,10 @@ argv <- commandArgs(TRUE)
 get_flag <- function(name) any(grepl(paste0("^", name, "$"), argv))
 get_opt  <- function(name, default = NULL) {
   hit <- grep(paste0("^", name, "="), argv, value = TRUE)
-  if (length(hit) == 0) return(default)
-  sub(paste0("^", name, "="), "", hit[1])
+  if (length(hit) > 0) return(sub(paste0("^", name, "="), "", hit[1]))
+  idx <- match(name, argv)
+  if (!is.na(idx) && idx < length(argv)) return(argv[idx + 1L])
+  return(default)
 }
 
 # Chains: default 4 for HPC, 2 for LOCAL_TEST
@@ -236,15 +302,26 @@ check_continue <- function(samples, min_eff_size = 50) {
 params_in = read.csv(here("data/clean/model_input_df.csv"),
                      colClasses = c(rep("character", 4),
                                     rep("logical", 2),
-                                    rep("character", 4)))
+                                    rep("character", 4))) %>%
+    # Filter to driver uncertainty models with legacy covariate
+    filter(scenario == "Legacy with covariate 2013-2018" &
+        min.date == "20130601" &
+        max.date == "20180101" &
+        temporalDriverUncertainty == TRUE &
+        spatialDriverUncertainty == TRUE &
+        # Include all model types (not just env_cycl) for comprehensive testing
+        model_name %in% c("env_cycl", "env_cov", "cycl_only")
+    )
 
 # LOCAL TESTING: Filter early to avoid loading 2,700+ models
 if (identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")) {
-    info("🧪 LOCAL TESTING: Filtering to single plant_pathogen env_cycl model")
+    info("🧪 LOCAL TESTING: Filtering to multiple taxa and model types for testing")
     params_in <- params_in %>% filter(
-        species == "plant_pathogen" & 
-        rank.name == "plant_pathogen" &
-        model_name == "env_cycl" &
+        # Test different taxa types
+        species %in% c("plant_pathogen", "cellulolytic", "saprotroph") &
+        rank.name %in% c("plant_pathogen", "cellulolytic", "saprotroph") &
+        # Test all model types
+        model_name %in% c("env_cycl", "env_cov", "cycl_only") &
         scenario == "Legacy with covariate 2013-2018" &
         min.date == "20130601" &
         max.date == "20180101" &
@@ -276,10 +353,30 @@ converged_list = readRDS(here("data/summary/weak_converged_taxa_list.rds"))
 
 # HPC PRODUCTION CONFIGURATION: Run multiple models with driver uncertainty enabled
 # Note: params_in may already be filtered by LOCAL_TEST above
+
+# LOCAL TESTING: For testing, sample from params_in directly and ensure all model types are tested
 if (identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")) {
-    # LOCAL TESTING: Use the already filtered params_in directly
-    info("🧪 LOCAL TESTING: Using pre-filtered params_in (%d models)", nrow(params_in))
-    params <- params_in
+    # In testing mode, use all available models regardless of convergence status
+    info("🧪 LOCAL TESTING: Skipping converged filter for comprehensive testing")
+    info("🧪 Available models before sampling: %d", nrow(params_in))
+    set.seed(123)  # For reproducible sampling
+    
+    # Sample from params_in (already filtered to test taxa/model types)
+    # Group by model_name and sample at least one from each model type
+    if (nrow(params_in) > 0) {
+        params_by_model <- params_in %>%
+            group_by(model_name) %>%
+            slice_sample(n = 1, replace = FALSE) %>%
+            ungroup()
+        
+        info("🧪 After grouping by model_name and sampling: %d models", nrow(params_by_model))
+        info("🧪 Selected models cover: %s", paste(sort(unique(params_by_model$model_name)), collapse=", "))
+        
+        params <- params_by_model
+    } else {
+        warn("🧪 No models available after filtering!")
+        params <- params_in
+    }
 } else {
     # PRODUCTION: Apply full filtering
     params <- params_in %>% ungroup %>% filter(
@@ -291,17 +388,9 @@ if (identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")) {
             # Focus on 2013-2018 period for legacy analysis
             scenario %in% c("Legacy with covariate 2013-2018")
     ) %>% distinct(.keep_all = TRUE)
-}
-
-# Filter out already converged models
-params <- params %>% filter(!model_id %in% converged_list)
-
-# LOCAL TESTING: Run just 1 model for faster testing
-if (identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")) {
-set.seed(123)  # For reproducible sampling
-params <- params %>%
-    sample_n(size = 1, replace = FALSE) %>%  # Run just 1 model for faster testing
-    ungroup()
+    
+    # PRODUCTION: Filter out converged models
+    params <- params %>% filter(!model_id %in% converged_list)
 }
 
 info("LOCAL TESTING: Starting parallel execution for %d models with %d chains", nrow(params), nchains)
@@ -373,8 +462,31 @@ if (filtered_n_models == 0) {
 
 # Use the filtered parameters from data loading
 valid_models <- params
-info("Testing with %d models", nrow(valid_models))
-info("Models to test:")
+
+# Apply CLI filters so both single-task and parallel runs respect --species / --model-name / etc.
+if (!is.null(cli_model_id)) {
+  valid_models <- valid_models %>% dplyr::filter(model_id == cli_model_id)
+  info("Filtered to model_id=%s -> %d rows", cli_model_id, nrow(valid_models))
+}
+if (!is.null(cli_rank)) {
+  valid_models <- valid_models %>% dplyr::filter(rank.name == cli_rank)
+  info("Filtered to rank.name=%s -> %d rows", cli_rank, nrow(valid_models))
+}
+if (!is.null(cli_species)) {
+  valid_models <- valid_models %>% dplyr::filter(species == cli_species)
+  info("Filtered to species=%s -> %d rows", cli_species, nrow(valid_models))
+}
+if (!is.null(cli_model_name)) {
+  valid_models <- valid_models %>% dplyr::filter(model_name == cli_model_name)
+  info("Filtered to model_name=%s -> %d rows", cli_model_name, nrow(valid_models))
+}
+if (nrow(valid_models) == 0) {
+  stop("No models remain after CLI filtering; check --species / --model-name / --rank / --model-id.")
+}
+
+n_model_tasks <- nrow(valid_models) * nchains
+info("After CLI filters: %d model(s) × %d chain(s) = %d MCMC task(s)", nrow(valid_models), nchains, n_model_tasks)
+info("Models to run:")
 print(valid_models)
 
 # Store single-task mode flag for later use
@@ -416,7 +528,7 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
     if (model_name == "env_cycl" && use_legacy_covariate) {
         modelCode <- nimble::nimbleCode({
             precision ~ dgamma(2, 0.1)              # Gentle prior - mean 20, var 200
-            rho ~ dbeta(1, 1)                       # Uniform prior - very weak
+            rho ~ dunif(-0.99, 0.99)               # Stationary AR(1): allow negative persistence
             intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak
             legacy_effect ~ dnorm(0, sd = 10)       # Very wide normal - very weak
             
@@ -518,7 +630,7 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
     } else if (model_name == "env_cov" && use_legacy_covariate) {
         modelCode <- nimble::nimbleCode({
             precision ~ dgamma(2, 0.1)              # Gentle prior - mean 20, var 200
-            rho ~ dbeta(1, 1)                       # Uniform prior - very weak
+            rho ~ dunif(-0.99, 0.99)               # Stationary AR(1): allow negative persistence
             intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak
             legacy_effect ~ dnorm(0, sd = 10)       # Very wide normal - very weak
             
@@ -618,7 +730,7 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
     } else if (model_name == "cycl_only") {
         modelCode <- nimble::nimbleCode({
             precision ~ dgamma(2, 0.1)              # Gentle prior - mean 20, var 200
-            rho ~ dbeta(1, 1)                       # Uniform prior - very weak
+            rho ~ dunif(-0.99, 0.99)               # Stationary AR(1): allow negative persistence
             intercept ~ dnorm(0, sd = 10)           # Very wide normal - very weak
             
             # STABLE PRIORS for site effects
@@ -1263,95 +1375,34 @@ run_scenarios_fixed <- function(j, chain_no) {
             (constants$temporalDriverUncertainty || constants$spatialDriverUncertainty)) {
             info("Adding driver uncertainty data with proper dimension matching...")
             
-            # Check if uncertainty data exists in predictor data
-            predictor_data <- readRDS(here("data/clean/all_predictor_data.rds"))
+            # CRITICAL FIX: Instead of blind 1:N subsetting from the raw file,
+            # extract the perfectly aligned arrays directly from model.dat!
+            # (prepBetaRegData already processed them with filter_date_site)
             
-            # FIX: Properly subset uncertainty matrices to match model dimensions
-            info("  Fixing dimension mismatches...")
-            info("    Model dimensions - N.site: %d N.plot: %d N.date: %d", constants$N.site, constants$N.plot, constants$N.date)
-            
-            # Subset temporal uncertainty (temp_sd, mois_sd) to N.site x N.date with intelligent filling
-            if ("temp_sd" %in% names(predictor_data)) {
-                temp_sd_full <- predictor_data$temp_sd
-                info("    temp_sd full dimensions: %s", paste(dim(temp_sd_full), collapse = " x "))
-                constants$temp_sd <- temp_sd_full[1:constants$N.site, 1:constants$N.date, drop = FALSE]
-                
-                # Fill missing values with reasonable defaults
-                # Use median of available values, or 0.1 if no values available
-                available_vals <- constants$temp_sd[is.finite(constants$temp_sd) & constants$temp_sd > 0]
-                if (length(available_vals) > 0) {
-                    default_sd <- median(available_vals, na.rm = TRUE)
-            } else {
-                    default_sd <- 0.1
-                }
-                
-                # Replace missing or invalid values
-                bad_mask <- !is.finite(constants$temp_sd) | (constants$temp_sd <= 0)
-                constants$temp_sd[bad_mask] <- default_sd
-                
-                info("  ✓ Added temp_sd uncertainty data (subset): %s matrix", paste(dim(constants$temp_sd), collapse = " x "))
-                info("  ✓ Filled %d missing values with default %.4f", sum(bad_mask), default_sd)
-            } else {
-                warn("  ⚠️  WARNING: temp_sd not found, using default values")
-                constants$temp_sd <- matrix(0.1, nrow = constants$N.site, ncol = constants$N.date)
+            if (constants$temporalDriverUncertainty) {
+                constants$temp_sd <- model.dat$temp_sd
+                constants$mois_sd <- model.dat$mois_sd
+                assert_matrix_dims(constants$temp_sd, constants$N.site, constants$N.date, "temp_sd")
+                assert_matrix_dims(constants$mois_sd, constants$N.site, constants$N.date, "mois_sd")
             }
             
-            if ("mois_sd" %in% names(predictor_data)) {
-                mois_sd_full <- predictor_data$mois_sd
-                info("    mois_sd full dimensions: %s", paste(dim(mois_sd_full), collapse = " x "))
-                constants$mois_sd <- mois_sd_full[1:constants$N.site, 1:constants$N.date, drop = FALSE]
-                
-                # Fill missing values with reasonable defaults
-                available_vals <- constants$mois_sd[is.finite(constants$mois_sd) & constants$mois_sd > 0]
-                if (length(available_vals) > 0) {
-                    default_sd <- median(available_vals, na.rm = TRUE)
-            } else {
-                    default_sd <- 0.1
-                }
-                
-                # Replace missing or invalid values
-                bad_mask <- !is.finite(constants$mois_sd) | (constants$mois_sd <= 0)
-                constants$mois_sd[bad_mask] <- default_sd
-                
-                info("  ✓ Added mois_sd uncertainty data (subset): %s matrix", paste(dim(constants$mois_sd), collapse = " x "))
-                info("  ✓ Filled %d missing values with default %.4f", sum(bad_mask), default_sd)
-            } else {
-                warn("  ⚠️  WARNING: mois_sd not found, using default values")
-                constants$mois_sd <- matrix(0.1, nrow = constants$N.site, ncol = constants$N.date)
+            if (constants$spatialDriverUncertainty) {
+                constants$pH_sd <- model.dat$pH_sd
+                constants$pC_sd <- model.dat$pC_sd
+                assert_matrix_dims(constants$pH_sd, constants$N.plot, constants$N.date, "pH_sd")
+                assert_matrix_dims(constants$pC_sd, constants$N.plot, constants$N.date, "pC_sd")
             }
             
-            # Subset spatial uncertainty (pH_sd, pC_sd) - SPATIAL PREDICTORS ARE CONSTANT OVER TIME
-            if ("pH_sd" %in% names(predictor_data)) {
-                pH_sd_full <- predictor_data$pH_sd
-                info("    pH_sd full dimensions: %s", paste(dim(pH_sd_full), collapse = " x "))
-                # For spatial predictors, use the same value for all time points
-                pH_sd_plot <- pH_sd_full[1:constants$N.plot, 1, drop = FALSE]  # Take first time point
-                constants$pH_sd <- matrix(pH_sd_plot, nrow = constants$N.plot, ncol = constants$N.date)
-                info("  ✓ Added pH_sd uncertainty data (constant over time): %s matrix", paste(dim(constants$pH_sd), collapse = " x "))
-            } else {
-                warn("  ⚠️  WARNING: pH_sd not found, using default values")
-                constants$pH_sd <- matrix(0.1, nrow = constants$N.plot, ncol = constants$N.date)
-            }
+            info("  Validating predictor dimensions...")
+            if (!is.null(constants$temp)) info("    temp dimensions: %s", paste(dim(constants$temp), collapse = " x "))
+            if (!is.null(constants$mois)) info("    mois dimensions: %s", paste(dim(constants$mois), collapse = " x "))
+            if (!is.null(constants$pH)) info("    pH dimensions: %s", paste(dim(constants$pH), collapse = " x "))
+            if (!is.null(constants$pC)) info("    pC dimensions: %s", paste(dim(constants$pC), collapse = " x "))
+            if (!is.null(constants$relEM)) info("    relEM dimensions: %s", paste(dim(constants$relEM), collapse = " x "))
+            if (!is.null(constants$LAI)) info("    LAI dimensions: %s", paste(dim(constants$LAI), collapse = " x "))
+            info("  ✓ All predictor dimensions validated")
             
-            if ("pC_sd" %in% names(predictor_data)) {
-                pC_sd_full <- predictor_data$pC_sd
-                info("    pC_sd full dimensions: %s", paste(dim(pC_sd_full), collapse = " x "))
-                # For spatial predictors, use the same value for all time points
-                pC_sd_plot <- pC_sd_full[1:constants$N.plot, 1, drop = FALSE]  # Take first time point
-                constants$pC_sd <- matrix(pC_sd_plot, nrow = constants$N.plot, ncol = constants$N.date)
-                info("  ✓ Added pC_sd uncertainty data (constant over time): %s matrix", paste(dim(constants$pC_sd), collapse = " x "))
-            } else {
-                warn("  ⚠️  WARNING: pC_sd not found, using default values")
-                constants$pC_sd <- matrix(0.1, nrow = constants$N.plot, ncol = constants$N.date)
-            }
-            
-            # (Optional) hard shape checks; no padding done
-            assert_matrix_dims(constants$temp_sd, constants$N.site, constants$N.date, "temp_sd")
-            assert_matrix_dims(constants$mois_sd, constants$N.site, constants$N.date, "mois_sd")
-            assert_matrix_dims(constants$pH_sd,   constants$N.plot, constants$N.date, "pH_sd")
-            assert_matrix_dims(constants$pC_sd,   constants$N.plot, constants$N.date, "pC_sd")
-            
-            # Strict sanitize: only pH/pC repaired; temp/mois must be clean
+            # Now the sanitizer will correctly find ONLY pre-observation NAs
             constants <- sanitize_driver_uncertainty(constants)
             
             info("  ✓ Driver uncertainty data added & sanitized")
@@ -1623,7 +1674,7 @@ run_scenarios_fixed <- function(j, chain_no) {
             info("    Added slice sampler for beta[%d]", i)
         }
         
-        # 3. Better site effects sampling strategy (matching working approach)
+        # 3. Better site effects sampling
         if (constants$N.site > 1) {
             info("  Adding improved block sampler for site effects...")
             # Try AF_slice first, fall back to RW_block if not available
@@ -1657,19 +1708,46 @@ run_scenarios_fixed <- function(j, chain_no) {
         
         # Run MCMC with convergence-based sampling
         info("Running MCMC with convergence-based sampling...")
-        burnin <- 50    # TESTING: Minimal burn-in for quick test
-        iter_per_chunk <- 50   # TESTING: Small chunks for quick test
-        init_iter <- 50  # TESTING: Minimal initial iterations
-        min_eff_size_perchain <- 10  # TESTING: Low ESS target for quick test
-        max_loops <- 2  # TESTING: Few loops for quick test
+        # Conditional parameters: testing vs production
+        is_local_test <- identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")
+        if (is_local_test) {
+            # LOCAL TESTING: Reduced values for faster testing
+            burnin <- 200
+            iter_per_chunk <- 50
+            init_iter <- 400
+            min_eff_size_perchain <- 10
+            max_loops <- 2
+            min_total_iterations <- 100
+            max_total_iterations <- 1200
+            convergence_check_interval <- 1  # Check every loop in testing
+            info("  🧪 LOCAL TESTING MODE: Using reduced iteration values")
+        } else {
+            # PRODUCTION: Optimized values for driver uncertainty models
+            burnin <- 2000
+            iter_per_chunk <- 2000  # Larger chunks for efficiency (reduces overhead)
+            init_iter <- 2000
+            min_eff_size_perchain <- 100  # Target ESS for reliable estimates
+            max_loops <- 10  # Limit loops to prevent excessive runtime
+            min_total_iterations <- 10000  # Minimum iterations for reliable estimates
+            max_total_iterations <- 50000  # Hard limit to prevent runaway jobs
+            convergence_check_interval <- 2  # Check convergence every N loops to reduce overhead
+            info("  🏭 PRODUCTION MODE: Using optimized iteration values")
+        }
+        max_iter_env <- suppressWarnings(as.integer(Sys.getenv("MAX_ITER", NA)))
+        if (!is.na(max_iter_env) && max_iter_env > 0) {
+            max_total_iterations <- min(max_total_iterations, max_iter_env)
+            min_total_iterations <- min(min_total_iterations, max_iter_env)
+            info("  MAX_ITER set: capping at %d iterations", max_iter_env)
+        }
         max_save_size <- 50000
-        min_total_iterations <- 100  # TESTING: Just 100 total iterations
         
         info("Running MCMC with convergence-based sampling")
         info("  Initial iterations: %d burnin: %d", init_iter, burnin)
         info("  Iterations per chunk: %d max loops: %d", iter_per_chunk, max_loops)
         info("  Target ESS per chain: %d", min_eff_size_perchain)
         info("  Minimum total iterations: %d", min_total_iterations)
+        info("  Maximum total iterations: %d", max_total_iterations)
+        info("  Convergence check interval: every %d loops", convergence_check_interval)
         
         # Run initial iterations
         info("  Running initial iterations (%d iterations) for adaptation...", init_iter)
@@ -1700,6 +1778,15 @@ run_scenarios_fixed <- function(j, chain_no) {
         # Create model_id for consistent naming
         model_id <- create_model_id(model_name, species, min.date, max.date, use_legacy_covariate)
         
+        # Bulletproof model_id fallback if empty/NA
+        if (!is.character(model_id) || !nzchar(model_id)) {
+          model_id <- sprintf("mdl_%s_%s_%s",
+                             gsub("\\W", "", model_name),
+                             gsub("\\W", "", species),
+                             format(Sys.time(), "%Y%m%d%H%M%S"))
+          warn("create_model_id returned empty; using fallback id: %s", model_id)
+        }
+        
         # Check if we need to continue sampling for convergence
         continue <- TRUE
         loop_counter <- 0
@@ -1712,7 +1799,53 @@ run_scenarios_fixed <- function(j, chain_no) {
         all_samples <- initial_samples
         
         # Also accumulate samples2 (plot estimates) across loops
+        # CRITICAL DEBUG: Check what mvSamples2 actually contains before extraction
+        mvSamples2_raw <- compiled$mvSamples2
+        info("DEBUG: mvSamples2 raw type: %s", class(mvSamples2_raw))
+        if (inherits(mvSamples2_raw, "mcmc.list") && length(mvSamples2_raw) > 0) {
+            info("DEBUG: mvSamples2 is mcmc.list with %d chains", length(mvSamples2_raw))
+            first_chain_cols <- colnames(mvSamples2_raw[[1]])
+            info("DEBUG: First chain columns (first 20): %s", paste(head(first_chain_cols, 20), collapse=", "))
+            has_mu_debug <- any(grepl("^mu\\[", first_chain_cols)) || any(grepl("^eta\\[", first_chain_cols))
+            has_param_debug <- any(grepl("^beta\\[", first_chain_cols)) || any(grepl("^intercept", first_chain_cols))
+            info("DEBUG: Has mu/eta columns: %s | Has param columns: %s", has_mu_debug, has_param_debug)
+        } else if (is.matrix(mvSamples2_raw)) {
+            info("DEBUG: mvSamples2 is matrix with %d rows x %d cols", nrow(mvSamples2_raw), ncol(mvSamples2_raw))
+            mv2_cols <- colnames(mvSamples2_raw)
+            info("DEBUG: mvSamples2 columns (first 20): %s", paste(head(mv2_cols, 20), collapse=", "))
+        }
+        
         initial_plot_samples <- as.matrix(compiled$mvSamples2)
+        
+        # CRITICAL VALIDATION: Check what's actually in mvSamples2 after extraction
+        if (ncol(initial_plot_samples) > 0) {
+            col_names_mv2 <- colnames(initial_plot_samples)
+            has_mu_cols <- any(grepl("^mu\\[", col_names_mv2)) || any(grepl("^eta\\[", col_names_mv2))
+            has_param_cols <- any(grepl("^beta\\[", col_names_mv2)) || any(grepl("^intercept", col_names_mv2))
+            
+            if (has_param_cols && !has_mu_cols) {
+                error("CRITICAL ERROR: mvSamples2 contains parameter columns instead of mu/eta columns!")
+                error("  mvSamples2 dimensions: %d rows x %d cols", nrow(initial_plot_samples), ncol(initial_plot_samples))
+                error("  mvSamples2 columns (first 20): %s", paste(head(col_names_mv2, 20), collapse=", "))
+                error("  Expected mu[plot, time] or eta[plot, time] columns from monitors2 = c('eta', 'mu')")
+                error("  This indicates monitors2 is NOT working - mvSamples2 is getting wrong data!")
+                error("  Possible causes:")
+                error("    1. NIMBLE monitors2 is not properly configured")
+                error("    2. mu/eta nodes don't exist in the model with expected names")
+                error("    3. mvSamples2 is accidentally pointing to mvSamples (parameters)")
+                stop("mvSamples2 contains parameters instead of mu/eta - cannot continue")
+            } else if (has_mu_cols) {
+                info("✓ mvSamples2 contains mu/eta columns as expected")
+                info("  Found %d mu/eta columns", sum(grepl("^mu\\[|^eta\\[", col_names_mv2)))
+            } else {
+                warn("WARNING: mvSamples2 has no mu/eta or parameter columns - may be empty or wrong structure")
+                warn("  mvSamples2 dimensions: %d rows x %d cols", nrow(initial_plot_samples), ncol(initial_plot_samples))
+            }
+        } else {
+            warn("WARNING: mvSamples2 is empty (0 columns) - monitors2 may not be working")
+            warn("  This may happen if thin2 is too large or monitors2 is not configured correctly")
+        }
+        
         all_plot_samples <- initial_plot_samples
         cat("  Starting iterative accumulation with", nrow(all_samples), "initial samples\n")
         
@@ -1730,86 +1863,125 @@ run_scenarios_fixed <- function(j, chain_no) {
         # Also save a simple progress file
         progress_file <- create_progress_file(species_output_dir, model_id, chain_no, init_iter)
         
-        while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
-            if (continue) {
-            } else {
-            }
+        while ((continue || total_iterations < min_total_iterations) && 
+               loop_counter < max_loops && 
+               total_iterations < max_total_iterations) {
             
             # Continue sampling without resetting
+            info("  Loop %d: Running %d iterations (total: %d)", loop_counter + 1, iter_per_chunk, total_iterations)
             compiled$run(niter = iter_per_chunk, thin = thin, thin2 = thin2, nburnin = 0)
             total_iterations <- total_iterations + iter_per_chunk
+            
+            # Check hard limit first
+            if (total_iterations >= max_total_iterations) {
+                warn("  Reached maximum iteration limit (%d), stopping", max_total_iterations)
+                break
+            }
             
             # Get updated samples and accumulate them
             # CRITICAL: NIMBLE's mvSamples resets between runs, so current_samples contains ONLY the latest iteration
             current_samples <- as.matrix(compiled$mvSamples)
             current_sample_count <- nrow(current_samples)
-            previous_sample_count <- nrow(all_samples)
-            
-            cat("  Current iteration samples:", current_sample_count, "\n")
-            cat("  Previous accumulated samples:", previous_sample_count, "\n")
             
             # Always append all current samples since mvSamples resets
             if (current_sample_count > 0) {
                 all_samples <- rbind(all_samples, current_samples)
-                cat("  ✓ Added", current_sample_count, "new samples, total accumulated:", nrow(all_samples), "\n")
+                info("  ✓ Added %d samples, total: %d", current_sample_count, nrow(all_samples))
             } else {
-                cat("  WARNING: No samples in current iteration\n")
+                warn("  WARNING: No samples in current iteration")
             }
             
             # Also accumulate samples2 (plot estimates) - mvSamples2 also resets between runs
             current_plot_samples <- as.matrix(compiled$mvSamples2)
             current_plot_count <- nrow(current_plot_samples)
-            if (current_plot_count > 0) {
+            
+            # CRITICAL VALIDATION: Check what's in mvSamples2 during accumulation
+            if (current_plot_count > 0 && ncol(current_plot_samples) > 0) {
+                col_names_current <- colnames(current_plot_samples)
+                has_mu_cols <- any(grepl("^mu\\[", col_names_current)) || any(grepl("^eta\\[", col_names_current))
+                has_param_cols <- any(grepl("^beta\\[", col_names_current)) || any(grepl("^intercept", col_names_current))
+                
+                if (has_param_cols && !has_mu_cols && loop_counter == 1) {
+                    # Only warn once on first loop
+                    warn("CRITICAL: mvSamples2 in loop %d contains parameters, not mu/eta!", loop_counter + 1)
+                    warn("  Found columns like: %s", paste(head(col_names_current[grepl("^beta\\[|^intercept", col_names_current)], 5), collapse=", "))
+                }
+                
                 all_plot_samples <- rbind(all_plot_samples, current_plot_samples)
-                cat("  ✓ Added", current_plot_count, "new plot samples, total accumulated:", nrow(all_plot_samples), "\n")
+                info("  ✓ Added %d plot samples, total: %d", current_plot_count, nrow(all_plot_samples))
             } else {
-                cat("  WARNING: No plot samples in current iteration\n")
+                warn("  WARNING: No plot samples in current iteration (rows: %d, cols: %d)", 
+                     current_plot_count, if(ncol(current_plot_samples) > 0) ncol(current_plot_samples) else 0)
             }
             
-            # Save checkpoint after each loop (including samples2)
-            loop_checkpoint_data <- list(
-                samples = all_samples,
-                samples2 = all_plot_samples,
-                iterations = total_iterations,
-                loop = loop_counter + 1
-            )
-            loop_checkpoint_file <- file.path(species_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter + 1, ".rds"))
-                saveRDS(loop_checkpoint_data, loop_checkpoint_file)
-            
-            # Update progress file
-            update_progress_file(progress_file, total_iterations, loop_counter + 1)
-            
-            # Check if we need to continue
-                continue <- check_continue(all_samples, min_eff_size = min_eff_size_perchain)
             loop_counter <- loop_counter + 1
             
-            cat("  Total iterations so far:", total_iterations, "\n")
-            cat("  Convergence check result:", ifelse(continue, "CONTINUE", "CONVERGED"), "\n")
-            cat("  Current accumulated sample size:", nrow(all_samples), "\n")
-            cat("  Progress: ", round(loop_counter/max_loops * 100, 1), "% of max loops completed\n")
+            # Save checkpoint after each loop (including samples2) - but only if not too large
+            if (nrow(all_samples) <= max_save_size) {
+                loop_checkpoint_data <- list(
+                    samples = all_samples,
+                    samples2 = all_plot_samples,
+                    iterations = total_iterations,
+                    loop = loop_counter
+                )
+                loop_checkpoint_file <- file.path(species_output_dir, paste0("checkpoint_", model_id, "_chain", chain_no, "_loop", loop_counter, ".rds"))
+                tryCatch({
+                    saveRDS(loop_checkpoint_data, loop_checkpoint_file)
+                    info("  ✓ Checkpoint saved (loop %d)", loop_counter)
+                }, error = function(e) {
+                    warn("  ✗ Failed to save checkpoint: %s", e$message)
+                })
+            } else {
+                warn("  Skipping checkpoint save - sample size (%d) exceeds limit (%d)", nrow(all_samples), max_save_size)
+            }
+            
+            # Update progress file
+            update_progress_file(progress_file, total_iterations, loop_counter)
+            
+            # Check convergence every N loops to reduce overhead
+            # Use recent samples (last 50%) for faster convergence checks on large datasets
+            if (loop_counter %% convergence_check_interval == 0 || total_iterations >= min_total_iterations) {
+                # For large sample sets, use recent samples for faster convergence checks
+                samples_for_check <- if (nrow(all_samples) > 20000) {
+                    # Use last 50% of samples for convergence check (keeps it faster)
+                    recent_start <- floor(nrow(all_samples) * 0.5)
+                    all_samples[recent_start:nrow(all_samples), , drop = FALSE]
+                } else {
+                    all_samples
+                }
+                info("  Checking convergence (using %d samples)", nrow(samples_for_check))
+                continue <- check_continue(samples_for_check, min_eff_size = min_eff_size_perchain)
+            }
+            
+            info("  Total iterations: %d | Loops: %d/%d | Converged: %s", 
+                 total_iterations, loop_counter, max_loops, ifelse(!continue, "YES", "NO"))
         }
         
-        if (loop_counter >= max_loops) {
-            cat("  WARNING: Exceeded maximum loops (", max_loops, "). Stopping sampling.\n")
+        if (total_iterations >= max_total_iterations) {
+            warn("  Reached hard iteration limit (%d), stopping sampling", max_total_iterations)
+        } else if (loop_counter >= max_loops) {
+            warn("  Exceeded maximum loops (%d), stopping sampling", max_loops)
         } else if (total_iterations >= min_total_iterations) {
             if (continue) {
-                cat("  WARNING: Minimum iterations reached but convergence not achieved\n")
+                warn("  Minimum iterations reached (%d) but convergence not achieved (ESS < %d)", 
+                     total_iterations, min_eff_size_perchain)
             } else {
-                cat("  SUCCESS: Convergence reached after", total_iterations, "total iterations\n")
+                info("  SUCCESS: Convergence reached after %d total iterations", total_iterations)
             }
         } else {
-            cat("  WARNING: Stopped before minimum iterations due to max loops\n")
+            warn("  Stopped before minimum iterations (%d) due to max loops or convergence", min_total_iterations)
         }
         
         # Update final progress status
         tryCatch({
-            final_status <- if(loop_counter >= max_loops) "Completed (max loops)" else 
+            final_status <- if(total_iterations >= max_total_iterations) "Stopped (max iterations)" else
+                if(loop_counter >= max_loops) "Completed (max loops)" else 
                 if(total_iterations >= min_total_iterations && !continue) "Converged" else 
                     "Completed (min iterations)"
             writeLines(paste("Completed at:", Sys.time(), "\nTotal iterations:", total_iterations, "\nFinal loop:", loop_counter, "\nStatus:", final_status), progress_file)
-            cat("  ✓ Final progress status updated\n")
+            info("  ✓ Final progress status updated: %s", final_status)
         }, error = function(e) {
-            cat("  ✗ Failed to update final progress status:", e$message, "\n")
+            warn("  ✗ Failed to update final progress status: %s", e$message)
         })
         
         # Get final samples (use accumulated samples)
@@ -1855,6 +2027,9 @@ run_scenarios_fixed <- function(j, chain_no) {
         # Optional safety net: rebuild mu from eta if needed
         plot_samples <- fix_mu_from_eta(plot_samples, constants$N.plot, constants$N.date)
         
+        # Log save keys for debugging
+        info("SAVE KEYS: model_name=%s species=%s model_id=%s", model_name, species, model_id)
+        
         # Use compatibility shim to standardize output structure
         compat <- ensure_old_schema(
             samples = all_samples,
@@ -1887,9 +2062,19 @@ run_scenarios_fixed <- function(j, chain_no) {
             chain_no = chain_no
         )
         
-        # Save final samples with standardized structure
-        saveRDS(compat$chain_output, compat$path)
-        cat("✓ SUCCESS: Saved MCMC samples to:", compat$path, "\n")
+        # Log what we're about to save
+        cat("About to save to:", compat$path, "\n")
+        cat("Parent dir exists:", dir.exists(dirname(compat$path)), "\n")
+        cat("Writable parent? (0 ok):", file.access(dirname(compat$path), 2), "\n")
+        
+        # Save final samples with standardized structure (atomic save)
+        tryCatch({
+          atomic_saveRDS(compat$chain_output, compat$path)
+          cat("✓ SUCCESS: Saved MCMC samples to:", compat$path, "\n")
+        }, error = function(e) {
+          cat("SAVE ERROR:", conditionMessage(e), "\n")
+          stop(e)
+        })
         
         cat("Sample dimensions:", dim(all_samples), "\n")
         cat("=== Model fitting completed (cloglog version) ===\n")
@@ -2116,6 +2301,16 @@ runAndSave_task <- function(task_idx) {
                 grepl("Legacy with covariate", valid_models$scenario[model_idx])
             )
             
+            # Bulletproof model_id fallback if empty/NA
+            if (!is.character(model_id) || !nzchar(model_id)) {
+              model_id <- sprintf("mdl_%s_%s_%s",
+                                 gsub("\\W", "", valid_models$model_name[model_idx]),
+                                 gsub("\\W", "", valid_models$species[model_idx]),
+                                 format(Sys.time(), "%Y%m%d%H%M%S"))
+              if (exists("warn")) warn("create_model_id returned empty; using fallback id: %s", model_id)
+              cat("Worker fallback: create_model_id returned empty; using fallback id:", model_id, "\n")
+            }
+            
             # Create the complete chain structure with metadata
             # Use the metadata from the result if available, otherwise create it
             if ("metadata" %in% names(result) && !is.null(result$metadata)) {
@@ -2167,9 +2362,19 @@ runAndSave_task <- function(task_idx) {
                 chain_no = chain_no
             )
             
-            # Save MCMC samples with standardized structure
-            saveRDS(compat$chain_output, compat$path)
-            cat("SAVED (fallback): Chain", chain_no, "for model", model_idx, "to", compat$path, "\n")
+            # Log fallback save details
+            cat("Worker fallback save path:", compat$path, "\n")
+            cat("Parent dir exists:", dir.exists(dirname(compat$path)), "\n")
+            cat("Writable parent? (0 ok):", file.access(dirname(compat$path), 2), "\n")
+            
+            # Save MCMC samples with standardized structure (atomic save)
+            tryCatch({
+              atomic_saveRDS(compat$chain_output, compat$path)
+              cat("SAVED (fallback): Chain", chain_no, "for model", model_idx, "to", compat$path, "\n")
+            }, error = function(e) {
+              cat("FALLBACK SAVE ERROR:", conditionMessage(e), "\n")
+              stop(e)
+            })
             
         }
         
@@ -2230,8 +2435,8 @@ worker_init <- function(project_root, driver_uncertainty_mode) {
   ## — working directory / here() root —
   setwd(project_root)
   if (requireNamespace("here", quietly = TRUE)) {
-    ## anchor here() root properly for workers
-    here::i_am("analysis/model_analysis/worker_sentinel.txt")
+    ## anchor here() root properly for workers (explicit, no sentinel needed)
+    try(here::set_here(project_root), silent = TRUE)
     assign("here", get("here", asNamespace("here")), envir = .GlobalEnv)
   }
 
@@ -2309,6 +2514,7 @@ must_export <- c(
   "assert_matrix_dims", "assert_vector_len",
   "create_inits_with_uncertainty",
   "check_continue",
+  "atomic_saveRDS", "ensure_old_schema",  # Save utilities
 
   # any other functions you call (from your script)
   "load_required_packages", "create_directories_safe",

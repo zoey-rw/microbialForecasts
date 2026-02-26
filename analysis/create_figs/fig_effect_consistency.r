@@ -118,6 +118,9 @@ if (nrow(legacy_vs_calibration) > 0) {
     ggtitle("Legacy vs Calibration Effects")
   
   print(p1)
+  png(here("figures","effect_consistency_legacy_vs_calibration.png"), width = 1000, height = 800)
+  print(p1)
+  dev.off()
   cat("Legacy vs calibration plot created\n")
 } else {
   cat("No data available for legacy vs calibration comparison\n")
@@ -134,6 +137,9 @@ if (nrow(calibration_vs_refit) > 0) {
     ggtitle("Calibration vs Refit Effects")
   
   print(p2)
+  png(here("figures","effect_consistency_calibration_vs_refit.png"), width = 1000, height = 800)
+  print(p2)
+  dev.off()
   cat("Calibration vs refit plot created\n")
 } else {
   cat("No data available for calibration vs refit comparison\n")
@@ -179,6 +185,9 @@ if (nrow(legacy_vs_calibration_env_cov) > 0) {
     ggtitle("Legacy vs Calibration Effects (env_cov)")
   
   print(p3)
+  png(here("figures","effect_consistency_legacy_vs_calibration_env_cov.png"), width = 1000, height = 800)
+  print(p3)
+  dev.off()
   cat("env_cov legacy vs calibration plot created\n")
 }
 
@@ -192,6 +201,9 @@ if (nrow(calibration_vs_refit_env_cov) > 0) {
     ggtitle("Calibration vs Refit Effects (env_cov)")
   
   print(p4)
+  png(here("figures","effect_consistency_calibration_vs_refit_env_cov.png"), width = 1000, height = 800)
+  print(p4)
+  dev.off()
   cat("env_cov calibration vs refit plot created\n")
 }
 
@@ -204,14 +216,38 @@ if ("pH" %in% names(predictor_data)) {
     select("pH" = 88) %>% 
     rownames_to_column("plotID")
   
-  # Load summaries for nitrifier analysis
-  sum.in <- readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
-  
-  if ("plot_est" %in% names(sum.in)) {
-    calibration_df = sum.in$plot_est %>%
-      filter(!is.na(truth))
+  # Load plot estimates from separate file (plot_est is intentionally empty in summaries)
+  if (file.exists(here("data/summary/plot_estimates.rds"))) {
+    cat("Loading plot_estimates from separate file for nitrifier analysis...\n")
+    calibration_df = readRDS(here("data/summary/plot_estimates.rds"))
+    cat("Loaded", nrow(calibration_df), "rows\n")
     
-    # Merge with pH data
+    # Check if truth column exists
+    if ("truth" %in% names(calibration_df)) {
+      calibration_df = calibration_df %>% filter(!is.na(truth))
+      cat("Filtered to", nrow(calibration_df), "rows with truth values\n")
+    } else {
+      cat("Warning: truth column not found in plot_estimates\n")
+      cat("Available columns:", paste(names(calibration_df), collapse = ", "), "\n")
+    }
+  } else {
+    # Fallback to summaries file
+    sum.in <- readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
+    if ("plot_est" %in% names(sum.in) && nrow(sum.in$plot_est) > 0) {
+      if ("truth" %in% names(sum.in$plot_est)) {
+        calibration_df = sum.in$plot_est %>% filter(!is.na(truth))
+      } else {
+        cat("Warning: truth column not found in plot_est\n")
+        calibration_df = sum.in$plot_est
+      }
+    } else {
+      cat("Warning: plot_est not available\n")
+      calibration_df = data.frame()
+    }
+  }
+  
+  # Merge with pH data (only if we have calibration_df)
+  if (exists("calibration_df") && nrow(calibration_df) > 0) {
     calibration_df <- merge(calibration_df, pH_df, by = "plotID", all.x = TRUE)
     
     # Filter for nitrification data
@@ -233,10 +269,14 @@ if ("pH" %in% names(predictor_data)) {
         ggtitle("Nitrifier Abundance vs pH")
       
       print(p5)
+      png(here("figures","effect_consistency_nitrifier_pH.png"), width = 1200, height = 800)
+      print(p5)
+      dev.off()
       cat("Nitrifier pH plot created\n")
       
-      # Create model comparison plot
-      p6 <- ggplot(nitr, aes(x = pH, y = `50%`, color=model_name)) + 
+      # Create model comparison plot - use Mean instead of 50% if 50% doesn't exist
+      y_col <- if ("50%" %in% names(nitr)) "50%" else if ("Mean" %in% names(nitr)) "Mean" else stop("No y column found")
+      p6 <- ggplot(nitr, aes(x = pH, y = .data[[y_col]], color=model_name)) + 
         geom_point() + 
         geom_smooth(se=F) +
         facet_wrap(model_name~time_period, scales="free") +
@@ -244,12 +284,15 @@ if ("pH" %in% names(predictor_data)) {
         ggtitle("Nitrifier Model Predictions vs pH")
       
       print(p6)
+      png(here("figures","effect_consistency_nitrifier_model_comparison.png"), width = 1400, height = 1000)
+      print(p6)
+      dev.off()
       cat("Nitrifier model comparison plot created\n")
     } else {
       cat("No nitrification data available\n")
     }
   } else {
-    cat("No plot_est data available in summaries\n")
+    cat("No calibration data available for nitrifier analysis\n")
   }
 } else {
   cat("No pH data available in predictor data\n")

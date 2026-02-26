@@ -19,39 +19,120 @@ hindcast_filter <- scores_list$scoring_metrics_long %>%
 # Raw hindcast crps values
 hindcast_data <- readRDS(here("data/summary/all_hindcasts_plsr2.rds"))
 hindcast_data_df = hindcast_data %>%
-	filter(model_id %in% converged) %>%
-	filter(!is.na(truth) & fcast_period=="hindcast" & new_site==FALSE)
+	#filter(model_id %in% converged) %>%
+	filter(!is.na(truth) & fcast_period=="hindcast" & new_site %in% c(FALSE, "Observed site"))
+
+# Fill pretty_group from species for functional groups when upstream assignment left NA
+if ("pretty_group" %in% names(hindcast_data_df) && "species" %in% names(hindcast_data_df) &&
+    any(is.na(hindcast_data_df$pretty_group)) && requireNamespace("microbialForecast", quietly = TRUE)) {
+  fg_names <- microbialForecast:::keep_fg_names
+  na_rows <- is.na(hindcast_data_df$pretty_group)
+  is_fg <- hindcast_data_df$species[na_rows] %in% fg_names
+  if (any(is_fg)) {
+    sp_fg <- hindcast_data_df$species[na_rows][is_fg]
+    fg_kingdoms <- microbialForecast::assign_fg_kingdoms(
+      microbialForecast::assign_fg_categories(sp_fg)
+    )
+    idx_fill <- which(na_rows)[is_fg]
+    hindcast_data_df$pretty_group[idx_fill] <- ifelse(
+      fg_kingdoms == "16S", "Bacteria",
+      ifelse(fg_kingdoms == "ITS", "Fungi", NA_character_)
+    )
+  }
+}
+
+# Check if taxon_name exists, otherwise use taxon or species (used later for mean_crps, etc.)
+if ("taxon_name" %in% names(hindcast_data_df)) {
+  taxon_col <- "taxon_name"
+} else if ("taxon" %in% names(hindcast_data_df)) {
+  taxon_col <- "taxon"
+} else if ("species" %in% names(hindcast_data_df)) {
+  taxon_col <- "species"
+} else {
+  stop("No taxon column found")
+}
+
+# Scatter: use all taxa so observed vs forecast spans the full range (single-taxon
+# filter was forcing one low-abundance taxon and clustering points near zero).
+# Exclude rows with NA pretty_group so the figure only shows Bacteria/Fungi panels.
+scatter_data <- hindcast_data_df %>% filter(!is.na(pretty_group))
+
+if (nrow(scatter_data) > 0 && "pretty_group" %in% names(scatter_data) &&
+    length(unique(scatter_data$pretty_group[!is.na(scatter_data$pretty_group)])) > 0) {
+  scatter_overall =
+    ggplot(scatter_data, aes(x = med, y = truth, group = model_name)) +
+    geom_point(aes(color = pretty_group), alpha = 0.15, show.legend = FALSE) +
+    scale_color_manual(values = c(Bacteria = "#F8766D", Fungi = "#00BFC4"), na.value = "gray50") +
+    geom_smooth(method = "lm", se = FALSE, color = 1) +
+    theme_classic(base_size = 18) +
+    facet_grid(pretty_group ~ model_name, labeller = labeller(model_name = model.labs), scales = "free") +
+    xlab("Plot forecast") +
+    ylab("Plot observation") +
+    stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")), p.accuracy = 0.001,
+      label.y.npc = 0.95, label.x.npc = 0.05, size = 6, label.sep = "\n") +
+    geom_abline(slope = 1, intercept = 0, linetype = 2)
+  scatter_overall <- tag_facet(scatter_overall, tag_pool = LETTERS, x = 0.001)
+  scatter_overall
+} else {
+  cat("Warning: No data available for scatter plot - missing pretty_group or no data\n")
+  scatter_overall <- NULL
+}
 
 
-scatter_overall =
-	ggplot(hindcast_data_df, aes(x = med, y = truth, group=model_name)) +
-	geom_point(aes(color=pretty_group),
-						 alpha=.15, show.legend = F) +
-	geom_smooth(method = "lm", se = FALSE, color = 1) +
-	theme_classic(base_size = 18) +
-	facet_grid(pretty_group~model_name, labeller=labeller(model_name = model.labs), scales="free") +
-	xlab("Plot forecast") +
-	ylab("Plot observation") +
-	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")), p.accuracy = 0.001,
-		label.y = .7, label.x.npc = .2, size=4, label.sep='\n') +
-	geom_abline(slope=1, intercept=0, linetype=2)
-#	ggtitle("Overall prediction accuracy")
-scatter_overall <- tag_facet(scatter_overall, tag_pool = LETTERS, x = .001)
-scatter_overall
+if (!is.null(scatter_overall)) {
+  png(here("figures","model_r2_by_kingdom.png"), width = 1200, height=800)
+  print(scatter_overall)
+  dev.off()
 
+  # Forecast horizon by model type (same layout as R²: kingdom x model type)
+  converged_base <- gsub("_beta_regression$", "", converged)
+  horizon_combined <- NULL
+  if (file.exists(here("data", "summary/fcast_horizon_df.rds"))) {
+    fcast_horizon_in <- readRDS(here("data", "summary/fcast_horizon_df.rds"))
+    horizon_data <- fcast_horizon_in[[3]] %>%
+      filter(model_id %in% converged_base,
+             metric == "rsq",
+             horizon_parameter == "rsq_fcast_horizon") %>%
+      rename(forecast_horizon = value) %>%
+      filter(!is.na(forecast_horizon) & is.finite(forecast_horizon))
+    if (nrow(horizon_data) > 0 && "model_name" %in% names(horizon_data) && "pretty_group" %in% names(horizon_data)) {
+      horizon_plot <- ggplot(horizon_data,
+                            aes(x = model_name, y = forecast_horizon, fill = pretty_group)) +
+        geom_violin(alpha = 0.6, draw_quantiles = 0.5, show.legend = FALSE) +
+        geom_point(shape = 21, fill = "white", size = 1.5, alpha = 0.5,
+                   position = position_jitterdodge(dodge.width = 0.9, jitter.width = 0.15),
+                   show.legend = FALSE) +
+        scale_fill_manual(values = c(Bacteria = "#F8766D", Fungi = "#00BFC4")) +
+        facet_grid(pretty_group ~ ., scales = "free_y") +
+        scale_x_discrete(labels = model.labs) +
+        theme_classic(base_size = 16) +
+        xlab("Model type") +
+        ylab("Forecast horizon (months)")
+      horizon_combined <- tag_facet(horizon_plot, tag_pool = c("G", "H"), x = 0.02)
+    }
+  }
+  if (!is.null(horizon_combined)) {
+    combined_fig <- ggarrange(scatter_overall, horizon_combined, nrow = 2, heights = c(1.2, 0.8))
+    png(here("figures", "model_r2_and_horizon_by_kingdom.png"), width = 1200, height = 1100, res = 150)
+    print(combined_fig)
+    dev.off()
+    cat("Saved: figures/model_r2_and_horizon_by_kingdom.png (R² + forecast horizon by model type)\n")
+  }
 
-png(here("figures","model_r2_by_kingdom.png"), width = 1200, height=800)
-print(scatter_overall)
-dev.off()
+  # Run "fig_horizon_by_seasonality.r" to generate fig3g (if available)
+  if (exists("fig3g")) {
+    fig3 = ggarrange(plotlist=list(scatter_overall, fig3g), nrow=2, heights=c(2,1), labels=c(NA, "(G)"))
+    png(here("figures","fig3.png"), width = 1600, height=1600)
+    print(fig3)
+    dev.off()
+  } else {
+    cat("Note: fig3g not available. Run fig_horizon_by_seasonality.r first to generate composite figure.\n")
+  }
+} else {
+  cat("Warning: scatter_overall plot not created - skipping figure generation\n")
+}
 
-# Run "fig_horizon_by_seasonality.r" to generate fig3g
-fig3 = ggarrange(plotlist=list(scatter_overall, fig3g), nrow=2, heights=c(2,1), labels=c(NA, "(G)"))
-
-png(here("figures","fig3.png"), width = 1600, height=1600)
-print(fig3)
-dev.off()
-
-ggscatter(hindcast_data_df, x = "med", y = "truth",
+p_diag <- ggscatter(hindcast_data_df, x = "med", y = "truth",
 					add = "reg.line", color = "pretty_group"
 ) + facet_grid(pretty_group~model_name) +
 	xlab("Median prediction estimate") + ylab("Observed plot mean") +
@@ -59,18 +140,27 @@ ggscatter(hindcast_data_df, x = "med", y = "truth",
 		aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~"))) +
 	ggtitle("Overall prediction accuracy")  +
 	geom_abline(slope=1, intercept=0, linetype=2)
+ggsave(here("figures", "linear_model_accuracy_by_group_model.png"), p_diag, width = 10, height = 8, dpi = 200)
 
+# Check if skill_score_taxon exists
+if (!is.null(scores_list$skill_score_taxon) && nrow(scores_list$skill_score_taxon) > 0) {
+  skill_scores = scores_list$skill_score_taxon %>%
+  	filter(model_name != "all_covariates") %>%
+  	filter(model_id %in% converged)
+} else {
+  cat("Warning: skill_score_taxon not available\n")
+  skill_scores <- data.frame()
+}
 
-
-
-skill_scores = scores_list$skill_score_taxon %>%
-	filter(model_name != "all_covariates") %>%
-	filter(model_id %in% converged)
-
-
-skill_scores_rmse = scores_list$skill_score_taxon_RMSE %>%
-	filter(model_name != "all_covariates") %>%
-	filter(model_id %in% converged)
+# Check if skill_score_taxon_RMSE exists
+if (!is.null(scores_list$skill_score_taxon_RMSE) && nrow(scores_list$skill_score_taxon_RMSE) > 0) {
+  skill_scores_rmse = scores_list$skill_score_taxon_RMSE %>%
+  	filter(model_name != "all_covariates") %>%
+  	filter(model_id %in% converged)
+} else {
+  cat("Warning: skill_score_taxon_RMSE not available\n")
+  skill_scores_rmse <- data.frame()
+}
 
 site_scores = scores_list$scoring_metrics_site_long %>%
 	filter(!siteID %in% "MLBS") %>%
@@ -86,19 +176,35 @@ site_scores_allmetrics = scores_list$scoring_metrics_site_long %>%
 
 
 
-stat_pvalue <- site_scores_allmetrics  %>%
-	filter(metric %in% "CRPS_truncated" & pretty_name %in% c("phylum","functional")) %>%
+# Check if pretty_name column exists before filtering
+if ("pretty_name" %in% names(site_scores_allmetrics)) {
+  fig2_for_tukey <- site_scores_allmetrics %>%
+  	filter(metric %in% "CRPS_truncated" & pretty_name %in% c("phylum","functional")) %>%
 	group_by(pretty_group) %>%
+	filter(n_distinct(model_name) >= 2)
+  if (nrow(fig2_for_tukey) > 0) {
+    stat_pvalue <- fig2_for_tukey %>%
 	rstatix::tukey_hsd(mean_crps_sample ~ model_name) %>%
-	#filter(p.adj < 0.05) %>%
 	rstatix::add_xy_position() %>%
-	#rstatix::add_y_position(step.increase = .1) %>%
-	mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
+	mutate(y.position = seq(min(y.position), max(y.position), length.out = n()))
+  } else {
+    stat_pvalue <- data.frame()
+  }
 
 # View model structure effects on new-site hindcast accuracy
-fig2 <- ggplot(site_scores_allmetrics %>%
-							 	filter(metric %in% c("CRPS_truncated") & pretty_name %in% c("phylum","functional")),
-							 aes(x = model_name, y = mean_crps_sample, color = pretty_group)) +
+# Check if pretty_name exists before filtering
+if ("pretty_name" %in% names(site_scores_allmetrics)) {
+  fig2_data <- site_scores_allmetrics %>%
+  	filter(metric %in% c("CRPS_truncated") & pretty_name %in% c("phylum","functional"))
+} else {
+  # Use rank_name as fallback
+  fig2_data <- site_scores_allmetrics %>%
+  	filter(metric %in% c("CRPS_truncated") & rank_name %in% c("phylum","functional"))
+}
+
+if (nrow(fig2_data) > 0) {
+  fig2 <- ggplot(fig2_data,
+  							 aes(x = model_name, y = mean_crps_sample, color = pretty_group)) +
 	geom_violin(draw_quantiles = c(.5), show.legend = F) +
 	geom_point(position = position_jitterdodge(jitter.height = 0, jitter.width = .2),
 						 alpha = .1, size=3, show.legend = F) +
@@ -108,19 +214,28 @@ fig2 <- ggplot(site_scores_allmetrics %>%
 	theme(axis.text.x=element_text(angle = 280, vjust=.8, hjust = .2),
 				axis.title=element_text(size=22))  +
 	scale_x_discrete(labels= model.labs) +
-	facet_grid(~pretty_group, scales="free") +
-	#facet_grid(cols=vars(pretty_group)) +
-	ggpubr::stat_pvalue_manual(stat_pvalue, label = "p.adj.signif", bracket.nudge.y = -.8,
-														 size=8,
-														 hide.ns = T#, y.position = c(.001,.0005,.0006)
-														 ) +
-#	scale_y_continuous(trans = pseudolog10_trans) +
-scale_y_log10()
-
-fig2
+  	facet_grid(~pretty_group, scales="free") +
+  	#facet_grid(cols=vars(pretty_group)) +
+  	scale_y_log10()
+  
+  if (nrow(stat_pvalue) > 0) {
+    fig2 <- fig2 + ggpubr::stat_pvalue_manual(stat_pvalue, label = "p.adj.signif", bracket.nudge.y = -.8,
+    														 size=8,
+    														 hide.ns = T)
+  }
+  #	scale_y_continuous(trans = pseudolog10_trans) +
+  print(fig2)
+} else {
+  cat("Skipping fig2 - insufficient data\n")
+}
 
 # View model structure effects on new-site hindcast accuracy
-a <- ggplot(skill_scores,
+has_skill_facet <- nrow(skill_scores) > 0 &&
+  "pretty_group" %in% names(skill_scores) &&
+  length(unique(skill_scores$pretty_group[!is.na(skill_scores$pretty_group)])) > 0
+
+if (has_skill_facet) {
+  a <- ggplot(skill_scores,
 			 aes(x = model_name, y = skill_score*100, color = pretty_group)) +
 	geom_violin(draw_quantiles = c(.5), show.legend = F) +
 	geom_point(aes(x = model_name, y = skill_score*100),
@@ -139,14 +254,15 @@ a <- ggplot(skill_scores,
 										 																			c('env_cov','cycl_only'),
 										 																			c('env_cycl','cycl_only')), step.increase = .05,
 										 hide.ns = F)
-a <- tag_facet(a)  +
+  a <- tag_facet(a)  +
 	theme(plot.margin = unit(c(1,2,1,1), "cm"))
 
-
-png(here("figures","linear_model_skill_score.png"), width = 7, height=8, res = 200, units = "in")
-print(a)
-
-dev.off()
+  png(here("figures","linear_model_skill_score.png"), width = 7, height=8, res = 200, units = "in")
+  print(a)
+  dev.off()
+} else {
+  cat("Skipping linear_model_skill_score - insufficient skill_scores or pretty_group for faceting\n")
+}
 
 # a1 <- ggplot(skill_scores,
 # 						 aes(x = model_name, y = skill_score,
@@ -172,16 +288,28 @@ dev.off()
 # 										 show.legend = F, hide.ns = T, size=10)
 #
 
-stat_pvalue <- skill_scores %>% filter(model_name != "env_cov") %>%
+skill_for_tukey <- skill_scores %>%
+	filter(model_name != "env_cov") %>%
 	group_by(pretty_group) %>%
+	filter(n_distinct(model_name) >= 2)
+  if (nrow(skill_for_tukey) > 0) {
+    stat_pvalue <- skill_for_tukey %>%
 	rstatix::tukey_hsd(skill_score_random ~ model_name) %>%
-	#filter(p.adj < 0.05) %>%
 	rstatix::add_y_position(step.increase = .4) %>%
-	mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
+	mutate(y.position = seq(min(y.position), max(y.position), length.out = n()))
+  } else {
+    stat_pvalue <- data.frame()
+  }
+} else {
+  cat("Warning: pretty_name column not found, skipping stat_pvalue calculation\n")
+  stat_pvalue <- data.frame()
+}
 
-a1 = ggplot(skill_scores %>% filter(model_name != "env_cov"),
-			 aes(x = model_name, y = skill_score_random,
-			 		color = pretty_group)) +
+# Check if skill_scores has data before using it
+if (nrow(skill_scores) > 0 && "model_name" %in% names(skill_scores)) {
+  a1 = ggplot(skill_scores %>% filter(model_name != "env_cov"),
+  			 aes(x = model_name, y = skill_score_random,
+  			 		color = pretty_group)) +
 	geom_violin(draw_quantiles = c(.5), show.legend = F) +
 	geom_point(aes(x = model_name, y = skill_score),
 						 position = position_jitterdodge(jitter.height = 0, jitter.width = .2),
@@ -194,62 +322,90 @@ a1 = ggplot(skill_scores %>% filter(model_name != "env_cov"),
 	geom_hline(yintercept = 0) +
 	#facet_grid(pretty_name~pretty_group) +
 	#facet_grid(rows=vars(pretty_group)) +
-	facet_wrap(~pretty_group, nrow=1, scales="free_y") +
-	scale_y_continuous(trans = pseudolog10_trans)  +
-	ggpubr::stat_pvalue_manual(stat_pvalue, label = "p.adj.signif", bracket.nudge.y = -.4, size=4)#)	#+ ylim(c(-15, 5))
-
-a1 <- tag_facet(a1, tag_pool = c("C","D"))
-
-png(here("figures","linear_model_skill_score_bygroup.png"), width = 3, height=7, res = 200, units = "in")
-print(a1)
-
-dev.off()
+  	facet_wrap(~pretty_group, nrow=1, scales="free_y") +
+  	scale_y_continuous(trans = pseudolog10_trans)
+  
+  if (nrow(stat_pvalue) > 0) {
+    a1 <- a1 + ggpubr::stat_pvalue_manual(stat_pvalue, label = "p.adj.signif", bracket.nudge.y = -.4, size=4)
+  }
+  
+  a1 <- tag_facet(a1, tag_pool = c("C","D"))
+  
+  png(here("figures","linear_model_skill_score_bygroup.png"), width = 3, height=7, res = 200, units = "in")
+  print(a1)
+  dev.off()
+} else {
+  cat("Skipping a1 plot - skill_scores data not available\n")
+}
 
 # View model structure effects on within-site hindcast accuracy
-b <- ggplot(hindcast_filter %>%
-			 	filter(metric %in% c("RSQ")),
-			 aes(x = model_name,y = score,
-			 		color = model_name)) +
-	geom_violin(draw_quantiles = c(.5), show.legend = F) +
-	geom_jitter(width=.2, height = 0, size=4, alpha = .4, show.legend = F) +
-	xlab(NULL) +
-	ylab("Hindcast predictability (RSQ 1:1)") +
-	xlab("Taxonomic rank") +
-	theme_bw() + theme(text = element_text(size = 16),
-										 axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
-										 	angle = 320, vjust=1, hjust = -0.05),
-										 strip.text.y = element_text(size=12,face="bold")) +
- facet_grid(#pretty_name
- 					 ~pretty_group) + scale_x_discrete(labels= model.labs) +
-	stat_compare_means(data = hindcast_filter %>%
-										 	filter(metric %in% c("RSQ.1")),
-										 aes(x = model_name, y = score),
-										 method = "anova", inherit.aes = F, size=5, label.y.npc = .7, label.x.npc = .7, show.legend = F) +
-	stat_compare_means(aes(label = after_stat(p.signif)),
-										 method = "t.test", ref.group = "cycl_only", label.y.npc = .5,
-										 show.legend = F, hide.ns = T, size=10)
+hindcast_filter_rsq <- hindcast_filter %>% filter(metric %in% c("RSQ"))
 
-#b <- tag_facet(b, size=7)
+# Check if we have data for faceting (pretty_group is guaranteed in scoring_metrics_long)
+if (nrow(hindcast_filter_rsq) > 0 && length(unique(hindcast_filter_rsq$pretty_group[!is.na(hindcast_filter_rsq$pretty_group)])) > 0) {
+  b <- ggplot(hindcast_filter_rsq,
+  			 aes(x = model_name,y = score,
+  			 		color = model_name)) +
+  	geom_violin(draw_quantiles = c(.5), show.legend = F) +
+  	geom_jitter(width=.2, height = 0, size=4, alpha = .4, show.legend = F) +
+  	xlab(NULL) +
+  	ylab("Hindcast predictability (RSQ 1:1)") +
+  	xlab("Taxonomic rank") +
+  	theme_bw() + theme(text = element_text(size = 16),
+  										 axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
+  										 	angle = 320, vjust=1, hjust = -0.05),
+  										 strip.text.y = element_text(size=12,face="bold")) +
+   facet_grid(#pretty_name
+   					 ~pretty_group) + scale_x_discrete(labels= model.labs) +
+  	stat_compare_means(data = hindcast_filter %>%
+  										 	filter(metric %in% c("RSQ.1")),
+  										 aes(x = model_name, y = score),
+  										 method = "anova", inherit.aes = F, size=5, label.y.npc = .7, label.x.npc = .7, show.legend = F) +
+  	stat_compare_means(aes(label = after_stat(p.signif)),
+  										 method = "t.test", ref.group = "cycl_only", label.y.npc = .5,
+  										 show.legend = F, hide.ns = T, size=10)
+  
+  #b <- tag_facet(b, size=7)
+  
+  png(here("figures","linear_model_comparison.png"), width = 800, height=1200)
+  print(b)
+  dev.off()
+} else {
+  cat("Warning: Insufficient data for linear_model_comparison plot - missing pretty_group or no data\n")
+}
 
-png(here("figures","linear_model_comparison.png"), width = 800, height=1200)
-print(b)
-
-dev.off()
-
-stat_pvalue_hindcast <- hindcast_filter %>%
+hindcast_for_tukey <- hindcast_filter %>%
 	filter(metric %in% c("RMSE.norm")) %>%
 	group_by(pretty_group) %>%
+	filter(n_distinct(model_name) >= 2)
+if (nrow(hindcast_for_tukey) > 0) {
+  stat_pvalue_hindcast <- hindcast_for_tukey %>%
 	rstatix::tukey_hsd(score ~ model_name) %>%
-	#filter(p.adj < 0.05) %>%
 	rstatix::add_y_position(step.increase = .2) %>%
-	mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
+	mutate(y.position = seq(min(y.position), max(y.position), length.out = n()))
+} else {
+  stat_pvalue_hindcast <- data.frame()
+}
 
+# Define mean_crps_hindcast before use in converged_all_3 and subsequent plots (only group by columns present)
+mean_crps_group_vars <- c("model_id", "model_name", "pretty_group", taxon_col)
+if ("pretty_name" %in% names(hindcast_data_df)) mean_crps_group_vars <- c(mean_crps_group_vars, "pretty_name")
+mean_crps_hindcast <- hindcast_data_df %>%
+	group_by(across(all_of(mean_crps_group_vars))) %>%
+	summarize(mean_crps = mean(crps, na.rm = TRUE), .groups = "drop")
+
+# For faceted plots, require non-NA pretty_group and valid numeric mean_crps
+mean_crps_hindcast_plot <- mean_crps_hindcast %>%
+	filter(!is.na(pretty_group), is.finite(mean_crps))
 
 converged_all_3 = hindcast_data_df %>%
-	distinct(taxon, model_name) %>%
-	select(taxon) %>% table
+	distinct(.data[[taxon_col]], model_name) %>%
+	select(all_of(taxon_col)) %>% table
 converged_all_3 = names(converged_all_3[converged_all_3 > 2])
-ggplot(mean_crps_hindcast %>% filter(taxon %in% converged_all_3),
+mean_crps_converged <- mean_crps_hindcast_plot %>% filter(.data[[taxon_col]] %in% converged_all_3)
+
+if (nrow(mean_crps_converged) > 0) {
+ggplot(mean_crps_converged,
 			 aes(x = model_name,y = mean_crps,
 			 		color = model_name)) +
 	geom_violin(draw_quantiles = c(.5)) +
@@ -262,20 +418,21 @@ ggplot(mean_crps_hindcast %>% filter(taxon %in% converged_all_3),
 										 	angle = 320, vjust=1, hjust = -0.05),
 										 strip.text.y = element_text(size=12,face="bold")) +
 	labs(color = "Domain") + facet_grid(~pretty_group) + scale_x_discrete(labels= model.labs) +
-	stat_compare_means(data=mean_crps_hindcast,
+	stat_compare_means(data = mean_crps_converged,
 										 aes(x = model_name, y = mean_crps),
 										 method = "anova", inherit.aes = F, size=5, label.y.npc = .6) +
 	scale_y_log10() + # Add global p-value
 	stat_compare_means(aes(label = after_stat(p.signif)),
 										 method = "t.test", ref.group = "cycl_only", label.y.npc = .5,
 										 show.legend = F, hide.ns = T, size=10)
+} else {
+  cat("Skipping mean_crps_hindcast (converged_all_3) plot - no valid data\n")
+}
 
 
-# View model structure effects on mean CRPS scores
-mean_crps_hindcast = hindcast_data_df %>%
-	group_by(model_id, model_name, pretty_group, pretty_name, taxon) %>%
-	summarize(mean_crps=mean(crps, na.rm=T))
-ggplot(mean_crps_hindcast,
+# View model structure effects on mean CRPS scores (mean_crps_hindcast defined above)
+if (nrow(mean_crps_hindcast_plot) > 0) {
+ggplot(mean_crps_hindcast_plot,
 			 aes(x = model_name,y = mean_crps,
 			 		color = model_name)) +
 	geom_violin(draw_quantiles = c(.5)) +
@@ -289,46 +446,56 @@ ggplot(mean_crps_hindcast,
 										 	angle = 320, vjust=1, hjust = -0.05),
 										 strip.text.y = element_text(size=12,face="bold")) +
 	labs(color = "Domain") + facet_grid(~pretty_group) + scale_x_discrete(labels= model.labs) +
-	stat_compare_means(data=mean_crps_hindcast,
+	stat_compare_means(data = mean_crps_hindcast_plot,
 										 aes(x = model_name, y = mean_crps),
 										 method = "anova", inherit.aes = F, size=5, label.y.npc = .6) +
 	scale_y_log10() + # Add global p-value
 	stat_compare_means(aes(label = after_stat(p.signif)),
 										 method = "t.test", ref.group = "cycl_only", label.y.npc = .5,
 										 show.legend = F, hide.ns = T, size=10)
+} else {
+  cat("Skipping mean_crps_hindcast (overall) plot - no valid data\n")
+}
 
 
 
+agg_vars_crps <- c("model_id", "model_name", "pretty_group")
+if ("pretty_name" %in% names(hindcast_data_df)) agg_vars_crps <- c(agg_vars_crps, "pretty_name")
 hindcast_data_df %>%
-	group_by(model_id, model_name, pretty_group, pretty_name) %>%
-	summarize(mean_crps=mean(crps, na.rm=T))
-ggplot(mean_crps_hindcast,
-			 aes(x = model_name,y = mean_crps,
+	group_by(across(all_of(agg_vars_crps))) %>%
+	summarize(mean_crps = mean(crps, na.rm = TRUE), .groups = "drop")
+facet_formula <- if ("pretty_name" %in% names(mean_crps_hindcast_plot)) as.formula("pretty_name ~ pretty_group") else as.formula("~ pretty_group")
+if (nrow(mean_crps_hindcast_plot) > 0) {
+ggplot(mean_crps_hindcast_plot,
+			 aes(x = model_name, y = mean_crps,
 			 		color = model_name)) +
-	geom_jitter(width=.2, height = 0, size=4, alpha = .1, show.legend = F) +
+	geom_jitter(width = .2, height = 0, size = 4, alpha = .1, show.legend = F) +
 	geom_violin(draw_quantiles = c(.5)) +
-
 	xlab(NULL) +
 	ylab("Hindcast predictability (RSQ 1:1)") +
-	xlab("Taxonomic rank") +
 	theme_bw() + theme(text = element_text(size = 16),
-										 axis.text.x=element_text(#angle = 45, hjust = 1, vjust = 1),
-										 	angle = 320, vjust=1, hjust = -0.05),
-										 strip.text.y = element_text(size=12,face="bold")) +
-	labs(color = "Domain") + facet_grid(pretty_name~pretty_group) + scale_x_discrete(labels= model.labs) +
-	stat_compare_means(data=mean_crps_hindcast,
+										 axis.text.x = element_text(angle = 320, vjust = 1, hjust = -0.05),
+										 strip.text.y = element_text(size = 12, face = "bold")) +
+	labs(color = "Domain") + facet_grid(facet_formula) + scale_x_discrete(labels = model.labs) +
+	stat_compare_means(data = mean_crps_hindcast_plot,
 										 aes(x = model_name, y = mean_crps),
-										 method = "anova", inherit.aes = F, size=5, label.y.npc = .6) +
-	scale_y_log10() + # Add global p-value
+										 method = "anova", inherit.aes = F, size = 5, label.y.npc = .6) +
+	scale_y_log10() +
 	stat_compare_means(aes(label = after_stat(p.signif)),
 										 method = "t.test", ref.group = "cycl_only", label.y.npc = .5,
-										 show.legend = F, hide.ns = T, size=10)
+										 show.legend = F, hide.ns = T, size = 10)
+} else {
+  cat("Skipping mean_crps_hindcast facet plot - no valid data\n")
+}
 
-skill_scores_long = skill_scores %>% pivot_longer(cols=c(skill_score, skill_score_random))
+if (nrow(skill_scores) > 0 && all(c("skill_score", "skill_score_random") %in% names(skill_scores))) {
+  skill_scores_long <- skill_scores %>% pivot_longer(cols = c(skill_score, skill_score_random))
+  skill_scores %>% group_by(pretty_group, model_name) %>% summarize(mean_skill_score = mean(skill_score, na.rm = TRUE), mean_skill_score_random = mean(skill_score_random, na.rm = TRUE), .groups = "drop")
+} else {
+  skill_scores_long <- data.frame()
+}
 
-# Check average improvement by modeled vs random effects
-skill_scores %>% group_by(pretty_group, model_name) %>% summarize(mean_skill_score=mean(skill_score, na.rm=T), mean_skill_score_random = mean(skill_score_random, na.rm=T))
-
+if (nrow(skill_scores_long) > 0) {
 ggplot(skill_scores_long,
 			 aes(y = name,x = value)) +
 	geom_point() +
@@ -343,74 +510,76 @@ ggplot(skill_scores_long,
 										 strip.text.y = element_text(size=12,face="bold")) +
 	labs(color = "Domain") + facet_grid(model_name~pretty_group) +
 	scale_x_discrete(labels= model.labs) +
-	stat_compare_means(data=skill_scores_long,
+	stat_compare_means(data = skill_scores_long,
 										 aes(x = value, y = name),
-										 method = "anova", #inherit.aes = F,
-										 size=5, label.y.npc = .6)
-	# scale_y_log10() + # Add global p-value
-	# stat_compare_means(aes(label = after_stat(p.signif)),
-	# 									 method = "t.test", ref.group = "cycl_only", label.y.npc = .5,
-	# 									 show.legend = F, hide.ns = T, size=10)
+										 method = "anova", size = 5, label.y.npc = .6)
+} else {
+  cat("Skipping skill_scores_long plot - no skill score data\n")
+}
 
 # Just checking which model performed best overall for each group
 # Env_cycl has higher crps for some groups, but higher RSQ
-cal_metrics = scores_list$calibration_metrics %>%
+cal_metrics <- scores_list$calibration_metrics %>%
 	filter(model_id %in% converged)
-ggplot(cal_metrics,
-			 aes(x=pretty_name, y=CRPS, colour = model_name)) +
-	geom_boxplot(aes(colour = model_name)) +
-	geom_point(position=position_jitterdodge(jitter.width = .1,jitter.height = 0, dodge.width = 1), alpha=.3, size=3) +
-	theme_bw(base_size = 20) +
-	ggtitle(paste0("In-sample prediction accuracy")) +
-	xlab(NULL) + facet_grid(~pretty_group)
+cal_metrics_plot <- cal_metrics %>% filter(!is.na(pretty_group))
+if (nrow(cal_metrics_plot) > 0 && "pretty_name" %in% names(cal_metrics_plot)) {
+  ggplot(cal_metrics_plot,
+     aes(x = pretty_name, y = CRPS, colour = model_name)) +
+    geom_boxplot(aes(colour = model_name)) +
+    geom_point(position = position_jitterdodge(jitter.width = .1, jitter.height = 0, dodge.width = 1), alpha = .3, size = 3) +
+    theme_bw(base_size = 20) +
+    ggtitle("In-sample prediction accuracy") +
+    xlab(NULL) + facet_grid(~ pretty_group)
+}
+if (nrow(cal_metrics_plot) > 0 && "pretty_name" %in% names(cal_metrics_plot) && length(unique(na.omit(cal_metrics_plot$pretty_name))) > 0) {
+  ggplot(cal_metrics_plot,
+     aes(x = model_name, y = RSQ, colour = model_name)) +
+    geom_boxplot(aes(colour = model_name)) +
+    geom_point(position = position_jitterdodge(jitter.width = .1, jitter.height = 0, dodge.width = 1), alpha = .3, size = 3) +
+    theme_bw(base_size = 20) +
+    xlab(NULL) + facet_grid(pretty_name ~ pretty_group) +
+    stat_compare_means(data = cal_metrics_plot,
+       aes(x = model_name, y = RSQ, group = model_name),
+       method = "anova", inherit.aes = F, size = 5, label.y.npc = .6) +
+    stat_compare_means(aes(label = after_stat(p.signif)),
+       method = "t.test", ref.group = "cycl_only")
+}
 
-ggplot(cal_metrics,
-			 aes(x=model_name, y=RSQ, colour = model_name)) +
-	geom_boxplot(aes(colour = model_name)) +
-	geom_point(position=position_jitterdodge(jitter.width = .1,jitter.height = 0, dodge.width = 1), alpha=.3, size=3) +
-	theme_bw(base_size = 20) +
-	xlab(NULL) + facet_grid(pretty_name~pretty_group)  +
-	stat_compare_means(data = cal_metrics,
-										 aes(x = model_name, y = RSQ, group=model_name),
-										 method = "anova", inherit.aes = F, size=5, label.y.npc = .6) + # Add global p-value
-	stat_compare_means(aes(label = after_stat(p.signif)),
-										 method = "t.test", ref.group = "cycl_only")
 
 
 
 
-
-ggscatter(hindcast_data_df, x = "mean", y = "truth",
+p_mean_diag <- ggscatter(hindcast_data_df, x = "mean", y = "truth",
 					add = "reg.line", color = "model_name"
 ) + facet_grid(fcast_period~model_name) +
 	xlab("Mean prediction estimate") + ylab("Observed plot mean") +
 	stat_cor(
 		aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~"))) + ggtitle("Overall prediction accuracy")
-
+ggsave(here("figures", "linear_model_accuracy_mean_by_period_model.png"), p_mean_diag, width = 10, height = 8, dpi = 200)
 
 sum.all <- readRDS(here("data", "summary/predictor_effects.rds"))
 
+beta_names <- c("Ectomycorrhizal\ntrees", "LAI", "pC", "pH", "Temperature", "Moisture")
 df_cal <- sum.all %>%
-	filter(beta %in% beta_names & #(workaround since the model names aren't all saving)
+	filter(beta %in% beta_names &
 				 	model_name %in% c("env_cov","env_cycl") &
 				 	!grepl("other", taxon) &
 				 	time_period == "2015-11_2018-01" &
 				 	!time_period %in% c("2015-11_2020-01")) %>% mutate(rank_only=only_rank)
 df_cal$beta <- droplevels(df_cal$beta)
 
-df_cal_fg_tax <- df_cal
-# CHeck whether model structures (i.e. inclusion of cycl) lead to different effect sizes
-ggplot(df_cal_fg_tax, aes(x = rank_only,y = effSize,
-													color = model_name)) +
-	geom_violin(position=position_dodge(), draw_quantiles = c(.5), show.legend = F) +
-	geom_point(position=position_jitterdodge(jitter.width = .5,jitter.height = 0, dodge.width = 1),size=4, alpha = .5) +
-	labs(title = "Absolute effect size") +
-	theme_minimal(base_size = 18) +
-	xlab("Rank")+
-	ylab(NULL) +
-	facet_grid(rows = vars(beta), cols = vars(pretty_group), drop = T,
-						 scales = "free", space = "free_x") +
-	theme(axis.text.x=element_text(
-		angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=22,face="bold"),
-		strip.text.y = element_text(size=12,face="bold"))
+df_cal_fg_tax <- df_cal %>% filter(!is.na(pretty_group))
+if (nrow(df_cal_fg_tax) > 0 && length(unique(na.omit(df_cal_fg_tax$beta))) > 0) {
+  ggplot(df_cal_fg_tax, aes(x = rank_only, y = effSize, color = model_name)) +
+    geom_violin(position = position_dodge(), draw_quantiles = c(.5), show.legend = F) +
+    geom_point(position = position_jitterdodge(jitter.width = .5, jitter.height = 0, dodge.width = 1), size = 4, alpha = .5) +
+    labs(title = "Absolute effect size") +
+    theme_minimal(base_size = 18) +
+    xlab("Rank") + ylab(NULL) +
+    facet_grid(rows = vars(beta), cols = vars(pretty_group), drop = TRUE, scales = "free", space = "free_x") +
+    theme(axis.text.x = element_text(angle = 320, vjust = 1, hjust = -0.05),
+          axis.title = element_text(size = 22, face = "bold"),
+          strip.text.y = element_text(size = 12, face = "bold"))
+} else {
+  cat("Skipping df_cal effect size plot - no valid pretty_group or beta after filter\n")
+}

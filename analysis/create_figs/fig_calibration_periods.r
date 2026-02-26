@@ -10,7 +10,20 @@ if (!require(ganttrify, quietly = TRUE)) {
   ganttrify_available <- TRUE
 }
 
-data_in <- readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
+# Load plot estimates from separate file (plot_est is intentionally empty in summaries)
+if (file.exists(here("data/summary/plot_estimates.rds"))) {
+  cat("Loading plot_estimates from separate file...\n")
+  plot_est_data = readRDS(here("data/summary/plot_estimates.rds"))
+  cat("Loaded", nrow(plot_est_data), "rows\n")
+  data_in <- list(plot_est = plot_est_data)
+} else {
+  # Fallback to summaries file
+  data_in <- readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
+  if (!"plot_est" %in% names(data_in) || nrow(data_in$plot_est) == 0) {
+    cat("Warning: plot_est is empty in summaries file. Please ensure plot_estimates.rds exists.\n")
+    data_in$plot_est <- data.frame()
+  }
+}
 keep_list <- readRDS(here("data/summary/converged_taxa_list.rds"))
 
 # Check if data has the expected structure
@@ -21,12 +34,18 @@ if (!"plot_est" %in% names(data_in)) {
 # Check if dates column exists and has valid data
 if (!"dates" %in% names(data_in$plot_est)) {
   cat("No dates column found in plot_est data\n")
-  data_in$plot_est$dates <- as.Date(NA)
+  if (nrow(data_in$plot_est) > 0) {
+    data_in$plot_est$dates <- as.Date(NA)
+  }
 }
 
 # Filter out rows with missing dates for the summary
-plot_est_filtered <- data_in$plot_est %>%
-  filter(!is.na(dates))
+if (nrow(data_in$plot_est) > 0) {
+  plot_est_filtered <- data_in$plot_est %>%
+    filter(!is.na(dates))
+} else {
+  plot_est_filtered <- data_in$plot_est
+}
 
 if (nrow(plot_est_filtered) == 0) {
   cat("No valid dates found in plot_est data\n")
@@ -117,12 +136,22 @@ if (nrow(to_plot) > 0) {
     xlim(c(as.Date("2013-06-01"), as.Date("2020-01-01")))
   
   print(p)
+  tryCatch({
+    png(here("figures","calibration_periods_comparison.png"), width = 1200, height = 800)
+    print(p)
+    dev.off()
+    cat("Plot saved successfully\n")
+  }, error = function(e) {
+    cat("Error saving plot:", e$message, "\n")
+  })
   cat("Plot created successfully\n")
 } else {
   cat("No data available for plotting with current filters\n")
   # Show what data we do have
-  cat("Available taxa:", unique(cal_data$taxon), "\n")
-  cat("Available model names:", unique(cal_data$model_name), "\n")
-  cat("Available site IDs:", unique(cal_data$siteID), "\n")
+  cat("Available taxa:", paste(head(unique(cal_data$taxon), 10), collapse = ", "), "...\n")
+  cat("Available model names:", paste(unique(cal_data$model_name), collapse = ", "), "\n")
+  cat("Available site IDs:", paste(head(unique(cal_data$siteID), 10), collapse = ", "), "...\n")
 }
 
+# Save gantt chart if it was created (ganttrify doesn't return a plot object, it prints directly)
+# The gantt chart is printed but not saved by ganttrify, so we skip saving it

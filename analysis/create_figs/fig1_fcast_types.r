@@ -1,327 +1,165 @@
-# Comparing functional groups vs taxonomy
+# Functional vs taxonomic group forecast comparison
+# Central question: do functional or taxonomic groupings produce better forecasts,
+# and are environmental drivers more or less informative for each?
+
+library(tidyverse)
+library(ggpubr)
+
 source("source.R")
-#p_load(multcomp)
-library(ggallin)
-library(emmeans)
 
-scores_list = readRDS(here("data", "summary/scoring_metrics_plsr2.rds"))
-converged = scores_list$converged_list
-
-#converged =  scores_list$converged_strict_list
+# ── Data loading ──────────────────────────────────────────────────────────────
+scores_list <- readRDS(here("data", "summary/scoring_metrics_plsr2.rds"))
+converged   <- gsub("_beta_regression$", "", scores_list$converged_list)
+fg_names    <- microbialForecast:::keep_fg_names
 
 sum.all <- readRDS(here("data", "summary/predictor_effects.rds"))
-df_refit = sum.all %>% filter(time_period=="2015-11_2020-01" & model_name=="env_cycl") %>%
-	filter(model_id %in% converged)
-df_cal = sum.all %>% filter(time_period=="2015-11_2018-01" & model_name=="env_cycl") %>%
-	filter(model_id %in% converged)
 
-
-skill_score_rmse <- scores_list$scoring_metrics_long %>%
-	filter(model_id %in% converged & model_name == "env_cycl") %>%
-	filter(metric=="RMSE.norm") %>%
-	pivot_wider(id_cols = c("model_id","fcast_type","pretty_group","model_name","pretty_name","rank_name","taxon"),
-							values_from = "score", names_from = "site_prediction") %>%
-	mutate(skill_score = (1 - (`New time x site (modeled effect)`/`New time (observed site)`)),
-				 skill_score_random = (1 - (`New time x site (random effect)`/`New time (observed site)`)),
-	)
-
-fcast_info_simple <- scores_list$scoring_metrics_site_lon %>% ungroup() %>%
-	select(fcast_type, pretty_group, model_name, pretty_name, taxon) %>% distinct()
-
-cal_rsq_long <- scores_list$calibration_metrics_long %>%
-	filter(model_id %in% converged & model_name == "env_cycl") %>%
-	distinct(.keep_all = T) %>% merge(fcast_info_simple, all.x=T, all.y=F)
-
-cal_rsq = scores_list$calibration_metrics %>%
-	filter(model_id %in% converged & model_name == "env_cycl") %>%
-	distinct(.keep_all = T) %>% merge(fcast_info_simple, all.x=T, all.y=F)
-
+# ── Hindcast accuracy (env_cycl, observed-site predictions) ──────────────────
 hindcast_rsq <- scores_list$scoring_metrics %>%
-	filter(model_id %in% converged & model_name == "env_cycl" &
-				 	grepl("observed", site_prediction)) %>%
-	distinct()  %>%
-	merge(fcast_info_simple, all.x=T, all.y=F)
+  filter(model_id %in% converged,
+         model_name == "env_cycl",
+         grepl("observed", site_prediction)) %>%
+  distinct() %>%
+  mutate(
+    fcast_type = ifelse(species %in% fg_names, "Functional group", "Taxonomic group"),
+    RMSE.norm  = pmin(RMSE.norm, 5)
+  )
 
-# Cap the highest value of normalized RMSE at 5
-hindcast_rsq$RMSE.norm = ifelse(hindcast_rsq$RMSE.norm > 5, 5, hindcast_rsq$RMSE.norm)
+# ── Predictor effect sizes (calibration period, env_cycl) ────────────────────
+df_cal <- sum.all %>%
+  filter(time_period == "20130601_20180101", model_name == "env_cycl") %>%
+  mutate(model_id_base = gsub("_(combined|beta_regression)$", "", model_id)) %>%
+  filter(model_id_base %in% converged,
+         !beta %in% c("sin", "cos", "rho")) %>%
+  mutate(fcast_type = ifelse(taxon %in% fg_names, "Functional group", "Taxonomic group"))
 
-hindcast_site <- scores_list$scoring_metrics_site %>%
-	filter(model_id %in% converged & model_name == "env_cycl" & grepl("observed", site_prediction)) %>%
-	distinct()
-hindcast_site$RMSE.norm = ifelse(hindcast_site$RMSE.norm > 5, 5, hindcast_site$RMSE.norm)
+# ── Shared aesthetics (Okabe-Ito color-blind safe) ──────────────────────────
+type_colors <- c("Functional group" = "#0072B2", "Taxonomic group" = "#D55E00")
+type_shapes <- c("Functional group" = 16, "Taxonomic group" = 17)
+comparisons <- list(c("Functional group", "Taxonomic group"))
 
-calibration_site <- scores_list$calibration_metrics_site %>%
-	filter(model_id %in% converged & model_name == "env_cycl") %>%
-	merge(fcast_info_simple, all.x=T, all.y=F)
+base_theme <- theme_bw(base_size = 14) +
+  theme(
+    strip.background   = element_rect(fill = "grey92", color = NA),
+    strip.text         = element_text(face = "bold"),
+    axis.text.x        = element_text(angle = 30, hjust = 1),
+    panel.grid.major.x = element_blank()
+  )
 
+# ── Panel A: Hindcast nRMSE by forecast type ─────────────────────────────────
+pA <- ggplot(hindcast_rsq,
+             aes(x = fcast_type, y = RMSE.norm, fill = fcast_type)) +
+  geom_violin(alpha = 0.5, draw_quantiles = 0.5, show.legend = FALSE) +
+  geom_point(aes(color = fcast_type, shape = fcast_type),
+             position = position_jitter(width = 0.15, height = 0),
+             alpha = 0.3, size = 1.2, show.legend = FALSE) +
+  stat_compare_means(comparisons = comparisons,
+                     method = "wilcox.test", label = "p.signif", size = 5) +
+  facet_wrap(~pretty_group, scales = "fixed") +
+  scale_fill_manual(values  = type_colors) +
+  scale_color_manual(values = type_colors) +
+  scale_shape_manual(values = type_shapes) +
+  labs(x = NULL, y = "Relative forecast error (nRMSE)", tag = "A") +
+  base_theme
 
-tukey_fcast_CRPS = hindcast_rsq %>%
-	group_by(pretty_group) %>%
-	summarize(tukey(x = fcast_type, y = CRPS_truncated)) %>% dplyr::rename(fcast_type = x)
+# ── Panel B: Hindcast CRPS by forecast type ──────────────────────────────────
+pB <- ggplot(hindcast_rsq,
+             aes(x = fcast_type, y = CRPS_truncated, fill = fcast_type)) +
+  geom_violin(alpha = 0.5, draw_quantiles = 0.5, show.legend = FALSE) +
+  geom_point(aes(color = fcast_type, shape = fcast_type),
+             position = position_jitter(width = 0.15, height = 0),
+             alpha = 0.3, size = 1.2, show.legend = FALSE) +
+  stat_compare_means(comparisons = comparisons,
+                     method = "wilcox.test", label = "p.signif", size = 5) +
+  facet_wrap(~pretty_group, scales = "fixed") +
+  scale_fill_manual(values  = type_colors) +
+  scale_color_manual(values = type_colors) +
+  scale_shape_manual(values = type_shapes) +
+  labs(x = NULL, y = "Probabilistic forecast error (CRPS)", tag = "B") +
+  base_theme
 
-tukey_cal_CRPS = cal_rsq %>%
-	group_by(pretty_group) %>%
-	summarize(tukey(x = fcast_type, y = CRPS_truncated)) %>% dplyr::rename(fcast_type = x)
+# ── Panel C: Predictor effect sizes by forecast type (forest plot) ────────────
+eff_summary <- df_cal %>%
+  group_by(pretty_group, fcast_type, beta) %>%
+  summarise(
+    mean_eff = mean(effSize, na.rm = TRUE),
+    se_eff   = sd(effSize, na.rm = TRUE) / sqrt(sum(!is.na(effSize))),
+    .groups  = "drop"
+  )
 
-tukey_fcast_site_CRPS = hindcast_site %>%
-	group_by(pretty_group) %>%
-	summarize(tukey(x = fcast_type, y = CRPS_truncated)) %>% dplyr::rename(fcast_type = x)
+pC <- ggplot(eff_summary,
+             aes(x = mean_eff, y = beta, color = fcast_type, shape = fcast_type)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_linerange(aes(xmin = mean_eff - 1.96 * se_eff,
+                     xmax = mean_eff + 1.96 * se_eff),
+                 position = position_dodge(width = 0.55),
+                 linewidth = 0.6) +
+  geom_point(position = position_dodge(width = 0.55), size = 2.5) +
+  facet_wrap(~pretty_group) +
+  scale_color_manual(values = type_colors, name = "Forecast type") +
+  scale_shape_manual(values = type_shapes, name = "Forecast type") +
+  labs(x = "Mean absolute effect size (\u00b195% CI)", y = NULL, tag = "C") +
+  base_theme +
+  theme(
+    panel.grid.major.y = element_blank(),
+    legend.position    = "bottom"
+  )
 
-tukey_cal_site_CRPS = calibration_site %>%
-	group_by(pretty_group) %>%
-	summarize(tukey(x = fcast_type, y = CRPS_truncated)) %>% dplyr::rename(fcast_type = x)
+# ── Combine and save ──────────────────────────────────────────────────────────
+fig1 <- ggarrange(
+  ggarrange(pA, pB, ncol = 2,
+            common.legend = TRUE, legend = "bottom"),
+  pC,
+  nrow = 2,
+  heights = c(1, 0.8)
+)
 
+out_dir <- here("data", "figures")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-beta_names <- c("Ectomycorrhizal\ntrees", "LAI", "pC",
-								"pH", "Temperature", "Moisture")
-# Test for differences in effect sizes between fcast types
-beta_tukey_group = list()
-for (group in c("Fungi", "Bacteria")){
-	beta_tukey = list()
-	for (beta in beta_names) {
-		df_group=df_cal %>% filter(pretty_group==!!group)
-		out = df_group %>% filter(beta %in% !!beta) %>%
-			#group_by(beta) %>%
-			aov(effSize~fcast_type,.) %>%
-			emmeans::emmeans(object = ., pairwise ~ "fcast_type", adjust = "tukey") %>% .$emmeans %>%
-			multcomp::cld(object = ., Letters = letters) %>% as.data.frame() %>%
-		#	rename(Letters_Tukey = `.group`) %>%
-			#rownames_to_column("beta") %>%
-			mutate(pretty_group = !!group, beta = !!beta, Letters_Tukey=`.group`)
-		beta_tukey[[beta]] = out
-	}
-	beta_tukey_group[[group]] = do.call(rbind, beta_tukey)
-}
-tukey_cal_beta = do.call(rbind.data.frame, beta_tukey_group)
-tukey_cal_beta$tot = tukey_cal_beta$upper.CL + .1
+ggsave(file.path(out_dir, "fig1_fcast_types_composite.png"), fig1,
+       width = 12, height = 10, dpi = 300)
+cat("Saved: data/figures/fig1_fcast_types_composite.png\n")
 
-# Subset to only predictors that have a difference between types
-diff_letters <- tukey_cal_beta %>% group_by(beta) %>% #any(Letters_Tukey != "a")  %>%
-	mutate(eq = replace(Letters_Tukey, n_distinct(Letters_Tukey)==1, '') ) #%>% filter(eq != "")
-df_cal_diff = merge(df_cal, diff_letters, all.x = T) %>% filter(eq != "")
+# ── Diagnostic: why are nRMSE and CRPS inverted? ─────────────────────────────
+# nRMSE = RMSE / mean_abundance; CRPS_truncated uses full predictive distribution.
+# Load raw hindcasts to check whether the inversion is driven by:
+#   (a) abundance normalization inflating/deflating nRMSE, or
+#   (b) forecast spread (sd) differing between functional vs taxonomic groups.
+cat("\n── Metric inversion diagnostic ──\n")
+hindcast_data <- readRDS(here("data/summary/all_hindcasts_plsr2.rds"))
+hindcast_diag <- hindcast_data %>%
+  as_tibble() %>%
+  filter(model_name == "env_cycl",
+         grepl("observed", site_prediction),
+         !is.na(truth)) %>%
+  mutate(fcast_type = ifelse(species %in% fg_names, "Functional group", "Taxonomic group"))
 
+diag_summary <- hindcast_diag %>%
+  group_by(fcast_type) %>%
+  summarise(
+    n_obs            = n(),
+    mean_abundance   = mean(truth, na.rm = TRUE),
+    median_abundance = median(truth, na.rm = TRUE),
+    mean_sd          = mean(sd, na.rm = TRUE),
+    median_sd        = median(sd, na.rm = TRUE),
+    mean_abs_error   = mean(abs(mean - truth), na.rm = TRUE),
+    mean_rel_error   = mean(abs(mean - truth) / pmax(truth, 0.005), na.rm = TRUE),
+    .groups = "drop"
+  )
+cat("Per-observation summary by forecast type:\n")
+print(as.data.frame(diag_summary), digits = 4)
 
-tukey_cal_beta2 = df_cal %>% filter(!beta %in% c("rho","sin","cos")) %>%
-	group_by(pretty_group, beta) %>%
-	summarize(tukey(x = fcast_type, y = effSize)) %>%
-	rename(fcast_type = x)
-
-
-
-tukey_beta_diff = merge(tukey_cal_beta2,
-												diff_letters[,c("fcast_type","pretty_group","beta","eq")], all.x = T) %>% filter(eq != "")
-
-###### # Plot with Tukey, effect sizes across fcast types ----
-c <- ggplot(df_cal_diff %>%
-							filter(!beta %in% c("sin","cos","rho")),
-						aes(x = fcast_type,y = effSize,color = pretty_group)) +
-	xlab(NULL)+
-	ylab("Absolute effect size") +
-	facet_grid(rows = vars(beta),
-						 cols = vars(pretty_group),
-						 drop = T,
-						 scales = "free", space = "free_x") +
-	theme_bw() +
-	theme(text = element_text(size = 16),
-		axis.text.x=element_text(
-			angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=18),
-		strip.text.y = element_text(size=12)) +
-	geom_violin(draw_quantiles = c(.5), show.legend = F) +
-	geom_jitter(width=.2, height = 0, size=4, alpha = .1, show.legend = F)
-
-fcast_type_beta_plot <- c +
-	geom_text(data = tukey_beta_diff,
-
-						aes(x = fcast_type, y = tot, label = Letters_Tukey), show.legend = F, color = 1, size =6)
-######
-fcast_type_beta_plot
-
-
-# Test for differences in hindcast accuracy between fcast types
-score_tukey_group = list()
-for (group in c("Fungi", "Bacteria")){
-		df_group=hindcast_rsq %>% filter(pretty_group==!!group)
-		out = df_group %>%
-			#group_by(beta) %>%
-			aov(RMSE.norm~fcast_type,.) %>%
-			emmeans::emmeans(object = ., pairwise ~ "fcast_type", adjust = "tukey") %>% .$emmeans %>%
-			multcomp::cld(object = ., Letters = letters) %>% as.data.frame() %>%
-			rename(Letters_Tukey = `.group`) %>%
-			#rownames_to_column("beta") %>%
-			mutate(pretty_group = !!group)
-		score_tukey_group[[group]] = out
-}
-score_tukey_group
-tukey_score = do.call(rbind, score_tukey_group)
-tukey_score$tot = tukey_score$upper.CL + .3
-
-
-# Test for differences in hindcast accuracy
-
-b <-
-	ggplot(hindcast_rsq,
-				 aes(x = fcast_type, y = RMSE.norm,
-				 		color = pretty_group)) +
-	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
-	geom_point(size = 4, position = position_jitterdodge(jitter.width = .4), alpha=.1, show.legend = F) +
-	facet_grid(rows=vars(pretty_group), drop = T, scales="free") +
-	# geom_jitter(aes(x = metric, y = value), width=.1,
-	# 						height = 0, alpha = .8, size=4) +
-	ylab("Relative forecast error (nRMSE)") + xlab(NULL) +
-	theme_bw(base_size=16) +
-	#scale_color_manual(values = c(1,2))	+
-	theme(text = element_text(size = 16),
-				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
-				axis.title=element_text(size=16), legend.position = c(.9,1.1)) +
-	geom_hline(yintercept = 0, linetype=2) +
-	theme(plot.margin = margin(1,2,1,1, "cm"))
-b
-
-fcast_type_crps_plot <- b +
-	geom_text(data = tukey_score,
-
-						aes(x = fcast_type, y = tot, label = Letters_Tukey), show.legend = F, color = 1, size =6)
-fcast_type_crps_plot
-
-# ggplot(calibration_wide,
-# 			 aes(x = RSQ.1, y = CRPS_truncated,
-# 			 		color = pretty_group)) +
-# 	geom_point(size = 4,  alpha=.1) + geom_abline(slope=1)  +
-# 	theme_bw(base_size=18)
-
-# ggplot(hindcast_wide,
-# 			 aes(x = RSQ.1, y = CRPS_truncated,
-# 			 		color = pretty_group)) +
-# 	geom_point(size = 4,  alpha=.1) + geom_abline(slope=1)  +
-# 	theme_bw(base_size=18)
-
-
-# ggplot(cal_rsq %>% filter(metric %in% c("residual_variance", "predictive_variance", "total_PL")),
-# 			 aes(x = pretty_name, y = value,
-# 			 		color = pretty_name)) +
-# 	geom_point(size = 4, position = position_jitterdodge(jitter.width = 1), alpha=.1, show.legend = F) +
-# 	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
-# 	facet_grid(pretty_group ~ metric, drop = T, scales="free") +
-# 	# geom_jitter(aes(x = metric, y = value), width=.1,
-# 	# 						height = 0, alpha = .8, size=4) +
-# 	ylab("Metric scores") + xlab(NULL) +
-# 	theme_bw(base_size=18) +
-# 	ggtitle("calibration: Predictive loss increases (predictability worsens) at broader ranks")  +
-# 	#scale_color_manual(values = c(1,2))	+
-# 	theme(text = element_text(size = 22),
-# 				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
-# 				axis.title=element_text(size=24), legend.position = c(.9,1.1)) +
-# 	#guides(color=guide_legend(title=NULL)) +
-# 	geom_hline(yintercept = 0, linetype=2) +
-# 	theme(plot.margin = margin(1,2,1,1, "cm"))  + scale_y_log10()
-#
-# ggplot(cal_rsq %>% filter(metric %in% c("RSQ","RSQ.1","CRPS_truncated")),
-# 			 aes(x = pretty_name, y = value,
-# 			 		color = pretty_name)) +
-# 	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
-# 	geom_point(size = 4, position = position_jitterdodge(jitter.width = 1), alpha=.1, show.legend = F) +
-# 	facet_grid( metric ~ pretty_group, drop = T, scales="free") +
-# 	# geom_jitter(aes(x = metric, y = value), width=.1,
-# 	# 						height = 0, alpha = .8, size=4) +
-# 	ylab("Metric scores") + xlab(NULL) +
-# 	theme_bw(base_size=18) +
-# 	ggtitle("calibration: Rsq predictability increases at broader ranks")  +
-# 	#scale_color_manual(values = c(1,2))	+
-# 	theme(text = element_text(size = 22),
-# 				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
-# 				axis.title=element_text(size=24), legend.position = c(.9,1.1)) +
-# 	#guides(color=guide_legend(title=NULL)) +
-# 	geom_hline(yintercept = 0, linetype=2) +
-# 	theme(plot.margin = margin(1,2,1,1, "cm"))
-
-skill_scores = scores_list$skill_score_taxon %>%
-	filter(model_id %in% converged & model_name == "env_cycl")
-skill_scores$fcast_type = ifelse(skill_scores$fcast_type=="Diversity", "Evenness", skill_scores$fcast_type)
-
-skill_scores_rank =  scores_list$skill_score_rank  %>%
-	filter(model_id %in% converged & grepl("env_cycl", model_id))
-
-# View skill scores by forecast type
-a <- ggplot(skill_scores,
-			 aes(x = fcast_type, y = skill_score,
-			 		color = pretty_group)) +
-	geom_violin(draw_quantiles = c(.5))+
-	geom_point(aes(x = fcast_type, y = skill_score),
-						 position = position_jitterdodge(jitter.height = 0, jitter.width = .4), alpha = .2, size=4) +
-	ylab("Skill at new sites (% change in CRPS)") + xlab(NULL) +
-	theme_bw(base_size=18) + #ggtitle("Model transferability to new sites") +
-	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
-				axis.title=element_text(size=16))  +
-	guides(color=guide_legend(title="Domain"),
-				 shape=guide_legend(title="Forecast type")) +
-	facet_grid(cols=vars(pretty_group)) +
-	scale_y_continuous(trans = pseudolog10_trans)
-
-aov1.1=aov(skill_score~pretty_group+fcast_type,skill_scores)
-mod_means_contr <- emmeans::emmeans(object = aov1.1,
-																		pairwise ~ "fcast_type",
-																		adjust = "tukey")
-tukey_skill_score <- multcomp::cld(object = mod_means_contr$emmeans,
-													 Letters = letters) %>% as.data.frame() %>% rename(Letters_Tukey = `.group`) %>% mutate(tot = 1)
-
-skill_score_plot <- a +
-	geom_text(data = tukey_skill_score,
-
-						aes(x = fcast_type, y = tot, label = Letters_Tukey), show.legend = F, color = 1, size =6)
-skill_score_plot
-
-# ggplot(hindcast_rsq %>% filter(metric %in% c("residual_variance", "predictive_variance", "total_PL")),
-# 			 aes(x = pretty_name, y = value,
-# 			 		color = pretty_name)) +
-# 	geom_point(size = 4, position = position_jitterdodge(jitter.width = 1), alpha=.1, show.legend = F) +
-# 	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
-# 	facet_grid(pretty_group ~ metric, drop = T, scales="free") +
-# 	# geom_jitter(aes(x = metric, y = value), width=.1,
-# 	# 						height = 0, alpha = .8, size=4) +
-# 	ylab("Metric scores") + xlab(NULL) +
-# 	theme_bw(base_size=18) +
-# 	ggtitle("hindcasts: Predictive loss increases (predictability worsens) at broader ranks")  +
-# 	#scale_color_manual(values = c(1,2))	+
-# 	theme(text = element_text(size = 22),
-# 				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
-# 				axis.title=element_text(size=24), legend.position = c(.9,1.1)) +
-# 	#guides(color=guide_legend(title=NULL)) +
-# 	geom_hline(yintercept = 0, linetype=2) +
-# 	theme(plot.margin = margin(1,2,1,1, "cm")) + scale_y_log10()
-#
-#
-# ggplot(hindcast_rsq %>% filter(metric %in% c("RSQ","RSQ.1","CRPS_truncated")),
-# 			 aes(x = pretty_name, y = value,
-# 			 		color = pretty_name)) +
-# 	geom_violin(draw_quantiles = c(0.5), show.legend=F) +
-# 	geom_point(size = 4, position = position_jitterdodge(jitter.width = 1), alpha=.1, show.legend = F) +
-# 	facet_grid( metric ~ pretty_group, drop = T, scales="free") +
-# 	# geom_jitter(aes(x = metric, y = value), width=.1,
-# 	# 						height = 0, alpha = .8, size=4) +
-# 	ylab("Metric scores") + xlab(NULL) +
-# 	theme_bw(base_size=18) +
-# 	ggtitle("hindcasts: Rsq predictability DECREASES at broader ranks")  +
-# 	#scale_color_manual(values = c(1,2))	+
-# 	theme(text = element_text(size = 22),
-# 				axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
-# 				axis.title=element_text(size=24), legend.position = c(.9,1.1)) +
-# 	#guides(color=guide_legend(title=NULL)) +
-# 	geom_hline(yintercept = 0, linetype=2) +
-# 	theme(plot.margin = margin(1,2,1,1, "cm"))
-
-
-fcast_type_beta_plot
-fcast_type_crps_plot
-skill_score_plot
-
-library(ggpubr)
-ggarrange(fcast_type_beta_plot, fcast_type_crps_plot, skill_score_plot, common.legend = T, nrow=1)
-
-# Including C from seasonalEffSize script
-# NOTE: amplitude_plot object not defined - commenting out for now
-# ggarrange(fcast_type_beta_plot, fcast_type_crps_plot, skill_score_plot, amplitude_plot,
-# 					common.legend = T, labels = c("A","B","C","D"))
-
-# Use the working composite instead:
-ggarrange(fcast_type_beta_plot, fcast_type_crps_plot, skill_score_plot, common.legend = T, nrow=1)
+# Also break down by pretty_group to see if the pattern holds within kingdoms
+diag_by_group <- hindcast_diag %>%
+  group_by(pretty_group, fcast_type) %>%
+  summarise(
+    n_obs          = n(),
+    mean_abundance = mean(truth, na.rm = TRUE),
+    mean_sd        = mean(sd, na.rm = TRUE),
+    mean_abs_error = mean(abs(mean - truth), na.rm = TRUE),
+    .groups = "drop"
+  )
+cat("\nBroken down by kingdom:\n")
+print(as.data.frame(diag_by_group), digits = 4)
+rm(hindcast_data, hindcast_diag)

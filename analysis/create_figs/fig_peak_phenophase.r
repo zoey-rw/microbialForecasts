@@ -1,215 +1,163 @@
-library(lubridate)
-library(ggallin)
+# Peak phenophase figure
+# Shows which plant phenological season microbial taxa peak in
+# Uses cycl_only model (seasonality-only, no env predictors) for clearest signal
+# Filters to significantly seasonal taxa (significant sin or cos component)
+
+library(tidyverse)
+library(ggpubr)
 library(ggrepel)
 
 source("source.R")
 
-phenophase_in = readRDS(here("data/clean/group_peak_phenophases.rds"))
-seasonality_mode_max = phenophase_in[[1]]
-seasonality_mode_half = phenophase_in[[3]]
-max_abun = phenophase_in[[4]] %>% 
-	filter(significant_sin == 1 | significant_cos)
-seasonality_mode_to_plot = phenophase_in[[5]] %>% 
-	filter(significant_sin == 1 | significant_cos)
+# ── Data loading ─────────────────────────────────────────────────────────────
+phenophase_in <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))
 
+# Element 1: one row per model_id — dominant (modal) phenophase + amplitude
+seasonality_mode_max <- phenophase_in[[1]]
 
+# Element 5: four rows per taxon (mean_abun per season across sites)
+seasonality_mode_all <- phenophase_in[[5]]
 
-phenophase_in_legacy = readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))
-seasonality_mode_max = phenophase_in_legacy[[1]]
-seasonality_mode_half = phenophase_in_legacy[[3]]
-seasonality_mode_to_plot = phenophase_in_legacy[[5]]
+# ── Display settings ─────────────────────────────────────────────────────────
+pheno_levels <- c("greenup", "peak", "greendown", "dormancy")
+pheno_labels <- c("Green-up", "Peak", "Senescence", "Dormancy")
+pheno_colors <- c(
+  "Green-up"   = "#009E73",
+  "Peak"       = "#E69F00",
+  "Senescence" = "#D55E00",
+  "Dormancy"   = "#56B4E9"
+)
+fcast_labels <- c(Functional = "Functional groups", Taxonomic = "Taxonomic groups")
 
-max_abun = phenophase_in_legacy[[4]] %>% filter(siteID %in% c("CPER","DSNY","HARV","OSBS","STER"))
-# Get most frequently-assigned phenophase per group	
-seasonality_mode_filtered = max_abun %>% 
-	filter(!is.na(sampling_season)) %>% 
-	group_by(model_id, sampling_season) %>% 
-	summarise(n = n()) %>%
-	mutate(freq = n / sum(n)) %>% 
-	select(-n) 
-seasonality_mode_filtered <- merge(seasonality_mode_filtered, unique(max_abun[,c("model_id","fcast_type","pretty_group","rank_only","model_name","taxon","amplitude","significant_sin","significant_cos")]), all.x=T)
+# ── Filtering ─────────────────────────────────────────────────────────────────
+sig_max <- seasonality_mode_max %>%
+  filter(model_name == "cycl_only",
+         significant_sin == 1 | significant_cos == 1) %>%
+  mutate(
+    sampling_season = factor(sampling_season, levels = pheno_levels, labels = pheno_labels),
+    fcast_type      = recode(fcast_type, !!!fcast_labels)
+  )
 
-seasonality_mode_to_plot = seasonality_mode_filtered
+sig_all <- seasonality_mode_all %>%
+  filter(model_name == "cycl_only",
+         significant_sin == 1 | significant_cos == 1) %>%
+  mutate(
+    sampling_season = factor(sampling_season, levels = pheno_levels, labels = pheno_labels),
+    fcast_type      = recode(fcast_type, !!!fcast_labels)
+  )
 
+# ── Panel A: proportion of taxa with modal peak in each phenophase ────────────
+prop_data <- sig_max %>%
+  count(fcast_type, pretty_group, sampling_season) %>%
+  group_by(fcast_type, pretty_group) %>%
+  mutate(prop = n / sum(n)) %>%
+  ungroup()
 
+pA <- ggplot(prop_data,
+             aes(x = pretty_group, y = prop, fill = sampling_season)) +
+  geom_col(width = 0.7, color = "white", linewidth = 0.3) +
+  facet_wrap(~fcast_type) +
+  scale_fill_manual(values = pheno_colors, name = "Peak phenophase") +
+  scale_y_continuous(labels = scales::percent_format(),
+                     expand = expansion(mult = c(0, 0.03))) +
+  labs(x = NULL, y = "Proportion of taxa") +
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position    = "right",
+    strip.background   = element_rect(fill = "grey92", color = NA),
+    strip.text         = element_text(face = "bold"),
+    panel.grid.major.x = element_blank()
+  )
 
-freq_phenophase = seasonality_mode_to_plot %>% 
-	pivot_wider(values_from=freq, names_from=sampling_season, values_fill = 0)
-freq_phenophase$greenup_peak = freq_phenophase$greenup + freq_phenophase$peak
-freq_phenophase$greenup_peak_greendown = freq_phenophase$greenup + freq_phenophase$peak + freq_phenophase$greendown
-freq_phenophase$max_phase_green = ifelse(freq_phenophase$greenup_peak > .5, 1, 0)
-freq_phenophase$max_phase_growing = ifelse(freq_phenophase$greenup_peak_greendown > .5, 1, 0)
-freq_phenophase_long = freq_phenophase %>% 
-	pivot_longer(cols=c(greenup_peak, greendown, dormancy), 
-							 names_to = "sampling_season", values_to="freq") 
-freq_phenophase_long$sampling_season = ordered(freq_phenophase_long$sampling_season, levels = c("greenup_peak","greendown","dormancy"))
+# ── Panel B: per-taxon normalized seasonal abundance profiles ─────────────────
+# Each line = one taxon; y = mean relative abundance normalized 0–1 within taxon
+# Shows the shape of the seasonal signal for each significantly seasonal taxon
+profiles <- sig_all %>%
+  group_by(model_id) %>%
+  mutate(abun_norm = (mean_abun - min(mean_abun, na.rm = TRUE)) /
+                     (max(mean_abun, na.rm = TRUE) - min(mean_abun, na.rm = TRUE))) %>%
+  ungroup() %>%
+  filter(is.finite(abun_norm))
 
+# Summarise to median + IQR per group for a ribbon overlay
+profile_ribbon <- profiles %>%
+  group_by(fcast_type, pretty_group, sampling_season) %>%
+  summarise(
+    med  = median(abun_norm, na.rm = TRUE),
+    q25  = quantile(abun_norm, 0.25, na.rm = TRUE),
+    q75  = quantile(abun_norm, 0.75, na.rm = TRUE),
+    .groups = "drop"
+  )
 
-phenophase_proportion = freq_phenophase %>% 
-	group_by(model_name, pretty_group, rank_only) %>% 
-	add_tally(name = "total") %>% 
-	ungroup() %>% 
-	group_by(model_name, pretty_group, rank_only, total, max_phase_growing) %>% 
-	tally(name = "count") %>% 
-	filter(max_phase_growing == 1 ) %>% 
-	mutate(proportion_growing_season = count/total) %>% select(-c(max_phase_growing, count))
+pB <- ggplot() +
+  # individual taxon lines
+  geom_line(data = profiles,
+            aes(x = sampling_season, y = abun_norm,
+                group = model_id, color = pretty_group),
+            alpha = 0.25, linewidth = 0.4) +
+  # median ribbon
+  geom_ribbon(data = profile_ribbon,
+              aes(x = sampling_season, ymin = q25, ymax = q75,
+                  group = pretty_group, fill = pretty_group),
+              alpha = 0.25) +
+  geom_line(data = profile_ribbon,
+            aes(x = sampling_season, y = med,
+                group = pretty_group, color = pretty_group),
+            linewidth = 1.2) +
+  facet_grid(fcast_type ~ pretty_group) +
+  scale_color_brewer(palette = "Set1", guide = "none") +
+  scale_fill_brewer(palette  = "Set1", guide = "none") +
+  labs(x = "Phenophase", y = "Normalized abundance (0–1 per taxon)") +
+  theme_bw(base_size = 12) +
+  theme(
+    strip.background   = element_rect(fill = "grey92", color = NA),
+    strip.text         = element_text(face = "bold"),
+    panel.grid.major.x = element_blank()
+  )
 
+# ── Panel C: labeled dot plot of functional groups by amplitude ───────────────
+# One point per functional group taxon, x = amplitude, color = peak phenophase
+# Shows WHICH functional groups are most seasonal and WHEN they peak
+fg_amp <- sig_max %>%
+  filter(fcast_type == "Functional groups") %>%
+  arrange(pretty_group, desc(amplitude)) %>%
+  mutate(
+    label = gsub("_", " ", taxon),
+    label = tools::toTitleCase(label)
+  )
 
-ggplot(freq_phenophase_long %>% filter(#fcast_type == "Functional" & 
-																			 	model_name=="cycl_only"),
-			 aes(fill=pretty_group, y = freq,
-			 		x = sampling_season, group=model_id)) +
-	geom_line(aes(color = pretty_group), alpha=.5, show.legend = F) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	facet_grid(~pretty_group, scales="free") + 
-	ylab("Frequency of max abundance in phenophase") +
-	xlab("Phenophase") +
-	geom_label_repel(aes(label=taxon), size=4)
+pC <- ggplot(fg_amp,
+             aes(x = amplitude, y = reorder(label, amplitude),
+                 color = sampling_season, shape = pretty_group)) +
+  geom_segment(aes(xend = 0, yend = reorder(label, amplitude)),
+               color = "grey75", linewidth = 0.5) +
+  geom_point(size = 3.5) +
+  scale_color_manual(values = pheno_colors, name = "Peak phenophase") +
+  scale_shape_manual(values = c(Bacteria = 16, Fungi = 17), name = "Kingdom") +
+  labs(
+    x = "Seasonal amplitude",
+    y = NULL
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey90", linewidth = 0.3),
+    panel.grid.major.x = element_blank(),
+    legend.position    = "right"
+  )
 
+# ── Combine and save ──────────────────────────────────────────────────────────
+fig_peak <- ggarrange(
+  ggarrange(pA, pC, ncol = 2, labels = c("A", "C"), widths = c(1, 1.1)),
+  pB,
+  nrow    = 2,
+  labels  = c("", "B"),
+  heights = c(1, 1)
+)
 
-ggplot(max_abun,# %>% filter(fcast_type=="Functional"),
-			 aes(color=pretty_group, x = sampling_season, y = amplitude)) +
-	geom_point( alpha=.2, 
-							position=position_jitter(height=0, width=.2)) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	facet_grid(model_name~pretty_group, scales="free") +
-	geom_label_repel(aes(label=taxon), size=3)
+out_dir <- here("data", "figures")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
+ggsave(file.path(out_dir, "fig_peak_phenophase.png"),
+       fig_peak, width = 11, height = 9, dpi = 200)
 
-out = ggplot(seasonality_mode_to_plot %>% filter(#fcast_type != "Functional" & 
-	model_name=="cycl_only"),
-	aes(fill=pretty_group, color = pretty_group, y = freq,
-			x = sampling_season, group=model_id)) +
-	geom_line(alpha=.5, show.legend = F) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	facet_grid(~pretty_group, scales="free") + 
-	ylab("Frequency of max abundance in phenophase") +
-	xlab("Phenophase")
-tag_facet(out, tag_pool = LETTERS)
-
-
-
-
-# CHeck against observed trends for speciifc taxa
-# ggplot(plot_estimates %>% filter(taxon=="glucose_simple"),# %>% filter(siteID %in% c("HARV","BART","DSNY")),
-ggplot(plot_estimates %>% filter(taxon=="alphaproteobacteria"),# %>% filter(siteID %in% c("HARV","BART","DSNY")),
-			 aes(fill=species, x = as.numeric(month), y = `50%`)) +
-	geom_jitter(aes(y = `50%`), show.legend = F, color="red", alpha=.1) +
-	geom_smooth() +
-	#geom_smooth(aes(y = `truth`)) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	geom_jitter(aes(y = as.numeric(truth)), alpha=.2, height = 0, width=.2) + xlab(NULL) + labs(fill='') +
-	facet_grid(~model_name, scales="free")
-
-
-
-
-ggplot(cycl_only_vals,
-			 aes(x=max_y_date, y=pretty_group)) +
-	geom_jitter(aes(colour = pretty_group), width = 0.1, height=.1, alpha=.5, show.legend = F) +
-	theme_bw(base_size = 20) +
-	ggtitle(paste0("Peak month of seasonal trend")) +
-	xlab(NULL) + ylab(NULL)
-#facet_grid(rows=vars(taxon_name)) +
-
-seasonal_cycl = ggplot(seas_vals_long %>% filter(grepl("cycl_only",model_name)) %>%
-											 	filter(grepl("ectomycorrhizal", taxon)),
-											 aes(x=dates, y=y_cycl)) +
-	geom_line(colour = "red") +
-	theme_bw(base_size = 20) +
-	ggtitle(paste0("Seasonal trend in abundances")) +
-	ylab("Cyclic component") +
-	xlab(NULL) +
-	facet_grid(rows=vars(model_id)) +
-	#facet_wrap(~model_id) +
-	scale_x_date(date_labels = "%b")
-seasonal_cycl
-
-pathogen_est = cycl_only_est  %>%
-	filter(grepl("plant_pathogen", taxon))
-
-ecto_est = cycl_only_est  %>%
-	filter(grepl("ecto", taxon))
-ecto_est_env_cov = env_cov_est  %>%
-	filter(grepl("ecto", taxon))
-ecto_est_env_cycl = env_cycl_est  %>%
-	filter(grepl("ecto", taxon))
-
-
-
-
-ggplot(max_dates_cycl_only,
-			 aes(color=fcast_type, x = sampling_season)) +
-	geom_point(aes(y = amplitude), alpha=.2, 
-						 position=position_jitter(height=0, width=.2)) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	facet_grid(pretty_group~fcast_type, scales="free")
-
-
-
-
-new_max_abun = plot_estimates %>% 
-	filter(time_period == "2015-11_2018-01") %>% 
-	group_by(model_id, siteID, month) %>% 
-	summarize(mean_modeled_abun = mean(Mean, na.rm=T)) %>%
-	filter(mean_modeled_abun == max(mean_modeled_abun, na.rm=T)) %>% 
-	mutate(dates =  ymd(paste0("2014-",month, "-01")),)
-
-
-
-# %>% group_by(fcast_type, pretty_group, model_id) %>% 
-# 	filter(mean_modeled_abun == max(mean_modeled_abun, na.rm=T)) %>% 
-# 	mutate(dates =  ymd(paste0("2014-",month, "-01")),)
-
-cat_list=list()
-for (i in 1:nrow(new_max_abun)){
-	cat_list[[i]] <- assign_pheno_site_date(site = new_max_abun[i,]$siteID, date =  new_max_abun[i,]$dates)
-}
-site_cats = as.matrix(cat_list)
-max_abun <- cbind.data.frame(new_max_abun, site_cats)
-
-
-ggplot(seasonality_mode2 %>% filter(fcast_type=="Functional" & model_name != "env_cov"),
-			 aes(color=pretty_group, x = sampling_season, y = amplitude)) +
-	geom_point( alpha=.2, 
-							position=position_jitter(height=0, width=.1)) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	# theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-	# 			legend.position = "bottom",legend.title = element_text(NULL),
-	# 			plot.margin = unit(c(.2, .2, 2, .2), "cm")) + 
-	ylab("Seasonal amplitude") + 
-	facet_grid(model_name~pretty_group, scales="free") +
-	geom_label_repel(aes(label=taxon))
-
-ggplot(new_max_abun  %>% filter(rank_only=="phylum" & model_name != "env_cov"),
-			 aes(color=pretty_group, x = sampling_season, y = amplitude)) +
-	geom_point( alpha=.2, 
-							position=position_jitter(height=0, width=.1)) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	# theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-	# 			legend.position = "bottom",legend.title = element_text(NULL),
-	# 			plot.margin = unit(c(.2, .2, 2, .2), "cm")) + 
-	ylab("Seasonal amplitude") + 
-	facet_grid(model_name~pretty_group, scales="free") 
+cat("Saved: data/figures/fig_peak_phenophase.png\n")

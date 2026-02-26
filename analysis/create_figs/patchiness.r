@@ -18,16 +18,7 @@ to_plot = morans_long %>% filter(!is.na(pretty_group) &
 																 	mutate(param = recode(param, "interAnnual"= "temporal autocorrelation (days apart)",
 																 																																		"intraAnnual"="temporal autocorrelation (intra-annual)",
 																 																																		"space"="spatial autocorrelation (sample distance)", "CRPS_truncated" = "Predictability (CRPS)"))
-ggplot(to_plot,
-			 aes(x = pretty_group, y = value,
-											 color = pretty_group)) +
-	geom_boxplot(show.legend = F) +
-	geom_point(position = position_jitterdodge(), alpha = .3, show.legend = F)  +
-	xlab("Kingdom") +
-	theme_minimal(base_size = 18) +
-	stat_compare_means(na.rm = T, show.legend = F) +
-	geom_hline(yintercept = 0) + facet_wrap(~param, scales="free") +
-	ggtitle("Bacteria have stronger spatio-temporal autocorrelation and more predictability than fungi")
+write.csv(to_plot, here("figures", "patchiness_morans_by_kingdom_data.csv"), row.names = FALSE)
 
 ggplot(morans %>% filter(!is.na(pretty_group)),
 			 aes(x = pretty_group, y = space,
@@ -175,9 +166,7 @@ predictability_lm <-lm(CRPS_truncated ~ Temperature +
 #models <- lapply(dredge(predictability_lm, evaluate = FALSE, m.lim = c(1,5)), eval)
 models <- lapply(dredge(predictability_lm, evaluate = FALSE), eval)
 ma <- model.avg(models, subset = delta <= 2)
-plot(ma, full = F, main = "Effects on predictability (CRPS)", intercept = F)
-#plot(ma, full = F, main = "Effects on predictability (RSQ)")
-#ggpubr::ggarrange(c,d)
+write(capture.output(summary(ma)), here("figures", "patchiness_ma_overall.txt"))
 avg_results <- summary(ma)
 avg <- as.data.frame(avg_results$coefmat.subset)
 importance <- cbind.data.frame(predictor = names(ma$sw), values = ma$sw) %>% mutate(Kingdom = "Overall")
@@ -185,14 +174,7 @@ importance <- cbind.data.frame(predictor = names(ma$sw), values = ma$sw) %>% mut
 importance = importance %>% mutate(predictor = recode(predictor, "interAnnual"= "temporal autocorrelation (days apart)",
 																 "intraAnnual"="temporal autocorrelation (intra-annual)",
 																	"space"="spatial autocorrelation (sample distance)" ))
-ggplot(importance,
-			 aes(x = reorder(predictor, -values), y = values)) +
-	geom_point(size=3, alpha=.8)  +
-	theme_minimal(base_size = 18) +
-	geom_hline(yintercept = 0) +
-	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05)) +
-	xlab("Variables explaining predictability across 141 groups") +
-	ylab("Variable importance")
+write.csv(importance, here("figures", "patchiness_importance_overall.csv"), row.names = FALSE)
 
 
 
@@ -208,7 +190,7 @@ predictability_lm <-lm(CRPS_truncated ~ Temperature +
 models <- lapply(dredge(predictability_lm, evaluate = FALSE)#, m.lim = c(1,5))
 								 , eval)
 ma <- model.avg(models, subset = delta <= 2)
-plot(ma, full = F, main = "Effects on predictability (CRPS), bacteria", intercept = F)
+write(capture.output(summary(ma)), here("figures", "patchiness_ma_bacteria.txt"))
 avg_results <- summary(ma)
 bac_avg <- as.data.frame(avg_results$coefmat.subset)
 bac_importance <- cbind.data.frame(predictor = names(ma$sw), values = ma$sw) %>% mutate(Kingdom = "Bacteria")
@@ -227,7 +209,7 @@ predictability_lm <-lm(CRPS_truncated ~ Temperature +
 models <- lapply(dredge(predictability_lm, evaluate = FALSE), #, m.lim = c(1,5)),
 								 eval)
 ma <- model.avg(models, subset = delta <= 2)
-plot(ma, full = F, main = "Effects on predictability (CRPS), fungi", intercept = F)
+write(capture.output(summary(ma)), here("figures", "patchiness_ma_fungi.txt"))
 avg_results <- summary(ma)
 fun_avg <- as.data.frame(avg_results$coefmat.subset)
 fun_importance <- cbind.data.frame(predictor = names(ma$sw), values = ma$sw) %>% mutate(Kingdom = "Fungi")
@@ -235,17 +217,5 @@ fun_importance <- cbind.data.frame(predictor = names(ma$sw), values = ma$sw) %>%
 
 
 all_importance <- rbind(importance, fun_importance, bac_importance)
-ggplot(all_importance,
-			 aes(x = reorder(predictor, -values), y = values, color = Kingdom)) +
-	geom_point(position = position_jitterdodge(jitter.width = .1, jitter.height = 0),
-						 size=3, alpha=.8)  +
-	theme_minimal(base_size = 18) +
-	geom_hline(yintercept = 0) +
-	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05)) +
-	xlab("Variables explaining predictability across groups") +
-	ylab("Variable importance") +
-	scale_color_manual(values = c(#"Fungi" = "#00BA38", # green
-																"Fungi" = "#00BFC4",
-																"Bacteria" = "#F8766D",
-																"Overall" = "black"))
+write.csv(all_importance, here("figures", "patchiness_importance_by_kingdom.csv"), row.names = FALSE)
 

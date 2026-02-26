@@ -1511,6 +1511,7 @@ runAndSave_task <- function(task_idx) {
           model_name = valid_models$model_name[model_idx],
           model_id = model_id,
           use_legacy_covariate = grepl("Legacy with covariate", valid_models$scenario[model_idx]),
+          has_driver_uncertainty = FALSE,  # Flag to identify regular models (no driver uncertainty)
           scenario = valid_models$scenario[model_idx],
           min.date = valid_models$min.date[model_idx],
           max.date = valid_models$max.date[model_idx],

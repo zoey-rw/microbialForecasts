@@ -1,139 +1,357 @@
 source("source.R")
 library(ggallin)
+library(rstatix)
+library(ggpubr)
 
-
-weak_keep_list <- readRDS(here("data/summary/weak_converged_taxa_list.rds"))
-strict_keep_list <- readRDS(here("data/summary/converged_taxa_list.rds"))
-
-converged = strict_keep_list
-
+# Load parameter estimates from driver uncertainty models
+# These are summarized from cloglog_beta_driver_uncertainty models in 04_tidyEffectSizes.r
 rho_core_in <- readRDS(here("data", "summary/rho_core_sd_effects.rds")) %>%
-	filter(model_name != "all_covariates" & model_id %in% converged) %>%
-	select(-pretty_name)
+	filter(model_name != "all_covariates") %>%
+	select(-pretty_name) %>%
+	# Remove _beta_regression suffix to match abundance data format
+	mutate(model_id = gsub("_beta_regression$", "", model_id))
 
+# Check available model types
+cat("Available model types:", paste(unique(rho_core_in$model_name), collapse=", "), "\n")
+cat("Total rows in rho_core_in:", nrow(rho_core_in), "\n")
 
+# Filter to driver uncertainty models (2013-2018 period with legacy covariate)
+# Model IDs should match pattern: model_name_species_20130601_20180101_with_legacy_covariate
+if("model_id" %in% colnames(rho_core_in)) {
+	driver_uncertainty_pattern <- "20130601_20180101_with_legacy_covariate"
+	n_driver_uncertainty <- sum(grepl(driver_uncertainty_pattern, rho_core_in$model_id))
+	cat("Driver uncertainty models (2013-2018):", n_driver_uncertainty, "\n")
+	
+	# Optionally filter to only driver uncertainty models if other models exist
+	if(n_driver_uncertainty > 0 && n_driver_uncertainty < nrow(rho_core_in)) {
+		rho_core_in <- rho_core_in %>%
+			filter(grepl(driver_uncertainty_pattern, model_id))
+		cat("Filtered to driver uncertainty models only\n")
+	}
+}
+
+# Load abundance data for normalization
 in_list <- readRDS(here("data/summary/fcast_horizon_input.rds"))
 fcast_horizon_null_site <-  in_list[[3]]
-rho_core_in <- merge(rho_core_in, fcast_horizon_null_site[,c("model_id","abundance")], all.x=T)
 
+# Merge abundance data - ensure model_id format matches
+# The abundance data may also have _beta_regression suffix that needs to be removed
+if("model_id" %in% colnames(fcast_horizon_null_site)) {
+	fcast_horizon_null_site$model_id <- gsub("_beta_regression$", "", fcast_horizon_null_site$model_id)
+}
 
-core_sd = rho_core_in  %>%
-	filter(rowname == "core_sd") %>% mutate(adj_sd = Mean/abundance)
-rho = rho_core_in  %>%
+# fcast_horizon_null_site has one row per (model_id, siteID); merge would duplicate rho rows.
+# Aggregate to one row per model_id so each model's rho appears once.
+abundance_by_model <- fcast_horizon_null_site %>%
+	group_by(model_id) %>%
+	summarise(abundance = mean(abundance, na.rm = TRUE), .groups = "drop")
+rho_core_in <- merge(rho_core_in, abundance_by_model, by = "model_id", all.x = TRUE)
+
+cat("After merging abundance data:", nrow(rho_core_in), "rows\n")
+cat("Models with abundance data:", sum(!is.na(rho_core_in$abundance)), "\n")
+
+# Separate precision and rho parameters
+precision_data = rho_core_in %>%
+	filter(rowname == "precision") %>% 
+	mutate(adj_sd = ifelse(is.na(abundance) | abundance == 0, Mean, Mean/abundance))
+
+rho_data = rho_core_in %>%
 	filter(rowname == "rho")
 
-rho$hi <- rho$Mean + rho$SD*1.96
-rho$lo <- rho$Mean - rho$SD*1.96
-rho$significant <- microbialForecast:::is_significant(rho$lo, rho$hi)
+# Add confidence intervals and significance for rho
+rho_data$hi <- rho_data$Mean + rho_data$SD*1.96
+rho_data$lo <- rho_data$Mean - rho_data$SD*1.96
+rho_data$significant <- microbialForecast:::is_significant(rho_data$lo, rho_data$hi)
+rho_data$effSize <- abs(rho_data$Mean)
 
-rho$effSize <- abs(rho$Mean)
-rho_stats <- rho %>% filter(model_name == "cycl_only") %>% 
-	group_by(pretty_group) %>% 
-	rstatix::tukey_hsd(effSize ~ fcast_type) %>%
-	#filter(p.adj < 0.05) %>% 
-	rstatix::add_y_position()
-# Supplementary figure
-ggplot(rho %>% filter(model_name == "cycl_only"), 
-			 aes(x = fcast_type,
-			 		y = effSize, color = pretty_group)) +
-	#geom_violin(draw_quantiles = c(.5), show.legend = F, color = 1) +
-	geom_boxplot(show.legend = F,
-	 						 position=position_dodge(), outlier.shape = NA) +
-	geom_point(aes(shape=as.factor(significant)), #show.legend = F, 
-						 size=3,
-						 alpha=.5, position=position_jitter(height=0)) +
-	facet_grid( ~ pretty_group,  scales="free") +
-	# 					 labeller = labeller(model_name = model.labs)) + 
-	#rows=vars(pretty_group), scales="free") + 
-	xlab("Microbial group") + 	theme_minimal(base_size = 22)  +
-	ylab("Rho parameter estimate") +
-	ggtitle("Stability over time") + 
-	scale_y_continuous(trans=ssqrt_trans) + 
-	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05))  + 
-	scale_shape_manual(values = c(21, 16), name = NULL,																																						 
-										 labels = c("Not significant","Significant")) + 
-	ylim(c(0,1.1)) +
-	guides(color="none") +
-	stat_pvalue_manual(rho_stats, bracket.nudge.y = .1,
-										 size=9)
+# Check available model types for rho data
+cat("\n=== MODEL TYPE SUMMARY ===\n")
+cat("Available model types in rho_data:\n")
+if(nrow(rho_data) > 0) {
+	model_counts <- rho_data %>% 
+		group_by(model_name, fcast_type) %>%
+		summarise(n = n(), .groups = "drop")
+	print(model_counts)
+} else {
+	cat("No rho data available\n")
+}
 
-sd_stats <- core_sd %>% filter(model_name == "cycl_only") %>% 
-	group_by(pretty_group) %>% 
-	rstatix::tukey_hsd(adj_sd ~ fcast_type) %>%
-	#filter(p.adj < 0.05) %>% 
-	rstatix::add_y_position()
-ggplot(core_sd %>% filter(model_name == "cycl_only")) +
-	geom_boxplot(aes(x = fcast_type,
-									 y = adj_sd, color = pretty_group),
-							 position=position_dodge(), outlier.shape = NA) +
-	geom_point(aes(x = fcast_type,
-								 y = adj_sd, color = pretty_group), size=3,
-						 position=position_jitterdodge(), alpha=.3) +
-	facet_grid(~pretty_group) + theme_minimal(base_size = 20) + 
-	theme(axis.text.x=element_text(angle = 320, vjust=1, hjust = -0.05),
-				plot.title = element_text(size = 20))  + 
-	xlab("Microbial group") + 
-	ylab("Coefficient of variation (parameter estimate)") +
-	ggtitle("Variation within plot and timepoint") + 
-	guides(color="none") +
-	stat_pvalue_manual(sd_stats, bracket.nudge.y = .1,
-										 size=9)
+# Create comparison plots
+# 1. Rho parameter comparison - combined kingdoms (env_cycl model from driver uncertainty)
+if(nrow(rho_data %>% filter(model_name == "env_cycl")) > 0) {
+	rho_plot_data <- rho_data %>% filter(model_name == "env_cycl")
+	
+	# Statistical tests (only if sufficient sample sizes) - no kingdom grouping
+	rho_stats <- data.frame()
+	group_counts <- rho_plot_data %>%
+		group_by(fcast_type) %>%
+		summarise(n = n(), .groups = "drop")
+	
+	# Check if all groups have at least 2 observations
+	sufficient_data <- all(group_counts$n >= 2)
+	
+	if(sufficient_data) {
+		rho_stats <- rho_plot_data %>%
+			t_test(effSize ~ fcast_type) %>%
+			add_significance() %>%
+			add_xy_position(x = "fcast_type", dodge = 0.8)
+	} else {
+		cat("Insufficient data for statistical tests - some groups have < 2 observations\n")
+	}
+	
+	# Create plot with violin plots - no kingdom grouping
+	p1 <- ggplot(rho_plot_data,
+				 aes(x = fcast_type, y = effSize)) +
+		geom_violin(alpha=0.7, trim=FALSE, fill="lightblue", draw_quantiles = c(.5)) +
+		geom_point(size=2, alpha=0.3, position=position_jitter(width = 0.1)) +
+		xlab("Forecast Type") +
+		theme_minimal(base_size = 14) +
+		ylab("Temporal Stability (ρ)") +
+		ggtitle("A) Temporal Stability Parameter Estimates") +
+		scale_y_continuous(trans=ssqrt_trans, limits = c(0, 0.7)) +
+		scale_x_discrete(labels = c("functional" = "Functional Groups", "taxon" = "Taxonomic Groups")) +
+		theme(
+			axis.text.x = element_text(angle = 45, vjust=1, hjust = 1, size = 12),
+			axis.title = element_text(size = 14, face = "bold"),
+			plot.title = element_text(size = 16, face = "bold", hjust = 0)
+		)
+	
+	# Add statistical annotations
+	if(nrow(rho_stats) > 0) {
+		p1 <- p1 + stat_pvalue_manual(rho_stats, 
+									  label = "{p.signif}", 
+									  bracket.nudge.y = 0.1,
+									  tip.length = 0.02,
+									  size = 4)
+	}
+	
+	# Display the plot
+	print(p1)
+	
+	# Save the plot
+	ggsave(here("figures", "rho_parameter_comparison.png"), p1, width = 4, height = 6, dpi = 300)
+	cat("Rho parameter plot saved to figures/rho_parameter_comparison.png\n")
 
+	# Rho parameter comparison by kingdom (Bacteria vs Fungi), with separate statistical tests per kingdom
+	rho_plot_data_kingdom <- rho_plot_data %>% filter(!is.na(pretty_group))
+	if (nrow(rho_plot_data_kingdom) > 0) {
+		rho_stats_by_kingdom_list <- lapply(split(rho_plot_data_kingdom, rho_plot_data_kingdom$pretty_group), function(d) {
+			group_counts_kg <- d %>% group_by(fcast_type) %>% summarise(n = n(), .groups = "drop")
+			if (any(group_counts_kg$n < 2)) return(NULL)
+			out <- d %>%
+				t_test(effSize ~ fcast_type) %>%
+				add_significance() %>%
+				add_xy_position(x = "fcast_type", dodge = 0.8)
+			out$pretty_group <- d$pretty_group[1]
+			out
+		})
+		rho_stats_by_kingdom <- bind_rows(rho_stats_by_kingdom_list[!sapply(rho_stats_by_kingdom_list, is.null)])
+		# Set bracket y position per facet so it sits above the data in each panel
+		if (nrow(rho_stats_by_kingdom) > 0) {
+			ymax_by_kingdom <- rho_plot_data_kingdom %>%
+				group_by(pretty_group) %>%
+				summarise(y_max = max(effSize, na.rm = TRUE), .groups = "drop")
+			rho_stats_by_kingdom <- rho_stats_by_kingdom %>%
+				left_join(ymax_by_kingdom, by = "pretty_group") %>%
+				mutate(y.position = ifelse(is.na(y_max), 0.5, y_max * 1.08))
+		}
+		p1_kingdom <- ggplot(rho_plot_data_kingdom, aes(x = fcast_type, y = effSize)) +
+			geom_violin(alpha = 0.7, trim = FALSE, fill = "lightblue", draw_quantiles = c(.5)) +
+			geom_point(size = 2, alpha = 0.3, position = position_jitter(width = 0.1)) +
+			facet_wrap(~ pretty_group, ncol = 2) +
+			xlab("Forecast Type") +
+			theme_minimal(base_size = 14) +
+			ylab("Temporal Stability (ρ)") +
+			ggtitle("A) Temporal Stability Parameter Estimates by Kingdom") +
+			scale_y_continuous(trans = ssqrt_trans, limits = c(0, 0.7)) +
+			scale_x_discrete(labels = c(
+				"functional" = "Functional Groups", "taxon" = "Taxonomic Groups",
+				"Functional" = "Functional Groups", "Taxonomic" = "Taxonomic Groups")) +
+			theme(
+				axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 12),
+				axis.title = element_text(size = 14, face = "bold"),
+				plot.title = element_text(size = 16, face = "bold", hjust = 0),
+				strip.text = element_text(face = "bold", size = 12)
+			)
+		if (nrow(rho_stats_by_kingdom) > 0) {
+			p1_kingdom <- p1_kingdom + stat_pvalue_manual(rho_stats_by_kingdom,
+				label = "{p.signif}",
+				bracket.nudge.y = 0.02,
+				tip.length = 0.02,
+				size = 4)
+		}
+		print(p1_kingdom)
+		ggsave(here("figures", "rho_parameter_comparison_by_kingdom.png"), p1_kingdom, width = 7, height = 5, dpi = 300)
+		cat("Rho parameter plot by kingdom saved to figures/rho_parameter_comparison_by_kingdom.png\n")
+	}
+} else {
+	print("No rho data available for env_cycl model")
+}
 
+# 2. Precision parameter comparison - combined kingdoms
+if(nrow(precision_data %>% filter(model_name == "env_cycl")) > 0) {
+	precision_plot_data <- precision_data %>% filter(model_name == "env_cycl")
+	
+	# Statistical tests (only if sufficient sample sizes) - no kingdom grouping
+	precision_stats <- data.frame()
+	group_counts_precision <- precision_plot_data %>%
+		group_by(fcast_type) %>%
+		summarise(n = n(), .groups = "drop")
+	
+	# Check if all groups have at least 2 observations
+	sufficient_data_precision <- all(group_counts_precision$n >= 2)
+	
+	if(sufficient_data_precision) {
+		precision_stats <- precision_plot_data %>%
+			t_test(adj_sd ~ fcast_type) %>%
+			add_significance() %>%
+			add_xy_position(x = "fcast_type", dodge = 0.8)
+	} else {
+		cat("Insufficient data for precision statistical tests - some groups have < 2 observations\n")
+	}
+	
+	# Create plot with violin plots - no kingdom grouping
+	p2 <- ggplot(precision_plot_data,
+				 aes(x = fcast_type, y = adj_sd)) +
+		geom_violin(alpha=0.7, trim=FALSE, fill="lightcoral", draw_quantiles = c(.5)) +
+		geom_point(size=2, alpha=0.3, position=position_jitter(width = 0.1)) +
+		theme_minimal(base_size = 14) +
+		theme(
+			axis.text.x = element_text(angle = 45, vjust=1, hjust = 1, size = 12),
+			axis.title = element_text(size = 14, face = "bold"),
+			plot.title = element_text(size = 16, face = "bold", hjust = 0)
+		) +
+		xlab("Forecast Type") +
+		ylab("Precision / Mean Abundance") +
+		ggtitle("B) Precision Parameter Estimates") +
+		scale_y_continuous(trans = "log10", limits = c(10, 50000)) +
+		scale_x_discrete(labels = c("functional" = "Functional Groups", "taxon" = "Taxonomic Groups"))
+	
+	# Add statistical annotations
+	if(nrow(precision_stats) > 0) {
+		p2 <- p2 + annotate("text", x = 1.5, y = 40000, 
+							label = precision_stats$p.signif, 
+							size = 4, hjust = 0.5, vjust = 0.5) +
+					annotate("segment", x = 1, xend = 2, y = 35000, yend = 35000, 
+							linewidth = 0.5) +
+					annotate("segment", x = 1, xend = 1, y = 35000, yend = 30000, 
+							linewidth = 0.5) +
+					annotate("segment", x = 2, xend = 2, y = 35000, yend = 30000, 
+							linewidth = 0.5)
+	}
+	
+	# Display the plot
+	print(p2)
+	
+	# Save the plot
+	ggsave(here("figures", "precision_parameter_comparison.png"), p2, width = 6, height = 6, dpi = 300)
+	cat("Precision parameter plot saved to figures/precision_parameter_comparison.png\n")
+} else {
+	print("No precision data available for env_cycl model")
+}
 
-scores_list = readRDS(here("data/summary/scoring_metrics_cv.rds"))
-unconverged = scores_list$unconverged_list
-converged = scores_list$converged_list
-converged_strict = scores_list$converged_strict_list
+# 3. Summary statistics and statistical tests
+cat("\n=== SUMMARY STATISTICS ===")
+cat("\nComparing parameters from driver uncertainty models (env_cycl)\n")
+cat("Models: 2013-2018 period with legacy covariate\n")
 
-model_scores_vals = merge(scores_list$scoring_metrics, rho_core_in)  %>%
-	filter(#model_id %in% converged &
-				 	grepl("observed", site_prediction))
+# Rho parameter summary - combined kingdoms
+if(nrow(rho_data %>% filter(model_name == "env_cycl")) > 0) {
+	cat("\nA) Temporal Stability (Rho) Parameter Estimates (Combined Kingdoms):\n")
+	rho_summary <- rho_data %>% 
+		filter(model_name == "env_cycl") %>%
+		group_by(fcast_type) %>%
+		summarise(
+			n = n(),
+			mean_rho = round(mean(Mean, na.rm = TRUE), 4),
+			sd_rho = round(sd(Mean, na.rm = TRUE), 4),
+			mean_effSize = round(mean(effSize, na.rm = TRUE), 4),
+			prop_significant = round(mean(significant, na.rm = TRUE), 3),
+			.groups = "drop"
+		)
+	print(rho_summary)
+	
+	# Statistical test results for rho - combined kingdoms
+	cat("\nStatistical Tests for Temporal Stability (Rho) - Combined Kingdoms:\n")
+	group_counts_rho <- rho_data %>% 
+		filter(model_name == "env_cycl") %>%
+		group_by(fcast_type) %>%
+		summarise(n = n(), .groups = "drop")
+	
+	if(all(group_counts_rho$n >= 2)) {
+		rho_test_results <- rho_data %>%
+			filter(model_name == "env_cycl") %>%
+			t_test(effSize ~ fcast_type) %>%
+			add_significance()
+		print(rho_test_results)
+	} else {
+		cat("Insufficient data for statistical tests - some groups have < 2 observations\n")
+		print(group_counts_rho)
+	}
 
+	# Rho by kingdom: summary and separate statistical tests per kingdom
+	rho_data_kingdom <- rho_data %>% filter(model_name == "env_cycl", !is.na(pretty_group))
+	if (nrow(rho_data_kingdom) > 0) {
+		cat("\nA2) Temporal Stability (Rho) by Kingdom:\n")
+		rho_summary_kingdom <- rho_data_kingdom %>%
+			group_by(pretty_group, fcast_type) %>%
+			summarise(
+				n = n(),
+				mean_rho = round(mean(Mean, na.rm = TRUE), 4),
+				sd_rho = round(sd(Mean, na.rm = TRUE), 4),
+				mean_effSize = round(mean(effSize, na.rm = TRUE), 4),
+				prop_significant = round(mean(significant, na.rm = TRUE), 3),
+				.groups = "drop"
+			)
+		print(rho_summary_kingdom)
+		cat("\nStatistical Tests for Temporal Stability (Rho) - By Kingdom:\n")
+		rho_test_by_kingdom <- rho_data_kingdom %>%
+			group_by(pretty_group) %>%
+			group_modify(function(d, key) {
+				group_n <- d %>% group_by(fcast_type) %>% summarise(n = n(), .groups = "drop")
+				if (any(group_n$n < 2)) return(tibble())
+				d %>% t_test(effSize ~ fcast_type) %>% add_significance()
+			}, .keep = TRUE)
+		if (nrow(rho_test_by_kingdom) > 0) {
+			print(rho_test_by_kingdom)
+		} else {
+			cat("Insufficient data in one or both kingdoms for t-test (need >= 2 per fcast_type)\n")
+		}
+	}
+}
 
-# Get mean values for plotting
-model_scores_vals_env_cycl = model_scores_vals %>%
-	filter(model_name=="env_cycl")
+# Precision parameter summary - combined kingdoms
+if(nrow(precision_data %>% filter(model_name == "env_cycl")) > 0) {
+	cat("\nB) Precision Parameter Estimates (Combined Kingdoms):\n")
+	precision_summary <- precision_data %>% 
+		filter(model_name == "env_cycl") %>%
+		group_by(fcast_type) %>%
+		summarise(
+			n = n(),
+			mean_precision = round(mean(Mean, na.rm = TRUE), 2),
+			sd_precision = round(sd(Mean, na.rm = TRUE), 2),
+			mean_adj_sd = round(mean(adj_sd, na.rm = TRUE), 2),
+			.groups = "drop"
+		)
+	print(precision_summary)
+	
+	# Statistical test results for precision - combined kingdoms
+	cat("\nStatistical Tests for Precision - Combined Kingdoms:\n")
+	group_counts_precision_summary <- precision_data %>% 
+		filter(model_name == "env_cycl") %>%
+		group_by(fcast_type) %>%
+		summarise(n = n(), .groups = "drop")
+	
+	if(all(group_counts_precision_summary$n >= 2)) {
+		precision_test_results <- precision_data %>% 
+			filter(model_name == "env_cycl") %>%
+			t_test(adj_sd ~ fcast_type) %>%
+			add_significance()
+		print(precision_test_results)
+	} else {
+		cat("Insufficient data for statistical tests - some groups have < 2 observations\n")
+		print(group_counts_precision_summary)
+	}
+}
 
-
-
-ggplot(model_scores_vals_env_cycl %>% filter(rowname=="core_sd"),
-			 aes(x = RSQ,
-															y = Mean)) +
-	geom_point(aes( color = pretty_group), alpha=.5) +
-	geom_smooth() #+
-	#facet_grid(~pretty_group, scales="free")
-
-model_scores_vals_wide = model_scores_vals_env_cycl %>% select(-c( SD, `Naive SE`, `Time-series SE`)) %>%
-	pivot_wider(names_from = "rowname", values_from = "Mean")
-summary(lm(RSQ ~ core_sd * rho, model_scores_vals_wide))
-
-
-
-
-
-seasonal_amplitude_in = readRDS(here("data/summary/seasonal_amplitude.rds"))
-cycl_only_vals_scores = seasonal_amplitude_in[[6]] %>% filter(model_name=="cycl_only") %>%
-	mutate(cycl_amplitude=amplitude, cycl_max = max)
-env_cycl_vals_scores = seasonal_amplitude_in[[6]] %>% filter(model_name=="env_cycl")  %>%
-	mutate(env_cycl_amplitude=amplitude, env_cycl_max = max)
-
-model_scores_vals <- merge(model_scores_vals, cycl_only_vals_scores %>%
-													 	select(taxon, time_period, cycl_amplitude, cycl_max))
-model_scores_vals <- merge(model_scores_vals, env_cycl_vals_scores %>%
-													 	select(taxon, time_period, env_cycl_amplitude, env_cycl_max))
-
-
-model_scores_vals_wide = model_scores_vals %>% select(-c( SD, `Naive SE`, `Time-series SE`)) %>%
-	pivot_wider(names_from = "rowname", values_from = "Mean")
-
-
-summary(lm(RSQ ~ core_sd * cycl_amplitude, model_scores_vals_wide %>% filter(model_name=="env_cycl")))
-summary(lm(RSQ.1 ~ core_sd * cycl_amplitude, model_scores_vals_wide %>% filter(model_name=="env_cycl")))
-
-
-ggplot(model_scores_vals_wide %>% filter(model_name=="cycl_only"),
-			 aes(x = core_sd,
-			 		y = cycl_amplitude,  color = pretty_group)) +
-	geom_point(aes( color = pretty_group), alpha=.5) +
-	geom_smooth()
+cat("\n=== COMPARISON COMPLETE ===\n")

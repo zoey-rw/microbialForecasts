@@ -1,185 +1,174 @@
-library(ggallin)
-library(ggpmisc) # for polynomial plotting function
+# Latitudinal gradient in forecast accuracy
+# Central question: does site latitude predict how well each taxon is forecast,
+# and which taxa show the strongest positive/negative latitudinal gradients?
+#
+# Panel A: 3 representative taxa (most positive, flat, most negative latitude slope)
+# Panel B: Spaghetti of per-taxon latitude ~ R² lines (individual + mean per kingdom)
+# Panel C: Per-taxon slope vs R² scatter (which taxa drive the gradient)
+
+library(tidyverse)
+library(ggpubr)
+library(patchwork)
 library(broom)
+
 source("source.R")
 
+# ── Data loading ──────────────────────────────────────────────────────────────
+scores_list    <- readRDS(here("data", "summary/scoring_metrics_plsr2.rds"))
+converged_base <- gsub("_beta_regression$", "", scores_list$converged_strict_list)
 
-# Scoring metrics aggregated by taxon/model
-scores_list = readRDS(here("data", paste0("summary/scoring_metrics_plsr2.rds")))
-converged = scores_list$converged_list
-converged = scores_list$converged_strict_list
+fg_names       <- microbialForecast:::keep_fg_names
+rank_spec_names <- microbialForecast:::rank_spec_names
+pretty_names_vec <- unlist(microbialForecast:::pretty_names)
+pretty_rank_vec  <- unlist(microbialForecast:::pretty_rank_names)
 
-hindcast_filter <- scores_list$scoring_metrics_long %>%
-	filter(model_id %in% converged) %>%
-	filter(model_name != "all_covariates" &
-				 	metric %in% c("CRPS_truncated","RSQ","RSQ.1","RMSE.norm") &
-				 	site_prediction == "New time (observed site)")
+all_bacteria <- unlist(rank_spec_names[grepl("_bac$", names(rank_spec_names))])
+all_fungi    <- unlist(rank_spec_names[grepl("_fun$", names(rank_spec_names))])
 
-# Raw hindcast crps values
-hindcast_data <- readRDS(here("data/summary/all_hindcasts_plsr2.rds"))
-hindcast_data_df = hindcast_data %>%
-	filter(model_id %in% converged) %>%
-	filter(!is.na(truth) & fcast_period=="hindcast" & new_site==FALSE)
+# Site-level R² scores (env_cycl, new-time observed-site predictions)
+site_scores <- scores_list$scoring_metrics_site_long %>%
+  filter(!siteID %in% "MLBS",
+         model_id %in% converged_base,
+         metric == "RSQ") %>%
+  # Ensure model_name, rank_name, species columns
+  { if (!"model_name" %in% names(.)) {
+      left_join(., scores_list$scoring_metrics_long %>%
+                     select(model_id, rank_name, species, model_name) %>% distinct(),
+                by = "model_id")
+    } else . } %>%
+  mutate(
+    pretty_group = ifelse(species %in% all_bacteria, "Bacteria",
+                          ifelse(species %in% all_fungi, "Fungi", NA_character_))
+  ) %>%
+  filter(!is.na(pretty_group))
 
-site_scores_allmetrics = scores_list$scoring_metrics_site_long %>%
-	filter(!siteID %in% "MLBS") %>%
-	filter(model_id %in% converged &
-				 	site_prediction == "New time (observed site)")
+# Merge site latitude
+site_descr  <- readRDS(here("data/clean/site_effect_predictors.rds"))
+site_env_cycl <- site_scores %>%
+  filter(model_name == "env_cycl") %>%
+  left_join(site_descr %>% select(siteID, latitude), by = "siteID") %>%
+  filter(!is.na(latitude))
 
+# ── Per-taxon latitude slopes ─────────────────────────────────────────────────
+taxon_slopes <- site_env_cycl %>%
+  group_by(pretty_group, model_id, species, rank_name) %>%
+  filter(n() >= 10) %>%
+  summarise(
+    slope   = coef(lm(score ~ latitude))[["latitude"]],
+    r2      = summary(lm(score ~ latitude))$r.squared,
+    p_value = glance(lm(score ~ latitude))$p.value,
+    n_sites = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    significant  = p_value < 0.1,
+    pretty_species = ifelse(species %in% names(pretty_names_vec),
+                            pretty_names_vec[species],
+                            tools::toTitleCase(gsub("_", " ", species))),
+    pretty_rank = case_when(
+      rank_name %in% names(pretty_rank_vec) ~ pretty_rank_vec[rank_name],
+      species %in% fg_names ~ "Functional group",
+      TRUE ~ tools::toTitleCase(gsub("_", " ", rank_name))
+    )
+  )
 
-# Read in descriptions of NEON site-level soil chemistry, NCLD class, climate
-site_descr <- readRDS(here("data/summary/site_effect_predictors.rds"))
+# ── Shared aesthetics ─────────────────────────────────────────────────────────
+kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
 
-site_scores_allmetrics <- merge(site_scores_allmetrics, site_descr)
+base_theme <- theme_bw(base_size = 12) +
+  theme(
+    strip.background = element_rect(fill = "grey92", color = NA),
+    strip.text       = element_text(face = "bold", size = 10),
+    panel.grid.minor = element_blank()
+  )
 
+# ── Panel A: 3 representative taxa ───────────────────────────────────────────
+taxon_slopes_good <- taxon_slopes %>% filter(n_sites >= 15)
 
-# Predictability for latitude - fungi and bacteria
-# Using Rsq to compare across groups at site level
-# Because RMSE.norm is biased by zero-abundance values at the site level
-ggplot(site_scores_allmetrics %>%
-			 	filter(model_name=="env_cycl") %>%
-			 	filter(metric=="RSQ"), aes(x = latitude,
-			 														 y = score)) +
-	geom_point(aes(color=pretty_group), alpha=.4, size=3,
-						 position=position_jitter(height=0, width = .3), show.legend = F) +
-	geom_smooth(method="lm") +
-	theme_minimal(base_size = 18) + labs(color = "Kingdom") +
-	xlab("Latitude") + ylab("RSQ") +
-	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~")),
-					 size=6, label.x.npc = .01) +
-	facet_grid(rows=vars(pretty_group), scales = "free_y")
+rep_positive <- taxon_slopes_good %>% filter(significant) %>% slice_max(slope, n = 1)
+rep_negative <- taxon_slopes_good %>% filter(significant) %>% slice_min(slope, n = 1)
+rep_flat     <- taxon_slopes_good %>% slice_min(abs(slope), n = 1)
 
-# Model predictability by latitude for individual groups
-# Fig S9
-model_results = site_scores_allmetrics %>% filter(metric=="RMSE.norm") %>%
-	# filter(model_id %in% c("env_cov_aspergillus_20151101_20180101","cycl_only_sordariales_20151101_20180101","env_cycl_aspergillus_20151101_20180101")) %>%
-	group_by(pretty_group,model_name,model_id) %>%
-	nest() %>%
-	mutate(model = map(data, lm(score ~ latitude, data = .)),
-				 tidied = map(model, tidy))
+representative_taxa <- bind_rows(
+  rep_positive %>% mutate(example = "Positive"),
+  rep_negative %>% mutate(example = "Negative"),
+  rep_flat     %>% mutate(example = "No relationship")
+) %>%
+  mutate(
+    facet_label = paste0(example, "\n", pretty_species, " (", pretty_rank, ")")
+  )
 
-# actually swtiching back to RSQ to make the figs consistent
-model_results = site_scores_allmetrics %>% filter(metric=="RSQ") %>%
-	group_by(pretty_group,model_name,model_id) %>%
-	mutate(glance(lm(score ~ latitude))) %>%
-	dplyr::select(siteID:taxon,score,latitude,adj.r.squared,p.value)
-sig_model_results = model_results %>% filter(p.value < .1)
+# Fix factor order: Positive first, then No relationship, then Negative
+representative_taxa$facet_label <- factor(
+  representative_taxa$facet_label,
+  levels = representative_taxa$facet_label[order(
+    match(representative_taxa$example, c("Positive", "No relationship", "Negative"))
+  )]
+)
 
-# Fig S10
-ggplot(sig_model_results %>%
-			 	filter(model_name=="env_cycl"),
-			 # "salt_stress","oligotroph",
-			 # "heat_stress")),
-			 aes(x = latitude, color=pretty_group,
-			 		y = score)) +
-	geom_point(alpha=.4, size=3, position=position_jitter(height=0, width = .3)) +
-	geom_smooth(method="lm", se=F) +
-	theme_minimal(base_size = 20) + labs(color = "Kingdom") +
-	xlab("Latitude") + ylab("Forecast accuracy (RSQ)") +
-	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~")),
-					 size=5, label.x.npc = .45, color=1, p.accuracy = .001) +
-	facet_wrap(pretty_name~taxon, scales = "free") + theme(legend.position = c(.9,.1))
+rep_site_data <- site_env_cycl %>%
+  filter(model_id %in% representative_taxa$model_id) %>%
+  left_join(representative_taxa %>% select(model_id, facet_label), by = "model_id") %>%
+  mutate(facet_label = factor(facet_label, levels = levels(representative_taxa$facet_label)))
 
+panel_a <- ggplot(rep_site_data, aes(x = latitude, y = score)) +
+  geom_point(aes(color = pretty_group), alpha = 0.5, size = 2.5,
+             position = position_jitter(height = 0, width = 0.3)) +
+  geom_smooth(method = "lm", color = "black", linewidth = 0.8, se = TRUE) +
+  stat_cor(aes(label = paste(after_stat(rr.label), after_stat(p.label), sep = "~")),
+           size = 3.2, label.x.npc = 0.02, label.y.npc = 0.95, color = "black") +
+  facet_wrap(~facet_label, scales = "free_y", nrow = 1) +
+  scale_x_continuous(breaks = seq(30, 70, by = 10)) +
+  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  labs(x = "Latitude (\u00b0N)", y = expression(R^2)) +
+  base_theme + theme(legend.position = "none")
 
+# ── Panel B: Spaghetti of per-taxon lines ─────────────────────────────────────
+panel_b <- ggplot(site_env_cycl, aes(x = latitude, y = score)) +
+  geom_smooth(aes(group = model_id, color = pretty_group),
+              method = "lm", se = FALSE, linewidth = 0.3, alpha = 0.2) +
+  geom_smooth(aes(color = pretty_group, fill = pretty_group),
+              method = "lm", linewidth = 1.5, alpha = 0.15) +
+  scale_x_continuous(breaks = seq(30, 70, by = 10)) +
+  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_fill_manual(values  = kingdom_colors, guide = "none") +
+  labs(x = "Latitude (\u00b0N)", y = expression(Site~R^2)) +
+  base_theme +
+  theme(legend.position = c(0.12, 0.82),
+        legend.background = element_rect(fill = "white", color = NA))
 
+# ── Panel C: Slope vs R² scatter ──────────────────────────────────────────────
+taxon_slopes <- taxon_slopes %>%
+  mutate(is_representative = model_id %in% representative_taxa$model_id)
 
+panel_c <- ggplot(taxon_slopes, aes(x = slope, y = r2, color = pretty_group)) +
+  geom_point(aes(shape = significant), size = 1.8, alpha = 0.6) +
+  geom_point(data = taxon_slopes %>% filter(is_representative),
+             size = 4, shape = 21, fill = NA, color = "black", stroke = 1.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 1),
+                     labels = c("TRUE" = "p < 0.1", "FALSE" = "n.s."),
+                     name = "Significance") +
+  labs(x = expression(Slope~of~R^2~vs.~latitude),
+       y = expression(R^2~of~latitude~model)) +
+  base_theme +
+  theme(legend.position = c(0.28, 0.80),
+        legend.background = element_rect(fill = "white", color = NA),
+        legend.spacing.y  = unit(0.1, "cm")) +
+  guides(color = "none")
 
+# ── Combine and save ──────────────────────────────────────────────────────────
+fig_lat_grad <- panel_a / (panel_b | panel_c) +
+  plot_annotation(
+    tag_levels = "A",
+    theme = theme(plot.tag = element_text(face = "bold", size = 14))
+  ) +
+  plot_layout(heights = c(0.8, 1))
 
+out_dir <- here("data", "figures")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-##### OLD #####
-
-
-seas_in = readRDS(here("data/summary/seasonal_amplitude.rds"))
-
-seas_amplitude_long <- seas_in[[1]] %>% filter(model_id %in% converged)
-seas_amplitude_long$is_seasonal <- ifelse(seas_amplitude_long$significant_sin==1 |
-																						seas_amplitude_long$significant_cos == 1, T, F)
-
-# seas_amplitude_simple <- seas_amplitude_long %>% distinct(model_id, is_seasonal)
-high_seas_taxa = seas_amplitude_long %>%
-	#filter( model_name=="cycl_only") %>%
-	filter( model_name=="cycl_only" & amplitude > .05) %>%
-	filter(significant_sin==1 | significant_cos == 1)
-
-seas_taxa = unique(high_seas_taxa$taxon)
-ggplot(high_seas_taxa) + geom_point(aes(x = rank_only, y = amplitude, color = pretty_group))
-
-site_scores_allmetrics$is_seasonal <- ifelse(site_scores_allmetrics$taxon %in% seas_taxa, 1, 0)
-ggplot(site_scores_allmetrics %>%
-			 	filter(model_name=="env_cycl") %>%
-			 	filter(metric=="RSQ"), aes(x = latitude,
-			 														 y = score)) +
-	geom_point(alpha=.4, size=3, position=position_jitter(height=0, width = .3)) +
-	geom_smooth(method="lm") +
-	theme_minimal(base_size = 18) + labs(color = "Kingdom") +
-	xlab("Latitude") +
-	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~")), size=6, label.x.npc = .5) +
-	facet_wrap(~is_seasonal, scales = "free")
-
-
-core_scores_in = readRDS(here("data", paste0("summary/scoring_metrics_core_level.rds")))
-
-core_site_scores_allmetrics = core_scores_in[[6]] %>% filter(model_id %in% converged)
-core_site_scores_allmetrics$is_seasonal <- ifelse(core_site_scores_allmetrics$taxon %in% seas_taxa, 1, 0)
-core_site_scores_allmetrics <- merge(core_site_scores_allmetrics, site_descr, all.x=T)
-
-ggplot(core_site_scores_allmetrics %>%
-			 	filter(model_name=="env_cycl"), aes(x = latitude,
-			 														 y = RMSE.norm)) +
-	geom_point(alpha=.4, size=3, position=position_jitter(height=0, width = .3)) +
-	geom_smooth(method="lm") +
-	theme_minimal(base_size = 18) + labs(color = "Kingdom") +
-	xlab("Latitude") +
-	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~")), size=6, label.x.npc = .5) +
-	facet_grid(site_prediction~is_seasonal, scales = "free")
-
-
-## Fig for ESA 2023
-ggplot(core_site_scores_allmetrics %>%
-			 	filter(model_name=="env_cycl" & fcast_type=="Functional") %>%
-			 	filter(taxon %in% c("ectomycorrhizal","plant_pathogen",
-			 											"endophyte",
-			 											"lignolytic")),
-			 											# "salt_stress","oligotroph",
-			 											# "heat_stress")),
-			 aes(x = latitude,
-			 																																 y = RMSE.norm)) +
-	geom_point(alpha=.4, size=3, position=position_jitter(height=0, width = .3)) +
-	geom_smooth(method="lm", se=F) +
-	theme_minimal(base_size = 18) + labs(color = "Kingdom") +
-	xlab("Latitude") + ylab("Forecast error (nRMSE)") +
-	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~")), size=6, label.x.npc = .5) +
-	facet_wrap(~taxon, scales = "free", ncol=1)
-
-
-
-plot_site_scores_allmetrics = core_scores_in[[6]] %>% filter(model_id %in% converged)
-plot_site_scores_allmetrics$is_seasonal <- ifelse(plot_site_scores_allmetrics$taxon %in% seas_taxa, 1, 0)
-plot_site_scores_allmetrics <- merge(plot_site_scores_allmetrics, site_descr, all.x=T)
-
-ggplot(plot_site_scores_allmetrics %>%
-			 	filter(model_name=="env_cycl"), aes(x = latitude,
-			 																			y = mean_crps_sample)) +
-	geom_point(alpha=.4, size=3, position=position_jitter(height=0, width = .3)) +
-	geom_smooth(method="lm") +
-	theme_minimal(base_size = 18) + labs(color = "Kingdom") +
-	xlab("Latitude") +
-	stat_cor(aes(label = paste(..rr.label.., ..p.label.., sep = "~")), size=6, label.x.npc = .5) +
-	facet_wrap(pretty_group~is_seasonal, scales = "free")
-
-
-site_descr$only_deciduous_evergreen = ifelse(site_descr$deciduous=="Deciduous" & site_descr$evergreen == "",
-																				 "Deciduous",
-																				 ifelse(site_descr$evergreen=="Evergreen" & site_descr$deciduous == "", "Evergreen", ""))
-
-
-
-site_descr$latitude_bin = cut(site_descr$latitude, breaks = 10) 	# Bin latitudes into groups
-site_descr$latitude_category = ifelse(site_descr$latitude > 44, "High-latitude",
-																			ifelse(site_descr$latitude < 31, "Low-latitude",
-																						 "Mid-latitude"))
-# This factor should be ordered
-site_descr$latitude_category =
-	factor(site_descr$latitude_category, ordered = T, levels = c("Low-latitude",  "Mid-latitude","High-latitude"))
-
-#####
+ggsave(file.path(out_dir, "fig_seasonal_latitude.png"), fig_lat_grad,
+       width = 13, height = 9, dpi = 200)
+cat("Saved: data/figures/fig_seasonal_latitude.png\n")
