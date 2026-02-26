@@ -1,169 +1,302 @@
-# read in seasonal values
-library(lubridate)
-library(ggrepel)
+# Forecast horizon by seasonality, kingdom, forecast type, and latitude
+# Uses pre-computed phenology from 09_assignPeakPhenophase_optimized.r
+# and site-level scoring data for latitude analysis
+
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(data.table)
 source("source.R")
-source("microbialForecast/R/assignPhenology.r")
-source("microbialForecast/R/load_plot_estimates.r")
 
-sum.in <- readRDS(here("data", "summary/logit_beta_fixed_priors_summaries.rds"))
+# ============================================================
+# Load data
+# ============================================================
 
-# Load plot estimates using new memory-efficient functions
-cat("Loading plot estimates for horizon analysis...\n")
-plot_estimates_env_cycl <- load_plot_estimates_for_phenology("env_cycl")
-plot_estimates_cycl_only <- load_plot_estimates_for_phenology("cycl_only")
+# Model-level forecast horizons
+fcast_horizon_df <- readRDS(here("data", "summary/fcast_horizon_df.rds"))[[1]]
+fcast_horizon_df$forecast_horizon <- fcast_horizon_df$rsq_fcast_horizon
+fcast_horizon_df$forecast_horizon <- ifelse(
+  is.na(fcast_horizon_df$forecast_horizon) | !is.finite(fcast_horizon_df$forecast_horizon),
+  ifelse(is.finite(fcast_horizon_df$crps_fcast_horizon) & fcast_horizon_df$crps_fcast_horizon > 0,
+         fcast_horizon_df$crps_fcast_horizon,
+         fcast_horizon_df$rmse_fcast_horizon),
+  fcast_horizon_df$forecast_horizon)
 
-# Combine plot estimates from both model types
-plot_estimates <- rbind(plot_estimates_env_cycl, plot_estimates_cycl_only, fill = TRUE)
+# Assign functional vs taxonomic
+fg_names <- microbialForecast:::keep_fg_names
+fcast_horizon_df$fcast_type <- ifelse(fcast_horizon_df$species %in% fg_names,
+                                       "Functional Groups", "Taxonomic Groups")
 
-# Filter to only converged models
-plot_estimates <- plot_estimates %>% filter(model_name != "all_covariates") %>% filter(model_id %in% sum.in$keep_models)
-plot_estimates$month = lubridate::month(plot_estimates$dates)
-plot_estimates$year = lubridate::year(plot_estimates$dates)
-cycl_only_est = plot_estimates %>% filter(grepl("cycl_only",model_name))
+# Phenology amplitude + seasonality significance flags
+pheno_sig <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))[[1]] %>%
+  mutate(model_id = gsub("_beta_regression$", "", model_id)) %>%
+  select(model_id, amplitude, any_of(c("significant_sin", "significant_cos"))) %>%
+  distinct()
 
-model_info_key <- plot_estimates %>% select(c("model_id","fcast_type","time_period","pretty_group","rank_only","model_name","taxon")) %>% distinct()
+# Merge and filter to env_cycl
+plot_data <- merge(fcast_horizon_df, pheno_sig, by = "model_id", all.x = TRUE) %>%
+  filter(model_name == "env_cycl" & is.finite(forecast_horizon) & forecast_horizon > 0)
 
-read_in <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))
-full_phenophase_abundance = read_in[[1]] %>% merge(model_info_key, all.x=T)
-pheno_info_key <- full_phenophase_abundance[,c("siteID","year","month","site_cat")] %>% distinct()
-# This factor should be ordered (so that phenophases are sequential)
-pheno_info_key$sampling_season =
-	factor(pheno_info_key$site_cat, ordered = T, levels = c("dormancy","greenup","peak","greendown"))
+if ("pretty_group.y" %in% names(plot_data)) {
+  plot_data$pretty_group <- ifelse(is.na(plot_data$pretty_group.y),
+                                   plot_data$pretty_group.x,
+                                   plot_data$pretty_group.y)
+}
 
+cat("Model-level data:", nrow(plot_data), "env_cycl models\n")
 
-# Read in descriptions of NEON site-level soil chemistry, NCLD class, climate
-site_descr <- readRDS(here("data/summary/site_effect_predictors.rds"))
-site_descr$latitude_bin = cut(site_descr$latitude, breaks = 10) 	# Bin latitudes into groups
+# ── Shared aesthetics ──────────────────────────────────────────────────────────
+kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
 
+base_theme <- theme_bw(base_size = 12) +
+  theme(
+    strip.background = element_rect(fill = "grey92", color = NA),
+    strip.text       = element_text(face = "bold"),
+    legend.position  = "none"
+  )
 
-site_descr$latitude_category = ifelse(site_descr$latitude > 44, "High-latitude",
-																			ifelse(site_descr$latitude < 31, "Low-latitude",
-																						 "Mid-latitude"))
-# This factor should be ordered
-site_descr$latitude_category =
-	factor(site_descr$latitude_category, ordered = T, levels = c("Low-latitude",  "Mid-latitude","High-latitude"))
-pheno_info_key <- merge(pheno_info_key, site_descr, all=T)
+# ============================================================
+# Site-level horizons for latitude analysis
+# ============================================================
 
+fi <- readRDS(here("data/summary/fcast_horizon_input.rds"))
+model_mean <- as.data.table(fi[[4]])
+null_site <- as.data.table(fi[[3]])
 
-plot_phenophase_abundance <- merge(plot_estimates, pheno_info_key, all.x=T)
+# Null RSQ per model
+null_rsq <- null_site[model_name == "env_cycl",
+                       .(null_RSQ = mean(RSQ.1, na.rm = TRUE)), by = model_id]
 
+# Per-site scoring data
+site_data <- model_mean[model_name == "env_cycl"]
+site_data <- merge(site_data, null_rsq, by = "model_id", all.x = TRUE)
 
-plot_phenophase_abundance_cal <- plot_phenophase_abundance %>%  #full_phenophase_abundance %>%
-	filter(time_period=="2015-11_2018-01")
+# Site-level horizon: max months_since_obs where model beats null
+site_hz <- site_data[RSQ.1 > null_RSQ & is.finite(RSQ.1),
+                      .(site_horizon = max(months_since_obs, na.rm = TRUE)),
+                      by = .(model_id, species, siteID, pretty_group)]
 
-for_stats <- plot_phenophase_abundance_cal  %>%
-	filter(!is.na(`50%`) & !is.na(site_cat))
-tukey_median_pheno = for_stats %>%
-	group_by(fcast_type,pretty_group,model_name,taxon,model_id) %>%
-	summarize(tukey(x = sampling_season, y = `50%`, y.offset = 0)) %>%
-	rename(sampling_season = x)
-tukey_median_pheno_sig <- tukey_median_pheno %>%
-	group_by(fcast_type,pretty_group,model_name,taxon,model_id) %>%
-	mutate(significant_diff = ifelse(n_distinct(Letters_Tukey) > 1, T, F)) %>% select(model_id, significant_diff) %>% distinct()
+# Include model x site combos that never beat null (horizon = 0)
+all_combos <- unique(site_data[, .(model_id, species, siteID, pretty_group)])
+site_hz <- merge(all_combos, site_hz,
+                 by = c("model_id", "species", "siteID", "pretty_group"), all.x = TRUE)
+site_hz[is.na(site_horizon), site_horizon := 0]
 
-# Get percent of groups that differ across phenophases: 91%
-tukey_median_pheno_sig %>% #filter(model_name=="env_cycl") %>%
-	ungroup() %>%
-	group_by(model_name) %>%
-	add_count(name = "total") %>%
-	group_by(model_name,significant_diff) %>%
-	add_count(name="group") %>% select(model_name,group,total) %>%
-	distinct %>% mutate(pct = group/total) %>% filter(significant_diff) %>% print()
+# Merge latitude
+lat_df <- readRDS(here("data/clean/site_effect_predictors.rds"))[, c("siteID", "latitude")]
+site_hz <- merge(site_hz, lat_df, by = "siteID", all.x = TRUE)
 
-# Get percentage of site-times assigned to each category
-for_stats %>% select(siteID, plotID, dateID, sampling_season) %>% distinct() %>%
-	select(sampling_season) %>% table()
+# Aggregate: mean horizon per site x kingdom
+site_kingdom <- site_hz[, .(mean_horizon = mean(site_horizon, na.rm = TRUE),
+                             n_models = .N),
+                          by = .(siteID, latitude, pretty_group)]
 
+# Aggregate: mean horizon per site (all taxa)
+site_avg <- site_hz[, .(mean_horizon = mean(site_horizon, na.rm = TRUE),
+                          n_models = .N,
+                          prop_skilled = mean(site_horizon > 0)),
+                      by = .(siteID, latitude)]
 
-horizon_in = readRDS(here("data", paste0("summary/fcast_horizon_clean.rds")))
-fcast_horizon_x_RSQ = horizon_in[[2]]
-fcast_horizon_x_CRPS = horizon_in[[4]]
+cat("Site-level data:", nrow(site_hz), "model x site combos across",
+    length(unique(site_hz$siteID)), "sites\n")
 
-fcast_horizon_long_seas <- merge(fcast_horizon_x_CRPS, tukey_median_pheno_sig, all.y = T, by=c("taxon","pretty_group", "model_name", "model_id")) %>%
-	filter(!is.na(pretty_group)) %>% mutate(significant_diff = recode(as.character(significant_diff),
-																																		"TRUE" = "Microbes that vary \nwith plant phenophase",
-																																		"FALSE" = "Microbes that do not vary\n with plant phenophase"))
+# ============================================================
+# Panel A: Amplitude terciles by kingdom
+# ============================================================
+plot_data_amp <- plot_data %>% filter(!is.na(amplitude))
+plot_data_amp$seasonality <- cut(
+  plot_data_amp$amplitude,
+  quantile(plot_data_amp$amplitude, c(0, 1/3, 2/3, 1), na.rm = TRUE),
+  labels = c("Low", "Medium", "High"),
+  include.lowest = TRUE)
 
+panel_a <- ggplot(plot_data_amp,
+                  aes(x = seasonality, y = forecast_horizon, color = pretty_group)) +
+  geom_boxplot(aes(fill = pretty_group), alpha = 0.3, outlier.shape = NA) +
+  geom_point(size = 1.5, alpha = 0.3,
+             position = position_jitter(height = 0, width = 0.15)) +
+  facet_wrap(~ pretty_group) +
+  scale_color_manual(values = kingdom_colors) +
+  scale_fill_manual(values  = kingdom_colors) +
+  labs(y = "Forecast horizon (months)", x = "Seasonal amplitude (terciles)") +
+  base_theme
 
+# ============================================================
+# Panel B: Continuous amplitude scatter per kingdom
+# ============================================================
+panel_b <- ggplot(plot_data_amp,
+                  aes(x = amplitude, y = forecast_horizon, color = pretty_group)) +
+  geom_point(size = 1.8, alpha = 0.35) +
+  geom_smooth(method = "lm", se = TRUE, linewidth = 1) +
+  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  labs(y = "Forecast horizon (months)", x = "Seasonal amplitude") +
+  base_theme + theme(legend.position = "top")
 
-stat_pvalue <- fcast_horizon_long_seas %>%
-	group_by(model_name) %>%
-	rstatix::t_test(months_since_obs ~ significant_diff,detailed = T) %>%
-	#filter(p.adj < 0.05) %>%
-	rstatix::add_y_position(step.increase = .2) %>%
-	mutate(y.position = seq(min(y.position), max(y.position),length.out = n()))
+tryCatch({
+  cor_bac <- with(plot_data_amp %>% filter(pretty_group == "Bacteria"),
+                  cor.test(amplitude, forecast_horizon))
+  cor_fun <- with(plot_data_amp %>% filter(pretty_group == "Fungi"),
+                  cor.test(amplitude, forecast_horizon))
+  cor_label <- paste0("Bacteria: r = ", round(cor_bac$estimate, 2),
+                      ", p = ", round(cor_bac$p.value, 3),
+                      "\nFungi: r = ", round(cor_fun$estimate, 2),
+                      ", p = ", round(cor_fun$p.value, 3))
+  panel_b <- panel_b +
+    annotate("text", x = max(plot_data_amp$amplitude) * 0.6,
+             y = min(plot_data_amp$forecast_horizon) + 0.5,
+             label = cor_label, size = 4, hjust = 0)
+}, error = function(e) cat("Correlation annotation failed:", e$message, "\n"))
 
-fig3g <- ggplot(fcast_horizon_long_seas %>% filter(model_name %in% c("cycl_only")),
-																				#										"env_cycl")),# %>% filter(parameter_type=="horizon" & horizon_parameter=="rsq_fcast_horizon"),
-			 aes(x = significant_diff,
-			 		y = months_since_obs)) +
+# ============================================================
+# Panel C: Kingdom comparison (horizon horizontal)
+# ============================================================
+panel_c <- ggplot(plot_data,
+                  aes(x = forecast_horizon, y = pretty_group,
+                      color = pretty_group, fill = pretty_group)) +
+  geom_boxplot(alpha = 0.3, outlier.shape = NA, width = 0.4) +
+  geom_point(size = 1.5, alpha = 0.2,
+             position = position_jitter(height = 0.1, width = 0)) +
+  scale_color_manual(values = kingdom_colors) +
+  scale_fill_manual(values  = kingdom_colors) +
+  labs(x = "Forecast horizon (months)", y = NULL) +
+  base_theme
 
-	geom_violin(draw_quantiles=c(.5), alpha=.5, show.legend = F, outlier.shape = NA) +
-	#facet_grid(~model_name) +
-	geom_point(aes(color = pretty_group),
-		size=3, alpha=.4, #show.legend = F,
-		position=position_jitter(height=.2, width=.2),
-		show.legend = T
-		#position=position_jitterdodge(jitter.width = .2, jitter.height = 0, dodge.width = 1)
-		) + #facet_grid(#pretty_group
-																																			#					~model_name) +
-	coord_flip() + theme_bw(base_size = 16) +
-	ylab("Forecast horizon (months of skilled predictions)") + xlab(NULL) +
-	#ggtitle("Forecast horizon") +
-	ggpubr::stat_pvalue_manual(stat_pvalue,
-																													 label = "p = {p}",
-																													 bracket.nudge.y = -.1,
-																													 size=4, hide.ns = T) +
-	labs(color="Kingdom") + #	scale_color_discrete(name = "Kingdom") +
-	theme(legend.box="horizontal",legend.position = "top")
-#																										legend.position=c(.7,.15)
+tryCatch({
+  t_res <- plot_data %>% rstatix::t_test(forecast_horizon ~ pretty_group, detailed = TRUE)
+  p_label <- ifelse(t_res$p < 0.001, "p < 0.001", paste0("p = ", round(t_res$p, 3)))
+  panel_c <- panel_c + labs(subtitle = p_label)
+}, error = function(e) cat("Kingdom t-test failed:", e$message, "\n"))
 
-#fig3g <- tag_facet(fig3g, tag_pool = "G", y = 5)
+# ============================================================
+# Panel D: Functional vs Taxonomic (horizon horizontal)
+# ============================================================
+panel_d <- ggplot(plot_data,
+                  aes(x = forecast_horizon, y = fcast_type, color = pretty_group)) +
+  geom_boxplot(aes(fill = pretty_group), alpha = 0.3, outlier.shape = NA, width = 0.4) +
+  geom_point(size = 1.5, alpha = 0.2,
+             position = position_jitterdodge(jitter.height = 0.05, dodge.width = 0)) +
+  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_fill_manual(values  = kingdom_colors, guide = "none") +
+  labs(x = "Forecast horizon (months)", y = NULL) +
+  base_theme + theme(legend.position = "top")
 
-fig3g
-fig3g <- ggarrange(fig3g, labels="G")
-png(here("figures","fcast_horizon_by_seasonality.png"), width = 1200, height=400)
-print(fig3g)
-dev.off()
+tryCatch({
+  t_res2 <- plot_data %>% rstatix::t_test(forecast_horizon ~ fcast_type, detailed = TRUE)
+  p_label2 <- ifelse(t_res2$p < 0.001, "p < 0.001", paste0("p = ", round(t_res2$p, 3)))
+  panel_d <- panel_d + labs(subtitle = p_label2)
+}, error = function(e) cat("Fcast type t-test failed:", e$message, "\n"))
 
-long_horizon_subset1 = fcast_horizon_x_RSQ[which(fcast_horizon_x_RSQ$months_since_obs > 10),]
-long_horizon_subset2 = fcast_horizon_x_CRPS[which(fcast_horizon_x_CRPS$months_since_obs > 10),]
-long_horizon_subset <- inner_join(long_horizon_subset1, long_horizon_subset2)
-intersect(long_horizon_subset1$model_id, long_horizon_subset2$model_id)
-print(long_horizon_subset)
+# ============================================================
+# Panel E: Site-level horizon vs latitude (per kingdom)
+# ============================================================
+panel_e <- ggplot(site_kingdom,
+                  aes(x = latitude, y = mean_horizon, color = pretty_group)) +
+  geom_point(size = 2.5, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, linewidth = 1) +
+  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  labs(x = "Latitude (\u00b0N)", y = "Mean site-level\nforecast horizon (months)") +
+  base_theme + theme(legend.position = "top")
 
+tryCatch({
+  cor_bac_lat <- with(site_kingdom[pretty_group == "Bacteria"],
+                      cor.test(latitude, mean_horizon))
+  cor_fun_lat <- with(site_kingdom[pretty_group == "Fungi"],
+                      cor.test(latitude, mean_horizon))
+  lat_label <- paste0("Bacteria: r = ", round(cor_bac_lat$estimate, 2),
+                       ", p = ", round(cor_bac_lat$p.value, 3),
+                       "\nFungi: r = ", round(cor_fun_lat$estimate, 2),
+                       ", p = ", round(cor_fun_lat$p.value, 3))
+  panel_e <- panel_e +
+    annotate("text", x = 55, y = max(site_kingdom$mean_horizon) * 0.9,
+             label = lat_label, size = 4, hjust = 0)
+}, error = function(e) cat("Latitude correlation failed:", e$message, "\n"))
 
-fit_combined = horizon_in[[1]]
+# ============================================================
+# Panel F: Proportion of skilled models per site vs latitude
+# ============================================================
+panel_f <- ggplot(site_avg,
+                  aes(x = latitude, y = prop_skilled)) +
+  geom_point(size = 2.5, alpha = 0.6, color = "grey40") +
+  geom_smooth(method = "lm", se = TRUE, linewidth = 1, color = "grey30") +
+  ggrepel::geom_text_repel(aes(label = siteID), size = 2.5, alpha = 0.7,
+                           max.overlaps = 10) +
+  labs(x = "Latitude (\u00b0N)", y = "Proportion of taxa\nwith skilled forecasts") +
+  ylim(c(0, 1)) +
+  base_theme
 
+tryCatch({
+  cor_prop <- cor.test(site_avg$latitude, site_avg$prop_skilled)
+  prop_label <- paste0("r = ", round(cor_prop$estimate, 2),
+                        ", p = ", round(cor_prop$p.value, 3))
+  panel_f <- panel_f +
+    annotate("text", x = 55, y = 0.9, label = prop_label, size = 4, hjust = 0)
+}, error = function(e) cat("Proportion correlation failed:", e$message, "\n"))
 
-fg_list =  c(#"ectomycorrhizal",
-						 "plant_pathogen")
-						 #"saprotroph","endophyte",#"oligotroph",
-					#	 "copiotroph")
-stats_for_plot = tukey_median_pheno %>% filter(taxon %in% fg_list & model_name=="cycl_only")
-stats_for_plot$tot = ifelse(stats_for_plot$tot > .55, .55, stats_for_plot$tot)
-plot_median_abun <- ggplot(for_stats %>%
-													 	filter(taxon %in% fg_list & model_name=="cycl_only"),
-													 aes(y = `50%`,color = sampling_season,
-													 		x = sampling_season)) +
+# ============================================================
+# Panel G: Horizon by seasonality significance (all model types)
+# Uses significant_sin / significant_cos from phenology data.
+# Compares forecast horizon for taxa with vs without significant seasonality.
+# ============================================================
+has_sig_flags <- all(c("significant_sin", "significant_cos") %in% names(pheno_sig))
 
-	geom_violin(alpha=.5, show.legend = F, outlier.shape = NA) +
-	# geom_point(#aes(color = siteID),
-	# 	size=1, alpha=.1, #show.legend = F,
-	# 	position=position_jitter(height=0), show.legend = F) +
-	#geom_line(aes(color = taxon), size=3, alpha=.5, show.legend = F) +
-	theme_bw()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	#facet_grid(rows=vars(taxon), scales="free") +
-	facet_wrap(~taxon, scales="free") +
-	ylab("Median abundance across all sites") +
-	xlab("Plant phenophase")  +
-	geom_text(data = stats_for_plot,
-						aes(x = sampling_season, y = .1, label = Letters_Tukey),
-						show.legend = F, color = 1, size =6) + ylim(c(0,.15))
-plot_median_abun
+if (has_sig_flags) {
+  pheno_sig_flag <- pheno_sig %>%
+    mutate(seasonal = (significant_sin == 1 | significant_cos == 1),
+           seasonal_label = ifelse(seasonal, "Significant\nseasonality", "No significant\nseasonality")) %>%
+    select(model_id, seasonal_label)
 
+  horizon_seas <- fcast_horizon_df %>%
+    left_join(pheno_sig_flag, by = "model_id") %>%
+    filter(is.finite(forecast_horizon), forecast_horizon > 0,
+           !is.na(seasonal_label), !is.na(pretty_group))
 
+  cat("Horizon-by-seasonality data:", nrow(horizon_seas), "rows\n")
+
+  comparisons_g <- list(c("No significant\nseasonality", "Significant\nseasonality"))
+
+  panel_g <- ggplot(horizon_seas,
+                    aes(x = forecast_horizon, y = seasonal_label,
+                        fill = pretty_group, color = pretty_group)) +
+    geom_boxplot(alpha = 0.35, outlier.shape = NA, width = 0.5,
+                 position = position_dodge(width = 0.7)) +
+    geom_point(position = position_jitterdodge(jitter.width = 0.1,
+                                               jitter.height = 0,
+                                               dodge.width  = 0.7),
+               alpha = 0.25, size = 1) +
+    facet_wrap(~ model_name,
+               labeller = labeller(model_name = c(cycl_only = "Cycl. only",
+                                                   env_cov   = "Env. only",
+                                                   env_cycl  = "Env. + Cycl."))) +
+    scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+    scale_fill_manual(values  = kingdom_colors, name = "Kingdom") +
+    labs(x = "Forecast horizon (months)", y = NULL) +
+    base_theme + theme(legend.position = "top")
+} else {
+  cat("significant_sin/cos columns not found in phenology data; skipping Panel G\n")
+  panel_g <- NULL
+}
+
+# ============================================================
+# Compose and save
+# ============================================================
+fig_top <- ggarrange(panel_a, panel_b, labels = c("A", "B"), widths = c(1, 1))
+fig_mid <- ggarrange(panel_c, panel_d, labels = c("C", "D"), widths = c(0.8, 1.2))
+fig_bot <- ggarrange(panel_e, panel_f, labels = c("E", "F"), widths = c(1, 1))
+
+if (!is.null(panel_g)) {
+  fig_all <- ggarrange(fig_top, fig_mid, fig_bot,
+                       ggarrange(panel_g, labels = "G"),
+                       nrow = 4, heights = c(1, 0.7, 1, 0.7))
+} else {
+  fig_all <- ggarrange(fig_top, fig_mid, fig_bot, nrow = 3, heights = c(1, 0.7, 1))
+}
+
+out_dir <- here("data", "figures")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+ggsave(file.path(out_dir, "fig_horizon_by_seasonality.pdf"), fig_all,
+       width = 12, height = if (!is.null(panel_g)) 16 else 12)
+ggsave(file.path(out_dir, "fig_horizon_by_seasonality.png"), fig_all,
+       width = 12, height = if (!is.null(panel_g)) 16 else 12, dpi = 200)
+
+cat("Saved: data/figures/fig_horizon_by_seasonality.pdf / .png\n")

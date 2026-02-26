@@ -58,7 +58,9 @@ if (length(all_seas_vals) > 0 && nrow(all_seas_vals) > 0) {
   if (exists("trend_20130601_20151101") && exists("trend_201511_201801") && exists("trend_201511_202001")) {
     tryCatch({
       combined_plot <- ggarrange(trend_20130601_20151101, trend_201511_201801, trend_201511_202001, nrow = 3)
+      png(here("figures","compare_calibration_periods_seasonal_trends.png"), width = 1200, height = 1800)
       print(combined_plot)
+      dev.off()
     }, error = function(e) {
       cat("Error combining plots:", e$message, "\n")
     })
@@ -67,11 +69,44 @@ if (length(all_seas_vals) > 0 && nrow(all_seas_vals) > 0) {
   cat("No seasonal amplitude data available\n")
 }
 
-# Load summaries data
-if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds"))) {
+# Load plot estimates from separate file (plot_est is intentionally empty in summaries)
+if (file.exists(here("data/summary/plot_estimates.rds"))) {
+  cat("Loading plot_estimates from separate file...\n")
+  plot_est_all = readRDS(here("data/summary/plot_estimates.rds"))
+  cat("Loaded", nrow(plot_est_all), "rows from plot_estimates.rds\n")
+  
+  # Check if model_name column exists
+  if ("model_name" %in% names(plot_est_all)) {
+    plot_est = plot_est_all %>% filter(model_name=="env_cycl")
+    plot_est_cycl = plot_est_all %>% filter(model_name=="cycl_only")
+    cat("Filtered to", nrow(plot_est), "env_cycl rows and", nrow(plot_est_cycl), "cycl_only rows\n")
+  } else {
+    cat("Warning: model_name column not found in plot_estimates\n")
+    cat("Available columns:", paste(names(plot_est_all), collapse = ", "), "\n")
+    plot_est = plot_est_all
+    plot_est_cycl = plot_est_all
+  }
+} else if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds"))) {
+  # Fallback to summaries file (though plot_est should be empty there)
   summaries = readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
-  plot_est = summaries$plot_est %>% filter(model_name=="env_cycl")
-  plot_est_cycl = summaries$plot_est %>% filter(model_name=="cycl_only")
+  if ("plot_est" %in% names(summaries) && nrow(summaries$plot_est) > 0) {
+    if ("model_name" %in% names(summaries$plot_est)) {
+      plot_est = summaries$plot_est %>% filter(model_name=="env_cycl")
+      plot_est_cycl = summaries$plot_est %>% filter(model_name=="cycl_only")
+    } else {
+      plot_est = summaries$plot_est
+      plot_est_cycl = summaries$plot_est
+    }
+  } else {
+    cat("Warning: plot_est not available in summaries file\n")
+    plot_est = data.frame()
+    plot_est_cycl = data.frame()
+  }
+} else {
+  cat("Warning: Neither plot_estimates.rds nor summaries file found\n")
+  plot_est = data.frame()
+  plot_est_cycl = data.frame()
+}
   
   # Check if date_num column exists
   if ("date_num" %in% names(plot_est)) {
@@ -104,15 +139,18 @@ if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds"))) {
       filter(taxon == first_taxon & .data[[plot_id_col]] %in% first_plots)
     
     if (nrow(plot_data) > 0) {
-      # Create basic plot
-      p <- ggplot(plot_data, aes(x = dates, y = `50%`, color = .data[[plot_id_col]])) +
+      # Create basic plot - use Mean instead of 50% if 50% doesn't exist
+      y_col <- if ("50%" %in% names(plot_data)) "50%" else if ("Mean" %in% names(plot_data)) "Mean" else stop("No y column found")
+      p <- ggplot(plot_data, aes(x = dates, y = .data[[y_col]], color = .data[[plot_id_col]])) +
         geom_line() +
         theme_bw() +
         ggtitle(paste("Seasonal trends for", first_taxon)) +
         ylab("Modeled abundance") +
         xlab("Date")
       
+      png(here("figures","compare_calibration_periods_seasonal_trends_single.png"), width = 1200, height = 800)
       print(p)
+      dev.off()
       cat("Plot created successfully\n")
     } else {
       cat("No data available for plotting with current filters\n")
@@ -126,8 +164,10 @@ if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds"))) {
              time_period %in% c("20130601_20151101","2015-11_2018-01","2015-11_2020-01"))
     
     if (nrow(plot_data_2) > 0) {
+      # Use Mean instead of 50% if 50% doesn't exist
+      y_col_2 <- if ("50%" %in% names(plot_data_2)) "50%" else if ("Mean" %in% names(plot_data_2)) "Mean" else stop("No y column found")
       p <- ggplot(plot_data_2,
-             aes(fill=species, x = dates, y = `50%`, group=.data[[plot_id_col]])) +
+             aes(fill=species, x = dates, y = .data[[y_col_2]], group=.data[[plot_id_col]])) +
         theme_bw() +
         scale_fill_brewer(palette = "Paired") +
         theme(text = element_text(size = 14), panel.spacing = unit(.2, "cm"),
@@ -139,7 +179,9 @@ if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds"))) {
         labs(fill='') +
         facet_grid(~.data[[plot_id_col]])
       
+      png(here("figures","compare_calibration_periods_cycl_only.png"), width = 1600, height = 800)
       print(p)
+      dev.off()
       cat("Second plot created successfully\n")
     } else {
       cat("No data available for second plot\n")
@@ -147,9 +189,6 @@ if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds"))) {
   } else {
     cat("No data available for plotting\n")
   }
-} else {
-  cat("logit_beta_fixed_priors_summaries.rds not found\n")
-}
 
 # Check if seasonal amplitude data has the expected structure
 if (length(seas_vals) >= 2) {
@@ -160,7 +199,9 @@ if (length(seas_vals) >= 2) {
     p1 <- ggplot(cycl_calibration) + 
       geom_point(aes(y = rank, x = max)) + 
       xlab("Month in which peak seasonal trend is observed")
+    png(here("figures","compare_calibration_periods_cycl_peak.png"), width = 800, height = 600)
     print(p1)
+    dev.off()
   } else {
     cat("cycl_calibration data not available\n")
   }
@@ -169,7 +210,9 @@ if (length(seas_vals) >= 2) {
     p2 <- ggplot(all_cov_calibration) + 
       geom_point(aes(y = rank, x = max)) + 
       xlab("Month in which peak residual seasonal trend is observed")
+    png(here("figures","compare_calibration_periods_all_cov_peak.png"), width = 800, height = 600)
     print(p2)
+    dev.off()
   } else {
     cat("all_cov_calibration data not available\n")
   }

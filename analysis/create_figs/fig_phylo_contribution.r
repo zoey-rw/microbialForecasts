@@ -8,8 +8,14 @@ library(phylocomr)
 library(scales)
 library(ggrepel)
 
-results_to_save = readRDS(here("data/summary/phylo_analysis_results_env_cov.rds"))
-# results_to_save = readRDS(here("data/summary/phylo_analysis_results.rds"))
+# Check if phylo analysis results file exists
+if (file.exists(here("data/summary/phylo_analysis_results_env_cov.rds"))) {
+  results_to_save = readRDS(here("data/summary/phylo_analysis_results_env_cov.rds"))
+} else if (file.exists(here("data/summary/phylo_analysis_results.rds"))) {
+  results_to_save = readRDS(here("data/summary/phylo_analysis_results.rds"))
+} else {
+  stop("Neither phylo_analysis_results_env_cov.rds nor phylo_analysis_results.rds found")
+}
 
 phylogenetic_results = results_to_save$phylogenetic_results
 sig_for_plot = results_to_save$sig_for_plot

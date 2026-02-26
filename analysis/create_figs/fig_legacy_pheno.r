@@ -1,88 +1,165 @@
+# Microbial phenology strength figure
+# Shows the prevalence and magnitude of seasonal patterns in microbial communities.
+# Compares cycl_only (pure seasonality model) vs env_cycl (seasonality + environment)
+# to show how much of the cyclic signal persists after accounting for env predictors.
+
+library(tidyverse)
+library(ggpubr)
+library(ggrepel)
+
 source("source.R")
 
+# ── Data loading ─────────────────────────────────────────────────────────────
+phenophase_in <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))
 
-sum.in <- readRDS(here("data", "summary/pheno_summaries.rds"))
+# Element 1: one row per model_id — modal phenophase, amplitude, significance flags
+mode_data <- phenophase_in[[1]]
 
-plot_estimates = sum.in$plot_est %>% filter(model_id %in% sum.in$keep_list)
-plot_estimates$month = lubridate::month(plot_estimates$dates)
-plot_estimates$month_date = as.Date(paste0(plot_estimates$month, "-01-2016"), format = "%m-%d-%Y")
-plot_estimates$fg_category <- microbialForecast:::assign_fg_categories(plot_estimates$taxon)
+# ── Display settings ─────────────────────────────────────────────────────────
+pheno_levels <- c("greenup", "peak", "greendown", "dormancy")
+pheno_labels <- c("Green-up", "Peak", "Senescence", "Dormancy")
+pheno_colors <- c(
+  "Green-up"   = "#009E73",
+  "Peak"       = "#E69F00",
+  "Senescence" = "#D55E00",
+  "Dormancy"   = "#56B4E9"
+)
 
-cycl_only_est = plot_estimates %>% filter(grepl("cycl_only",model_name))
-env_cycl_est = plot_estimates %>% filter(grepl("env_cycl",model_name))
+model_labels <- c(
+  cycl_only = "Seasonality only",
+  env_cycl  = "Seasonality + environment"
+)
+fcast_labels <- c(Functional = "Functional groups", Taxonomic = "Taxonomic groups")
 
+# ── Panel A: proportion of taxa with significant seasonality ──────────────────
+# Compare cycl_only vs env_cycl: does adding env covariates change apparent seasonality?
+pct_sig <- mode_data %>%
+  filter(model_name %in% c("cycl_only", "env_cycl")) %>%
+  group_by(model_name, fcast_type, pretty_group) %>%
+  summarise(
+    total   = n(),
+    n_sig   = sum(significant_sin == 1 | significant_cos == 1, na.rm = TRUE),
+    pct_sig = n_sig / total * 100,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    model_name = recode(model_name, !!!model_labels),
+    fcast_type = recode(fcast_type, !!!fcast_labels)
+  )
 
-pheno_categories_in <- readRDS(here("data/clean/modis_greenup.rds"))
-bart_harv_pheno = pheno_categories_in[[1]] %>% filter(ID %in% c("BART","HARV") & year == "2016") %>% ungroup
+pA <- ggplot(pct_sig,
+             aes(x = pretty_group, y = pct_sig, fill = model_name)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.65) +
+  geom_text(aes(label = paste0("n=", n_sig, "/", total)),
+            position = position_dodge(width = 0.7),
+            vjust = -0.4, size = 3, color = "grey30") +
+  facet_wrap(~fcast_type) +
+  scale_fill_manual(
+    values = c("Seasonality only" = "#0072B2",
+               "Seasonality + environment" = "#009E73"),
+    name   = "Model"
+  ) +
+  scale_y_continuous(limits = c(0, 115),
+                     expand = expansion(mult = c(0, 0))) +
+  labs(x = NULL, y = "% of taxa with significant seasonality") +
+  theme_bw(base_size = 12) +
+  theme(
+    strip.background   = element_rect(fill = "grey92", color = NA),
+    strip.text         = element_text(face = "bold"),
+    legend.position    = "top",
+    panel.grid.major.x = element_blank()
+  )
 
+# ── Panel B: amplitude distribution for significantly seasonal taxa ────────────
+# Compare amplitude between cycl_only and env_cycl for the same taxa
+# (taxa that are significant in either model)
+amp_both <- mode_data %>%
+  filter(model_name %in% c("cycl_only", "env_cycl"),
+         significant_sin == 1 | significant_cos == 1,
+         !is.na(amplitude)) %>%
+  mutate(
+    model_name = recode(model_name, !!!model_labels),
+    fcast_type = recode(fcast_type, !!!fcast_labels)
+  )
 
-northern_sites <- c("HARV",
-										"BART")
+pB <- ggplot(amp_both,
+             aes(x = pretty_group, y = amplitude, fill = model_name)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6,
+               position = position_dodge(width = 0.75), width = 0.65) +
+  geom_point(aes(color = model_name),
+             position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.75),
+             alpha = 0.4, size = 1.5) +
+  facet_wrap(~fcast_type) +
+  scale_fill_manual(
+    values = c("Seasonality only" = "#0072B2",
+               "Seasonality + environment" = "#009E73"),
+    name   = "Model"
+  ) +
+  scale_color_manual(
+    values = c("Seasonality only" = "#0072B2",
+               "Seasonality + environment" = "#009E73"),
+    guide  = "none"
+  ) +
+  labs(x = NULL, y = "Seasonal amplitude") +
+  theme_bw(base_size = 12) +
+  theme(
+    strip.background   = element_rect(fill = "grey92", color = NA),
+    strip.text         = element_text(face = "bold"),
+    legend.position    = "none",   # shared via pA
+    panel.grid.major.x = element_blank()
+  )
 
-plant_associated = env_cycl_est  %>%
-	filter(taxon %in% c("plant_pathogen","oligotroph","heat_stress","copiotroph","saprotroph","lignolytic"))
+# ── Panel C: ranked functional group amplitudes (cycl_only) ──────────────────
+# Lollipop chart of all functional groups, colored by peak phenophase
+# Shows WHICH functional groups are most seasonal and WHEN they peak
+fg_ranked <- mode_data %>%
+  filter(
+    model_name  == "cycl_only",
+    fcast_type  == "Functional",
+    !is.na(amplitude)
+  ) %>%
+  arrange(desc(amplitude)) %>%
+  mutate(
+    label      = tools::toTitleCase(gsub("_", " ", taxon)),
+    sig        = significant_sin == 1 | significant_cos == 1,
+    peak_phase = factor(sampling_season, levels = pheno_levels, labels = pheno_labels)
+  )
 
-plant_associated2 = cycl_only_est  %>%
-	filter(taxon %in% c("plant_pathogen","oligotroph","heat_stress","copiotroph","saprotroph","lignolytic"))
+pC <- ggplot(fg_ranked,
+             aes(x = amplitude,
+                 y = reorder(label, amplitude),
+                 color = peak_phase,
+                 alpha = sig)) +
+  geom_segment(aes(xend = 0, yend = reorder(label, amplitude)),
+               color = "grey75", linewidth = 0.5) +
+  geom_point(aes(shape = pretty_group), size = 3.5) +
+  scale_color_manual(values = pheno_colors, name = "Peak phenophase",
+                     na.value = "grey60") +
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.35),
+                     guide  = "none") +
+  scale_shape_manual(values = c(Bacteria = 16, Fungi = 17), name = "Kingdom") +
+  labs(x = "Seasonal amplitude (cycl_only)", y = NULL) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey90", linewidth = 0.3),
+    panel.grid.major.x = element_blank(),
+    legend.position    = "right"
+  )
 
-#cycl_only_est$pretty_fg_names <- recode(cycl_only_est$taxon, !!!pretty_names)
+# ── Combine and save ──────────────────────────────────────────────────────────
+fig_pheno <- ggarrange(
+  ggarrange(pA, pB, nrow = 2, labels = c("A", "B"),
+            common.legend = TRUE, legend = "top"),
+  pC,
+  ncol    = 2,
+  labels  = c("", "C"),
+  widths  = c(1, 0.9)
+)
 
+out_dir <- here("data", "figures")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
+ggsave(file.path(out_dir, "fig_legacy_pheno.png"),
+       fig_pheno, width = 12, height = 8, dpi = 200)
 
-ggplot(plant_associated %>% filter(siteID %in% northern_sites) %>% filter(taxon != "heat_stress"),
-			 aes(x = month_date, color=siteID)) +
-	
-	geom_smooth(aes(y = `Mean`), method="loess", span=1, se=F) +
-	theme_classic()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 18), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	xlab(NULL) + labs(fill='') +
-	facet_wrap(~taxon, ncol=1, scales="free") +
-	annotate(geom = 'rect', xmin=as.Date("2016-01-01"), xmax=as.Date("2016-05-02"), ymin=-Inf, ymax=Inf, alpha=.2, fill='lightgray', ) +
-	annotate(geom = 'rect', xmin=as.Date("2016-05-02"), xmax=as.Date("2016-06-26"), ymin=-Inf, ymax=Inf, alpha=.2, fill='lightgreen') +
-	annotate(geom = 'rect', xmin=as.Date("2016-06-26"), xmax=as.Date("2016-08-14"), ymin=-Inf, ymax=Inf, alpha=.2, fill='green') +
-	annotate(geom = 'rect', xmin=as.Date("2016-08-14"), xmax=as.Date("2016-12-31"), ymin=-Inf, ymax=Inf, alpha=.2, fill='lightgray') +
-	scale_x_date(date_labels = "%B") + labs(color = "NEON site")
-
-
-
-data_rich_sites = c("CPER","DSNY","HARV","OSBS","STER")
-ggplot(plant_associated %>% 
-			 	filter(siteID %in% data_rich_sites),
-			 aes(x = as.numeric(month))) +
-	geom_point(aes(y = `50%`, color = siteID), show.legend = F, #color="red", 
-						 alpha=.1, position=position_jitter(height=0)) +
-	geom_point(aes(y = as.numeric(truth), color = siteID), alpha = .5, 
-						 position=position_jitter(height=0)) + 
-	geom_smooth(aes(y = `50%`), se = F, color=1) +
-	theme_bw( base_size = 22) +
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 18), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	xlab(NULL) + labs(fill='') +
-	facet_wrap(fg_category~taxon, scales="free") + ggtitle("Full models, estimates plotted by month ")
-
-
-
-
-ggplot(plant_associated %>% filter(siteID %in% data_rich_sites) %>% filter(taxon != "heat_stress"),
-			 aes(x = month_date, color=siteID)) +
-	
-	geom_smooth(aes(y = `Mean`), method="loess", span=1, se=F) +
-	theme_classic()+
-	scale_fill_brewer(palette = "Paired") +
-	theme(text = element_text(size = 18), panel.spacing = unit(.2, "cm"),
-				legend.position = "bottom",legend.title = element_text(NULL),
-				plot.margin = unit(c(.2, .2, 2, .2), "cm")) + ylab(NULL) +
-	xlab(NULL) + labs(fill='') +
-	facet_wrap(~taxon, ncol=1, scales="free") +
-	annotate(geom = 'rect', xmin=as.Date("2016-01-01"), xmax=as.Date("2016-05-02"), ymin=-Inf, ymax=Inf, alpha=.2, fill='lightgray', ) +
-	annotate(geom = 'rect', xmin=as.Date("2016-05-02"), xmax=as.Date("2016-06-26"), ymin=-Inf, ymax=Inf, alpha=.2, fill='lightgreen') +
-	annotate(geom = 'rect', xmin=as.Date("2016-06-26"), xmax=as.Date("2016-08-14"), ymin=-Inf, ymax=Inf, alpha=.2, fill='green') +
-	annotate(geom = 'rect', xmin=as.Date("2016-08-14"), xmax=as.Date("2016-12-31"), ymin=-Inf, ymax=Inf, alpha=.2, fill='lightgray') +
-	scale_x_date(date_labels = "%B") + labs(color = "NEON site") + 	
-	geom_point(aes(y = as.numeric(truth), color = siteID), alpha = .3,
-						 position=position_jitter(height=0, width=.5))
+cat("Saved: data/figures/fig_legacy_pheno.png\n")

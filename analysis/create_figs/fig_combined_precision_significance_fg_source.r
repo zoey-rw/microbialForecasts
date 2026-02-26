@@ -1,0 +1,356 @@
+# Combined figure: Precision parameter (A), Proportion significant predictors (B),
+# Forecast error by functional group source (C).
+# Source scripts: compare_core_sd_rho.r, fig5_eff_size.r, fig_compareFunctionalCategories.r
+
+source("source.R")
+library(ggallin)
+library(rstatix)
+library(ggpubr)
+library(ggh4x)
+library(ggrepel)
+library(patchwork)
+library(data.table)
+
+# ── Shared constants (Okabe-Ito, consistent with fig2/fig3) ──────────────────
+BASE_SIZE <- 12
+FUNC_COLOR <- "#0072B2"   # blue
+TAX_COLOR  <- "#E69F00"   # orange
+BACT_COLOR <- "#009E73"   # bluish green
+FUNGI_COLOR <- "#CC79A7"  # reddish purple
+
+base_theme <- theme_bw(base_size = BASE_SIZE) +
+  theme(
+    strip.background = element_rect(fill = "grey92", color = NA),
+    strip.text       = element_text(face = "bold", size = BASE_SIZE),
+    axis.title       = element_text(size = BASE_SIZE),
+    panel.grid.minor = element_blank()
+  )
+
+# =============================================================================
+# Panel A: Precision parameter estimates
+# =============================================================================
+rho_core_in <- readRDS(here("data", "summary/rho_core_sd_effects.rds")) %>%
+  filter(model_name != "all_covariates") %>%
+  select(-any_of("pretty_name")) %>%
+  mutate(model_id = gsub("_beta_regression$", "", model_id))
+
+driver_uncertainty_pattern <- "20130601_20180101_with_legacy_covariate"
+if (nrow(rho_core_in) > 0 && sum(grepl(driver_uncertainty_pattern, rho_core_in$model_id)) < nrow(rho_core_in)) {
+  rho_core_in <- rho_core_in %>% filter(grepl(driver_uncertainty_pattern, model_id))
+}
+
+in_list <- readRDS(here("data/summary/fcast_horizon_input.rds"))
+fcast_horizon_null_site <- in_list[[3]]
+if ("model_id" %in% colnames(fcast_horizon_null_site)) {
+  fcast_horizon_null_site$model_id <- gsub("_beta_regression$", "", fcast_horizon_null_site$model_id)
+}
+abundance_by_model <- fcast_horizon_null_site %>%
+  group_by(model_id) %>%
+  summarise(abundance = mean(abundance, na.rm = TRUE), .groups = "drop")
+rho_core_in <- merge(rho_core_in, abundance_by_model, by = "model_id", all.x = TRUE)
+
+precision_data <- rho_core_in %>%
+  filter(rowname == "precision") %>%
+  mutate(adj_sd = ifelse(is.na(abundance) | abundance == 0, Mean, Mean / abundance))
+
+precision_plot_data <- precision_data %>%
+  filter(model_name == "env_cycl") %>%
+  mutate(fcast_type = recode(fcast_type, "functional" = "Functional", "taxon" = "Taxonomic"))
+
+precision_stats <- data.frame()
+if (nrow(precision_plot_data) >= 4) {
+  group_counts_precision <- precision_plot_data %>%
+    group_by(fcast_type) %>%
+    summarise(n = n(), .groups = "drop")
+  if (all(group_counts_precision$n >= 2)) {
+    precision_stats <- precision_plot_data %>%
+      t_test(adj_sd ~ fcast_type) %>%
+      add_significance() %>%
+      add_xy_position(x = "fcast_type", dodge = 0.8)
+  }
+}
+
+# Cap extreme outliers at 99th percentile for cleaner display
+cap_val <- quantile(precision_plot_data$adj_sd, 0.99, na.rm = TRUE)
+precision_plot_data <- precision_plot_data %>%
+  mutate(adj_sd_plot = pmin(adj_sd, cap_val))
+
+pA <- ggplot(precision_plot_data, aes(x = fcast_type, y = adj_sd_plot, fill = fcast_type)) +
+  geom_violin(alpha = 0.45, trim = FALSE, draw_quantiles = 0.5, show.legend = FALSE) +
+  geom_point(shape = 21, fill = "white", size = 2,
+             position = position_jitter(width = 0.1, height = 0),
+             alpha = 0.35, show.legend = FALSE) +
+  scale_y_log10(breaks = c(10, 100, 1000, 10000, 100000),
+                labels = scales::label_number(scale_cut = scales::cut_short_scale()),
+                limits = c(10, 2e6)) +
+  scale_fill_manual(values = c("Functional" = FUNC_COLOR, "Taxonomic" = TAX_COLOR)) +
+  labs(x = NULL, y = "Core variability") +
+  base_theme +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
+
+if (nrow(precision_stats) > 0) {
+  bracket_y <- 500000
+  pA <- pA +
+    annotate("segment", x = 1, xend = 2, y = bracket_y, yend = bracket_y, linewidth = 0.4) +
+    annotate("segment", x = 1, xend = 1, y = bracket_y, yend = bracket_y * 0.7, linewidth = 0.4) +
+    annotate("segment", x = 2, xend = 2, y = bracket_y, yend = bracket_y * 0.7, linewidth = 0.4) +
+    annotate("text", x = 1.5, y = bracket_y * 1.5, label = precision_stats$p.signif,
+             size = 4.5, hjust = 0.5)
+}
+
+# =============================================================================
+# Panel B: Proportion of significant predictors (bacteria, env_cycl)
+# =============================================================================
+sum_all <- readRDS(here("data/summary/predictor_effects.rds"))
+seasonal_amplitude_in <- readRDS(here("data/summary/seasonal_amplitude.rds"))
+cycl_only_vals_scores <- seasonal_amplitude_in[[6]] %>%
+  filter(model_name == "cycl_only") %>%
+  mutate(cycl_amplitude = amplitude) %>%
+  select(-any_of(c("sin", "cos", "max", "amplitude_orig"))) %>%
+  pivot_longer(cols = cycl_amplitude, values_to = "effSize", names_to = "beta")
+env_cycl_vals_scores <- seasonal_amplitude_in[[6]] %>%
+  filter(model_name == "env_cycl") %>%
+  mutate(residual_amplitude = amplitude) %>%
+  select(-any_of(c("sin", "cos", "max", "amplitude_orig"))) %>%
+  pivot_longer(cols = residual_amplitude, values_to = "effSize", names_to = "beta")
+
+df_cal_fg_tax <- sum_all %>%
+  filter(time_period == "20130601_20180101") %>%
+  filter(!beta %in% c("sin", "cos"))
+df_cal_fg_tax <- rbindlist(list(df_cal_fg_tax, env_cycl_vals_scores, cycl_only_vals_scores), fill = TRUE)
+df_cal_fg_tax <- df_cal_fg_tax %>% filter(time_period != "2015-11_2018-01")
+df_cal_fg_tax$fcast_type <- recode(df_cal_fg_tax$fcast_type,
+  "functional" = "Functional", "taxon" = "Taxonomic",
+  "Functional" = "Functional", "Taxonomic" = "Taxonomic"
+)
+df_cal_fg_tax$beta_pretty <- recode(df_cal_fg_tax$beta,
+  "residual_amplitude" = "Seasonality", "cycl_amplitude" = "Seasonality",
+  "pC" = "% Carbon", "LAI" = "Leaf area\nindex",
+  "Ectomycorrhizal\ntrees" = "Ecto-mycorr.\ntrees"
+)
+df_cal_fg_tax$beta_pretty <- factor(df_cal_fg_tax$beta_pretty,
+  levels = c("Seasonality", "Ecto-mycorr.\ntrees", "Leaf area\nindex",
+             "% Carbon", "pH", "Temperature", "Moisture")
+)
+
+df_cal_fg_tax_fixed <- df_cal_fg_tax %>%
+  mutate(significant = case_when(
+    is.na(significant) & beta %in% c("residual_amplitude", "cycl_amplitude") ~
+      as.numeric(significant_sin == 1 | significant_cos == 1),
+    TRUE ~ significant
+  ))
+
+df_cal_fg_tax_sig <- df_cal_fg_tax_fixed %>%
+  filter(pretty_group == "Bacteria") %>%
+  filter(model_name == "env_cycl") %>%
+  distinct(fcast_type, model_id, pretty_group, beta_pretty, significant) %>%
+  mutate(fcast_type = factor(fcast_type, levels = c("Functional", "Taxonomic")))
+
+sig_summary <- df_cal_fg_tax_sig %>%
+  group_by(fcast_type, beta_pretty) %>%
+  summarise(
+    total = n(),
+    significant = sum(significant, na.rm = TRUE),
+    sig_rate = significant / total,
+    .groups = "drop"
+  )
+
+sig_test_results <- df_cal_fg_tax_sig %>%
+  group_by(beta_pretty) %>%
+  summarise(
+    functional_sig = sum(significant[fcast_type == "Functional"]),
+    functional_total = sum(fcast_type == "Functional"),
+    taxonomic_sig = sum(significant[fcast_type == "Taxonomic"]),
+    taxonomic_total = sum(fcast_type == "Taxonomic"),
+    .groups = "drop"
+  ) %>%
+  filter(functional_total >= 2 & taxonomic_total >= 2) %>%
+  rowwise() %>%
+  mutate(
+    p_value = tryCatch(
+      prop.test(c(functional_sig, taxonomic_sig), c(functional_total, taxonomic_total))$p.value,
+      error = function(e) NA_real_
+    ),
+    sig_label = case_when(
+      is.na(p_value) ~ "",
+      p_value < 0.001 ~ "***",
+      p_value < 0.01 ~ "**",
+      p_value < 0.05 ~ "*",
+      TRUE ~ ""
+    )
+  ) %>%
+  ungroup()
+
+# Grouped bar chart (no coord_flip, no facets) — predictors on x, grouped by forecast type
+pB <- ggplot(sig_summary, aes(x = beta_pretty, y = sig_rate, fill = fcast_type)) +
+  geom_col(alpha = 0.7, position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(aes(label = paste0(significant, "/", total), group = fcast_type),
+            position = position_dodge(width = 0.8), vjust = -0.4, size = 2.8) +
+  geom_text(data = sig_test_results %>% filter(sig_label != ""),
+            aes(x = beta_pretty, y = 1.05, label = sig_label),
+            size = 4, color = "black", inherit.aes = FALSE) +
+  scale_fill_manual(values = c("Functional" = FUNC_COLOR, "Taxonomic" = TAX_COLOR),
+                    name = "Forecast type") +
+  scale_y_continuous(limits = c(0, 1.15), breaks = seq(0, 1, 0.25),
+                     labels = c("0", "0.25", "0.5", "0.75", "1")) +
+  labs(x = NULL, y = "Proportion significant") +
+  base_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1, size = BASE_SIZE - 1),
+        legend.position = "bottom",
+        legend.key.size = unit(0.4, "cm"))
+
+# =============================================================================
+# Panel C: Forecast error by functional group source
+# =============================================================================
+scores_list <- readRDS(here("data", "summary/scoring_metrics_plsr2.rds"))
+
+functional_taxa <- c(
+  "cellulose_complex", "acetogen_anaerobic", "assim_nitrate_reduction", "assim_nitrite_reduction",
+  "benomyl_antibiotic", "cellobiose_complex", "chitin_complex", "chitinolytic", "copiotroph",
+  "dissim_nitrate_reduction", "dissim_nitrite_reduction", "erythromycin_antibiotic",
+  "gentamycin_antibiotic", "glucose_simple", "glycerol_simple", "heat_stress", "herbicide_stress",
+  "lignolytic", "n_fixation", "oligotroph", "animal_pathogen", "lichenized",
+  "streptomycin_antibiotic", "sucrose_complex", "talaromyces"
+)
+
+# Determine the taxon column name
+taxon_col <- intersect(c("taxon", "rank_name", "species"),
+                       colnames(scores_list$scoring_metrics_long))[1]
+
+# Filter directly — no merge needed (pretty_group already in scoring_metrics_long)
+fg_source_data <- scores_list$scoring_metrics_long %>%
+  filter(.data[[taxon_col]] %in% functional_taxa,
+         metric == "RMSE.norm",
+         site_prediction == "New time (observed site)") %>%
+  mutate(score = pmax(score, 0)) %>%
+  distinct()
+
+fg_source_data$fg_source <- assign_fg_sources(fg_source_data[[taxon_col]])
+fg_source_data <- fg_source_data %>% filter(!is.na(fg_source))
+
+# Fungi functional groups come from FUNGuild, not literature review
+fg_source_data$fg_source <- ifelse(
+  fg_source_data$pretty_group == "Fungi",
+  "Scientific consensus (FUNGuild)",
+  fg_source_data$fg_source
+)
+
+pretty_names <- c(
+  "assim_nitrite_reduction" = "Assim. nitrite red.",
+  "dissim_nitrite_reduction" = "Dissim. nitrite red.",
+  "assim_nitrate_reduction" = "Assim. nitrate red.",
+  "n_fixation" = "N fixers",
+  "dissim_nitrate_reduction" = "Dissim. nitrate red.",
+  "chitinolytic" = "Chitin degraders",
+  "lignolytic" = "Lignin degraders",
+  "copiotroph" = "Copiotrophs",
+  "oligotroph" = "Oligotrophs",
+  "benomyl_antibiotic" = "Benomyl-res.",
+  "glucose_simple" = "Glucose-enr.",
+  "streptomycin_antibiotic" = "Streptomycin-res.",
+  "sucrose_complex" = "Sucrose-enr.",
+  "acetogen_anaerobic" = "Acetogen anaerobic",
+  "erythromycin_antibiotic" = "Erythromycin-res.",
+  "gentamycin_antibiotic" = "Gentamycin-res.",
+  "glycerol_simple" = "Glycerol-enr.",
+  "cellobiose_complex" = "Cellobiose-enr.",
+  "cellulose_complex" = "Cellulose-enr.",
+  "chitin_complex" = "Chitin-enr.",
+  "herbicide_stress" = "Herbicide stress-tol.",
+  "heat_stress" = "Heat stress-tol.",
+  "lichenized" = "Lichenized fungi",
+  "animal_pathogen" = "Animal pathogens"
+)
+fg_source_data$pretty_fg <- recode(fg_source_data[[taxon_col]], !!!pretty_names)
+
+# Shorten source labels for x-axis
+fg_source_data$fg_source <- recode(fg_source_data$fg_source,
+  "Experimental enrichment" = "Experimental\nenrichment",
+  "Literature review" = "Literature\nreview",
+  "Literature review + genomic pathway" = "Lit. review +\ngenomic pathway",
+  "Scientific consensus (FUNGuild)" = "Scientific consensus\n(FUNGuild)"
+)
+
+# Tukey test on fg_source
+stat_pvalue_fg_source <- fg_source_data %>%
+  rstatix::tukey_hsd(score ~ fg_source)
+
+# One label per unique functional group (deduplicate across model_names)
+fg_label_data <- fg_source_data %>%
+  group_by(pretty_fg, fg_source, pretty_group) %>%
+  summarise(score = median(as.numeric(score), na.rm = TRUE), .groups = "drop") %>%
+  distinct(pretty_fg, .keep_all = TRUE)
+
+# Identify significant Tukey comparisons
+sig_tukey <- stat_pvalue_fg_source %>% filter(p.adj < 0.05)
+
+# Build manual bracket data for log-scale compatibility
+# Map group names to x-positions
+fg_levels <- levels(factor(fg_source_data$fg_source))
+x_map <- setNames(seq_along(fg_levels), fg_levels)
+max_score <- max(fg_source_data$score, na.rm = TRUE)
+
+bracket_annotations <- list()
+if (nrow(sig_tukey) > 0) {
+  # Only show the most informative comparisons (avoid clutter from 5 brackets)
+  # Keep: Experimental vs FUNGuild (biggest contrast), and each bacterial source vs FUNGuild
+  sig_tukey <- sig_tukey %>%
+    filter(grepl("Scientific consensus", group1) | grepl("Scientific consensus", group2))
+
+  bracket_y_start <- max_score * 1.8
+  step_mult <- 1.5  # multiplicative step on log scale
+
+  for (i in seq_len(nrow(sig_tukey))) {
+    g1 <- sig_tukey$group1[i]
+    g2 <- sig_tukey$group2[i]
+    x1 <- x_map[g1]
+    x2 <- x_map[g2]
+    y_bar <- bracket_y_start * step_mult^(i - 1)
+    y_tick <- y_bar * 0.85
+    lab <- sig_tukey$p.adj.signif[i]
+
+    bracket_annotations <- c(bracket_annotations, list(
+      annotate("segment", x = x1, xend = x2, y = y_bar, yend = y_bar, linewidth = 0.35),
+      annotate("segment", x = x1, xend = x1, y = y_bar, yend = y_tick, linewidth = 0.35),
+      annotate("segment", x = x2, xend = x2, y = y_bar, yend = y_tick, linewidth = 0.35),
+      annotate("text", x = (x1 + x2) / 2, y = y_bar * 1.1, label = lab,
+               size = 3.5, hjust = 0.5, vjust = 0)
+    ))
+  }
+  y_ceiling <- bracket_y_start * step_mult^nrow(sig_tukey) * 1.3
+} else {
+  y_ceiling <- max_score * 3
+}
+
+pC <- ggplot(fg_source_data, aes(x = fg_source, y = as.numeric(score),
+                                  color = pretty_group)) +
+  geom_point(size = 2.5, alpha = 0.5,
+             position = position_jitter(width = 0.15, height = 0, seed = 42)) +
+  geom_text_repel(data = fg_label_data,
+                  aes(label = pretty_fg),
+                  size = 2.5, max.overlaps = 25,
+                  box.padding = 0.35, point.padding = 0.2, min.segment.length = 0.2,
+                  show.legend = FALSE, seed = 42) +
+  scale_color_manual(values = c("Bacteria" = BACT_COLOR, "Fungi" = FUNGI_COLOR),
+                     name = "Kingdom") +
+  scale_y_log10(limits = c(min(fg_source_data$score, na.rm = TRUE) * 0.8, y_ceiling)) +
+  labs(x = NULL, y = "Forecast error (nRMSE, log scale)") +
+  bracket_annotations +
+  base_theme +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5, size = BASE_SIZE - 1),
+        legend.position = "bottom",
+        legend.key.size = unit(0.4, "cm"))
+
+# =============================================================================
+# Assemble: 2-row layout — [A | B] over [C]
+# =============================================================================
+top_row <- pA + pB + plot_layout(widths = c(1, 2))
+combined <- top_row / pC +
+  plot_layout(heights = c(1, 1)) +
+  plot_annotation(tag_levels = "A")
+
+ggsave(here("figures", "combined_precision_significance_fg_source.png"), combined,
+       width = 13, height = 9, dpi = 300)
+
+cat("Saved: figures/combined_precision_significance_fg_source.png\n")
+cat("Saved: figures/combined_precision_significance_fg_source.pdf\n")
