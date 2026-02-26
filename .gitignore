@@ -101,7 +101,10 @@ data/cache/
 *.xlsx
 *.xls
 analysis/old/
-archive/
+archive*/
+deprecated*/
+**/archive*/
+**/deprecated*/
 # Exception: keep example/reference data files
 !data/reference/
 !data/example/
