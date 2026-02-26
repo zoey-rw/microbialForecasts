@@ -1,0 +1,310 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{natbib}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstset{
+  language=R,
+  basicstyle=\small\ttfamily,
+  keywordstyle=\color{blue!70!black},
+  commentstyle=\color{green!50!black},
+  stringstyle=\color{red!60!black},
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=5pt,
+  frame=single,
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=4,
+  showstringspaces=false,
+  xleftmargin=2em,
+  framexleftmargin=1.5em
+}
+
+\title{Appendix S3: Nimble Statistical Modeling Code}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+The Nimble code below (embedded in R) represents a dynamic linear model of a single group, with environmental covariates and seasonal predictors included. Nimble code for the two simpler models is hosted at \url{https://github.com/zoey-rw/microbialForecasts}.
+
+Nimble is a Bayesian statistical language and software with benefits for ecological modeling. It creates custom statistical distributions that represent common ecological data formats, such as counts, zero-inflation, and correlated data. For iterative forecasting in particular, the availability of cutting-edge data assimilation algorithms (e.g.\ sequential Monte Carlo filters) enables states to efficiently be updated with new data.
+
+All four models share a common structure: a hierarchical state-space framework with an AR(1) temporal process, site-level random effects, seasonal harmonic terms, and environmental covariates. They differ in the response distribution and the link function connecting the latent process to the observations.
+
+\paragraph{Notation.}
+Let $y_{i}$ denote the observed relative abundance for soil core $i$, associated with plot $p[i]$ at time $t[i]$.
+Sites are indexed by $k$; plots nested within sites by $p$.
+Covariates: $\sin_t, \cos_t$ (seasonal harmonics of month), $\mathrm{temp}_{k,t}$, $\mathrm{mois}_{k,t}$ (site-level temperature and moisture), $\mathrm{pH}_{p,t}$, $\mathrm{pC}_{p,t}$ (plot-level soil pH and percent carbon), $\mathrm{relEM}_{p,t}$ (relative ectomycorrhizal abundance), $\mathrm{LAI}_{k,t}$ (leaf area index), and $\mathrm{legacy}_{p,t}$ (legacy covariate).
+
+
+%% ============================================================
+\section{Data (observation) model}
+%% ============================================================
+
+In constructing the statistical model, we evaluated the following distributions for the data model, representing the microbial relative abundances observed in multiple soil samples taken from the same plot (about 20\,m$^2$). To increase computational efficiency, we leveraged the advantage of conjugate Gibbs sampling whenever possible: parameterizations of variance terms (e.g.\ distributions such as gamma, inverse gamma, normal truncated).
+
+\subsection{Beta regression (complementary log-log link)}
+
+The primary model uses a Beta observation distribution on relative abundances $y_i \in (0,1)$, with a complementary log-log link connecting the latent process to the mean:
+\begin{equation}
+y_i \sim \mathrm{Beta}\!\bigl(\mu_{p[i],t[i]}\,\phi,\;(1-\mu_{p[i],t[i]})\,\phi\bigr)
+\end{equation}
+\begin{equation}
+\mu_{p,t} = 1 - \exp\!\bigl(-\exp(\eta_{p,t})\bigr)
+\end{equation}
+
+\subsection{Dirichlet distribution}
+
+The Dirichlet distribution is a multivariate generalization of the beta distribution, allowing multiple fractional abundances to be modeled at once. This accounts for covariance among microbial taxa arising simply from the ``sum-to-one'' constraint. However, the number of model-estimated parameters increases linearly with the number of taxa included, and model fitting is much less efficient (evaluated using Effective Sample Size (ESS) / computation time, from the \texttt{compareMCMCs} R package \citep{DeValpine2022}). When low-abundance taxa are included, model-fitting occurred on the scale of weeks or months, rather than hours or days. Additionally, the Dirichlet distribution does not account for correlation between increased sequencing depth and precision, which can lead to heteroskedastic observation error. We found that predicted coefficients were qualitatively similar between the Dirichlet and Beta regression approaches.
+
+\begin{equation}
+\mathbf{y}_i \sim \mathrm{Dirichlet}\!\bigl(\alpha_{p[i],1,t[i]},\;\dots,\;\alpha_{p[i],S,t[i]}\bigr)
+\end{equation}
+
+\subsection{Normal distribution with CLR transformation}
+
+The centered log-ratio (CLR) transformation is a common choice for microbial relative abundance data because it reduces the impact of the sum-to-one constraint by scaling all abundances against the geometric mean of a ``reference'' taxon \citep{Quinn2019}. Because transformed values enter an unbounded space $(-\infty, \infty)$, the Normal distribution can be used for modeling observations. However, this approach can make forecasts harder to interpret: forecast users may have to transform values back to $(0,1)$ for interpretability, or apply the CLR transformation to all subsequent microbial samples to compare observations with forecasts. We found that models fit to CLR-transformed data produced similar parameter estimates to models fit with Beta-distributed relative abundances, but the overall convergence rate was lower, especially for rare (low-abundance) taxa (Fig.~\ref{fig:clr_comparison}).
+
+\begin{equation}
+y_i \sim \mathcal{N}\!\bigl(\mu_{p[i],t[i]},\; \phi^{-1}\bigr)
+\end{equation}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{../data/figures/fig_compare_CLR_betareg.png}
+\caption{Comparison of models fit to microbial data transformed via centered log-ratio (CLR) or modeled as beta-distributed relative abundances. Left set of figures shows correlation between parameter estimates from the two approaches, calculated from the black points, which represent models that converged with both approaches; gray points are models that did not converge with one of the approaches. Right panel shows the percent of models converged as a function of the mean relative abundance of a group, for all abundance levels with more than one group representative. Colors indicate model approach and point size indicates the sample size of models at each abundance level.}
+\label{fig:clr_comparison}
+\end{figure}
+
+
+\subsection{Truncated normal}
+
+A truncated Normal observation model constrains observations to $(0,1)$ while allowing a Normal-like error structure:
+\begin{equation}
+y_i \sim \mathcal{N}\!\bigl(\mu_{p[i],t[i]},\; \sigma_{\mathrm{obs}}^2\bigr) \cdot \mathbf{1}_{(0,1)}(y_i)
+\end{equation}
+
+
+%% ============================================================
+\section{Link function}
+%% ============================================================
+
+The logit link is a commonly used link function, and improved model convergence by reducing proposed MCMC values outside the $(0,1)$ interval. We also evaluated models with no link function, or with a log-link, which are both statistically valid, but led to much longer convergence times. The complementary log-log link was ultimately selected for the primary (Beta regression) model.
+
+
+%% ============================================================
+\section{Process model}
+%% ============================================================
+
+The latent linear predictor $\eta_{p,t}$ follows an AR(1) process:
+\begin{align}
+\eta_{p, t_0} &\sim \mathcal{N}\!\bigl(\mathbf{x}_{p,t_0}^{\top}\boldsymbol{\theta},\; \sigma_{\mathrm{init}}^{-2}\bigr) \\[4pt]
+\eta_{p,t} &\sim \mathcal{N}\!\bigl(\rho\,\eta_{p,t-1} + \mathbf{x}_{p,t}^{\top}\boldsymbol{\theta},\; \sigma_{\mathrm{proc}}^{-2}\bigr), \quad t > t_0
+\end{align}
+where the linear predictor is:
+\begin{multline}
+\mathbf{x}_{p,t}^{\top}\boldsymbol{\theta} = \alpha_0 + \gamma_{k[p]} + \beta_1 \sin_t + \beta_2 \cos_t + \beta_3 \widetilde{\mathrm{temp}}_{k,t} + \beta_4 \widetilde{\mathrm{mois}}_{k,t} \\
++ \beta_5 \widetilde{\mathrm{pH}}_{p,t} + \beta_6 \widetilde{\mathrm{pC}}_{p,t} + \beta_7 \mathrm{relEM}_{p,t} + \beta_8 \mathrm{LAI}_{k,t} + \delta\,\mathrm{legacy}_{p,t}
+\end{multline}
+
+\subsection*{Driver uncertainty sub-model}
+
+Error around environmental predictor values represents a combination of multiple error sources, which were modeled separately to reduce computational effort. This includes instrument error, reported by some of the data sources, and uncertainty around the specific sampling date within a month (represented by the standard deviation of the entire month's values).
+
+Temporal drivers are modeled with measurement error:
+\begin{align}
+\widetilde{\mathrm{temp}}_{k,t} &\sim \mathcal{N}\!\bigl(\mathrm{temp}_{k,t},\; \sigma^{\mathrm{temp}}_{k,t}\bigr) \\
+\widetilde{\mathrm{mois}}_{k,t} &\sim \mathcal{N}\!\bigl(\mathrm{mois}_{k,t},\; \sigma^{\mathrm{mois}}_{k,t}\bigr)
+\end{align}
+Spatial drivers (time-constant) are modeled similarly:
+\begin{align}
+\widetilde{\mathrm{pH}}_{p} &\sim \mathcal{N}\!\bigl(\mathrm{pH}_{p,t_0},\; \sigma^{\mathrm{pH}}_{p,t_0}\bigr), &\quad \widetilde{\mathrm{pH}}_{p,t} &\equiv \widetilde{\mathrm{pH}}_p \;\;\forall\, t \\
+\widetilde{\mathrm{pC}}_{p} &\sim \mathcal{N}\!\bigl(\mathrm{pC}_{p,t_0},\; \sigma^{\mathrm{pC}}_{p,t_0}\bigr), &\quad \widetilde{\mathrm{pC}}_{p,t} &\equiv \widetilde{\mathrm{pC}}_p \;\;\forall\, t
+\end{align}
+
+
+%% ============================================================
+\section{Bayesian prior considerations}
+%% ============================================================
+
+Priors for process error ($\sigma$) and core-level variation (\texttt{core\_sd}) were represented by an inverse gamma distribution. Priors for site effect variation (\texttt{sig}) were represented by a more lenient inverse gamma distribution.
+
+Priors for coefficients associated with environmental predictors ($\beta_{1:8}$) were given relatively flat priors with a mean of zero and a precision of 0.0001, corresponding to a standard deviation of 100. These priors could be improved with domain-specific knowledge from experimental or field manipulation, e.g.\ heat-loving soil extremophiles may be assigned a strong positive prior distribution, representing scientific evidence for an effect. However, in this analysis, uninformative priors were used for all environmental predictors to facilitate comparisons between model structures.
+
+\subsection*{Autoregressive parameter ($\rho$)}
+
+The first-order autoregressive parameter ($\rho$) was specified with a weakly informative Beta prior, $\rho \sim \mathrm{Beta}(1, 1)$, which restricts the parameter space to the interval $(0, 1)$. This constraint was chosen to enforce two biologically realistic assumptions for these microbial communities over long time horizons. First, by restricting $|\rho| < 1$, we enforce weak stationarity, assuming the dynamics are fundamentally non-explosive (i.e., populations do not grow infinitely without bound). Second, by restricting $\rho > 0$, we test the assumption of positive temporal persistence, where previous abundances pull future abundances in the same direction.
+
+A concern with strictly bounded priors is that they might artificially truncate the posterior distribution if the true parameter value lies outside the bounds (e.g., if the true dynamics were explosive/chaotic, $\rho \ge 1$). If this were the case, the posterior distribution would exhibit heavy ``boundary piling'' against the 1.0 upper limit. To verify that our bounded prior did not artificially suppress evidence of chaotic dynamics, we calculated the 95th percentile of the posterior draws for $\rho$ across our production model fits. We observed no significant boundary piling; the posterior mass for $\rho$ naturally settled below the 1.0 boundary. This indicates that the data supports stable dynamics, independent of the prior's upper bound constraint.
+
+
+%% ============================================================
+\section{Summary of prior distributions}
+%% ============================================================
+
+\begin{align}
+\phi &\sim \mathrm{Gamma}(2,\, 0.1) & &\text{(precision; mean 20, var 200)} \notag\\
+\rho &\sim \mathrm{Beta}(1,\, 1) & &\text{(equivalent to Uniform(0,1))} \notag\\
+\alpha_0 &\sim \mathcal{N}(0,\, 10^2) \notag\\
+\delta &\sim \mathcal{N}(0,\, 10^2) & &\text{(legacy effect)} \notag\\
+\sigma_{\gamma} &\sim \mathrm{Gamma}(2,\, 20) & &\text{(site effect SD)} \notag\\
+\gamma_k &\sim \mathcal{N}(0,\, \sigma_{\gamma}^2) & &k = 1,\dots,K \notag\\
+\beta_b &\sim \mathcal{N}(0,\, 10^2) & &b = 1,\dots,8 \notag\\
+\sigma_{\mathrm{proc}} &\sim \mathrm{Uniform}(0,\, 0.5) \notag\\
+\sigma_{\mathrm{init}} &\sim \mathrm{Uniform}(0,\, 1) \notag
+\end{align}
+
+
+%% ============================================================
+\section{Model comparison across observation distributions}
+%% ============================================================
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}lllll@{}}
+\toprule
+& \textbf{Cloglog Beta} & \textbf{CLR Normal} & \textbf{Trunc.\ Normal} & \textbf{Dirichlet} \\
+\midrule
+Response space & $(0,1)$ & $\mathbb{R}$ & $(0,1)$ & Simplex $\Delta^S$ \\
+Observation dist. & Beta & Normal & Trunc.\ Normal & Dirichlet \\
+Link function & cloglog & identity (CLR) & logit & log \\
+Process layer & AR(1) on $\eta$ & AR(1) on $\eta$ & Beta on $\mu$ & Gamma on $\alpha$ \\
+Multivariate & No & No & No & Yes ($S$ species) \\
+Driver uncertainty & Yes & Yes & No & No \\
+$\rho$ prior & Beta$(1,1)$ & Beta$(1,1)$ & $\mathcal{N}(0,1)$ & Unif$(-0.99, 0.99)$ \\
+$\beta$ prior SD & 10 & 10 & 0.5 & MVN (identity) \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of the four env\_cycl model formulations.}
+\label{tab:comparison}
+\end{table}
+
+
+%% ============================================================
+\section{Example Nimble code}
+%% ============================================================
+
+The code below shows the full env\_cycl model with environmental covariates, seasonal predictors, and optional driver uncertainty.
+
+\begin{lstlisting}
+nimbleMod <- nimble::nimbleCode({
+
+    # Loop through core observations (column 1 of input df "y") ----
+    for (i in 1:N.core) {
+        y[i, 1] ~ T(dnorm(mean = plot_mu[plot_num[i], timepoint[i]],
+                          sd = core_sd), 0, 1)
+    }
+
+    # Plot-level process model ----
+    for (p in 1:N.plot) {
+        for (t in plot_start[p]) {
+            # Plot means for first date
+            logit(Ex[p, t]) ~ dnorm(mean = X_init, sd = .2)
+            plot_mu[p, t] ~ T(dnorm(mean = Ex[p, t],
+                                    sd = sd_init), 0, 1)
+        }
+
+        # Second date onwards
+        for (t in plot_index[p]:N.date) {
+            # Dynamic linear model
+            logit(Ex[p, t]) <- rho * logit(plot_mu[p, t - 1]) +
+                beta[1] * temp_est[plot_site_num[p], t] +
+                beta[2] * mois_est[plot_site_num[p], t] +
+                beta[3] * pH_est[p, plot_start[p]] +
+                beta[4] * pC_est[p, plot_start[p]] +
+                beta[5] * relEM[p, t] +
+                beta[6] * LAI[plot_site_num[p], t] +
+                beta[7] * sin_mo[t] +
+                beta[8] * cos_mo[t] +
+                site_effect[plot_site_num[p]] +
+                intercept
+
+            # Define shape parameters for process error (sigma) model
+            shape1[p, t] <- Ex[p, t] *
+                ((Ex[p, t] * (1-Ex[p, t]))/sigma^2 - 1)
+            shape2[p, t] <- (1 - Ex[p, t]) *
+                ((Ex[p, t] * (1-Ex[p, t]))/sigma^2 - 1)
+
+            # Add process error (sigma)
+            logit(plot_mu[p, t]) ~ dLogitBeta(shape1[p, t],
+                                              shape2[p, t])
+        }
+    }
+
+    # Priors for site effects----
+    for (k in 1:N.site) {
+        site_effect[k] ~ dnorm(0,  sd = sig)
+    }
+
+    core_sd ~ dinvgamma(5, .5)
+    sigma ~ dinvgamma(5, .5)
+    sig ~ dinvgamma(3, 1)
+
+    intercept ~ dnorm(0, sd = 1)
+    rho ~ dnorm(0, sd = 1) # Autocorrelation
+    X_init <- .5 # Initial plot mean - constrained by data
+    sd_init <- .01 # Initial process error
+    beta[1:8] ~ dmnorm(zeros[1:8], oma[1:8, 1:8])
+
+    # Add driver uncertainty if specified ----
+    if (temporalDriverUncertainty) {
+        for (k in 1:N.site) {
+            for (t in site_start[k]:N.date) {
+                mois_est[k, t] ~ dnorm(mois[k, t],
+                                       sd = mois_sd[k, t])
+                temp_est[k, t] ~ dnorm(temp[k, t],
+                                       sd = temp_sd[k, t])
+            }
+        }
+    } else {
+        for (k in 1:N.site) {
+            for (t in site_start[k]:N.date) {
+                mois_est[k, t] <- mois[k, t]
+                temp_est[k, t] <- temp[k, t]
+            }
+        }
+    }
+    if (spatialDriverUncertainty) {
+        for (p in 1:N.plot) {
+            pH_est[p, plot_start[p]] ~ dnorm(
+                pH[p, plot_start[p]],
+                sd = pH_sd[p, plot_start[p]])
+            pC_est[p, plot_start[p]] ~ dnorm(
+                pC[p, plot_start[p]],
+                sd = pC_sd[p, plot_start[p]])
+        }
+    } else {
+        for (p in 1:N.plot) {
+            pH_est[p, plot_start[p]] <- pH[p, plot_start[p]]
+            pC_est[p, plot_start[p]] <- pC[p, plot_start[p]]
+        }
+    }
+
+}) #end NIMBLE model
+\end{lstlisting}
+
+
+\begin{thebibliography}{99}
+
+\bibitem[De~Valpine et~al., 2022]{DeValpine2022}
+De~Valpine, P., Paganin, S., and Turek, D. (2022).
+\newblock {compareMCMCs}: An {R} package for studying {MCMC} efficiency.
+\newblock \textit{Journal of Open Source Software}, 7, 3844.
+
+\bibitem[Quinn et~al., 2019]{Quinn2019}
+Quinn, T.~P., Erb, I., Gloor, G., Notredame, C., Richardson, M.~F., and Crowley, T.~M. (2019).
+\newblock A field guide for the compositional analysis of any-omics data.
+\newblock \textit{GigaScience}, 8, 1--14.
+
+\end{thebibliography}
+
+\end{document}
