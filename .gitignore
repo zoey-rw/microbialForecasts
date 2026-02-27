@@ -3,6 +3,7 @@
 # ====================
 source_local.R
 DESIGN_DOC.md
+CLAUDE.md
 .Rhistory
 .Rdata
 .RData
