@@ -1,262 +1,331 @@
-# Calculate scoring metrics for CLR model forecasts
-# This script calculates CRPS, RMSE, and other performance metrics for CLR models
+# Calculate scoring metrics for CLR hindcasts
+library(here)
+source(here("source.R"))
+source(here("microbialForecast/R/statsFunctions.r"))
+source(here("analysis/model_analysis/robust_add_scoring_metrics.R"))
+library(data.table)
 
-source("../../source_local.R")
+cat("Loading CLR hindcast data...\n")
 
-cat("=== CLR Model Scoring Metrics Calculation ===\n\n")
-
-# Load required packages
-if (!require(scoringRules, quietly = TRUE)) {
-  install.packages("scoringRules")
-}
-library(scoringRules)
-
-# Try to load CLR hindcasts first, then fall back to regular hindcasts if needed
+# Load CLR hindcast data only
 clr_hindcasts_file <- here("data/summary/all_hindcasts_CLR.rds")
 clr_hindcasts_parquet <- here("data/summary/parquet/all_hindcasts_CLR.parquet")
 
 if (file.exists(clr_hindcasts_file)) {
-  cat("Loading CLR hindcasts from RDS...\n")
-  all_hindcasts <- readRDS(clr_hindcasts_file)
-  cat("✅ CLR hindcasts loaded successfully from RDS\n")
+  hindcast_data <- readRDS(clr_hindcasts_file)
+  cat("✅ CLR hindcasts loaded from RDS\n")
 } else if (file.exists(clr_hindcasts_parquet)) {
-  cat("Loading CLR hindcasts from Parquet...\n")
   if (require(arrow, quietly = TRUE)) {
-    all_hindcasts <- arrow::read_parquet(clr_hindcasts_parquet)
-    cat("✅ CLR hindcasts loaded successfully from Parquet\n")
+    hindcast_data <- arrow::read_parquet(clr_hindcasts_parquet)
+    cat("✅ CLR hindcasts loaded from Parquet\n")
   } else {
     stop("Arrow package required for Parquet files")
   }
 } else {
-  cat("CLR hindcasts files not found:\n")
-  cat("  - RDS:", clr_hindcasts_file, "\n")
-  cat("  - Parquet:", clr_hindcasts_parquet, "\n")
-  cat("This script requires CLR hindcasts to be processed first\n")
-  cat("Please run 07_tidyHindcasts_CLR.r before this script\n")
-  stop("CLR hindcasts files not found")
+  stop("CLR hindcast file not found. Please run 07_tidyHindcasts_CLR.r first to generate CLR hindcast data.")
 }
 
-cat("Total rows loaded:", nrow(all_hindcasts), "\n")
-cat("Columns:", paste(colnames(all_hindcasts), collapse=", "), "\n")
+cat(sprintf("Loaded %d rows\n", nrow(hindcast_data)))
 
-# Check if we have the required columns for scoring
-required_cols <- c("plotID", "siteID", "dateID", "dates", "med", "lo", "hi", "model_id", "truth")
-missing_cols <- required_cols[!required_cols %in% colnames(all_hindcasts)]
+# Create subsets
+hindcast_only <- hindcast_data %>% 
+  filter(fcast_period == "hindcast", !is.na(truth), !is.na(mean))
 
-if (length(missing_cols) > 0) {
-  cat("❌ Missing required columns:", paste(missing_cols, collapse=", "), "\n")
-  cat("Available columns:", paste(colnames(all_hindcasts), collapse=", "), "\n")
-  
-  if ("truth" %in% missing_cols) {
-    cat("\nNote: 'truth' column is missing. This means we only have forecasts, not observations.\n")
-    cat("Scoring metrics that require observed values cannot be calculated.\n")
-    cat("Proceeding with forecast-only analysis...\n")
-  }
-}
+calibration_only <- hindcast_data %>% 
+  filter(fcast_period == "calibration", !is.na(truth), !is.na(mean))
 
-# Basic data validation
-cat("\nData Validation:\n")
-cat("Total forecasts:", nrow(all_hindcasts), "\n")
-cat("Unique models:", length(unique(all_hindcasts$model_id)), "\n")
-cat("Unique sites:", length(unique(all_hindcasts$siteID)), "\n")
-cat("Unique plots:", length(unique(all_hindcasts$plotID)), "\n")
-cat("Date range:", min(all_hindcasts$dates, na.rm=TRUE), "to", max(all_hindcasts$dates, na.rm=TRUE), "\n")
-
-# Check for observations (truth values)
-has_observations <- "truth" %in% colnames(all_hindcasts) && 
-                   any(!is.na(all_hindcasts$truth))
-
-if (has_observations) {
-  cat("✅ Observations (truth values) found - can calculate full scoring metrics\n")
-  n_obs <- sum(!is.na(all_hindcasts$truth))
-  cat("Number of observations:", n_obs, "\n")
+# Filter calibration to exclude first dates if plot_start_date exists
+if ("plot_start_date" %in% colnames(calibration_only)) {
+  calibration_only_not_first <- calibration_only %>% 
+    filter(date_num > plot_start_date)
+  cat("Filtered calibration by plot_start_date\n")
 } else {
-  cat("⚠️  No observations found - can only calculate forecast statistics\n")
+  cat("Warning: plot_start_date not found, using all calibration data\n")
+  calibration_only_not_first <- calibration_only
 }
 
-# Calculate basic forecast statistics
-cat("\nCalculating basic forecast statistics...\n")
+cat(sprintf("Hindcast: %d, Calibration: %d, Calibration (not first): %d\n", 
+            nrow(hindcast_only), nrow(calibration_only), nrow(calibration_only_not_first)))
 
-forecast_stats <- all_hindcasts %>%
-  group_by(model_id, model_name, rank.name, taxon, group) %>%
-  summarise(
-    n_forecasts = n(),
-    n_plots = n_distinct(plotID),
-    n_sites = n_distinct(siteID),
-    n_dates = n_distinct(dates),
-    mean_forecast = mean(med, na.rm=TRUE),
-    sd_forecast = sd(med, na.rm=TRUE),
-    mean_uncertainty = mean(hi - lo, na.rm=TRUE),
-    mean_uncertainty_50 = mean(hi_75 - lo_25, na.rm=TRUE),
-    .groups = "drop"
-  )
-
-cat("Forecast statistics calculated for", nrow(forecast_stats), "models\n")
-
-# Calculate scoring metrics if observations are available
-if (has_observations) {
-  cat("\nCalculating scoring metrics...\n")
-  
-  # Filter to forecasts with observations
-  forecasts_with_obs <- all_hindcasts %>%
-    filter(!is.na(truth))
-  
-  cat("Forecasts with observations:", nrow(forecasts_with_obs), "\n")
-  
-  # Calculate CRPS for each forecast
-  cat("Calculating CRPS scores...\n")
-  
-  # For CLR models, we need to handle the fact that forecasts are in log-ratio space
-  # We'll calculate CRPS in the original space if possible, otherwise in log-ratio space
-  
-  # Check if we have the original abundance data to back-transform
-  if ("original_abundance" %in% colnames(forecasts_with_obs)) {
-    cat("Original abundance data found - calculating CRPS in abundance space\n")
-    # CRPS calculation in abundance space
-    forecasts_with_obs$crps <- mapply(
-      function(obs, forecast_samples) {
-        if (is.na(obs) || length(forecast_samples) == 0) return(NA)
-        tryCatch({
-          crps_sample(obs, forecast_samples)
-        }, error = function(e) {
-          cat("Error calculating CRPS:", e$message, "\n")
-          return(NA)
-        })
-      },
-      forecasts_with_obs$truth,
-      forecasts_with_obs$med  # Using median as point forecast for now
-    )
-  } else {
-    cat("No original abundance data - calculating CRPS in log-ratio space\n")
-    # CRPS calculation in log-ratio space
-    forecasts_with_obs$crps <- mapply(
-      function(obs, forecast_samples) {
-        if (is.na(obs) || length(forecast_samples) == 0) return(NA)
-        tryCatch({
-          crps_sample(obs, forecast_samples)
-        }, error = function(e) {
-          cat("Error calculating CRPS:", e$message, "\n")
-          return(NA)
-        })
-      },
-      forecasts_with_obs$truth,
-      forecasts_with_obs$med  # Using median as point forecast for now
-    )
-  }
-  
-  # Calculate RMSE
-  cat("Calculating RMSE...\n")
-  forecasts_with_obs$rmse <- (forecasts_with_obs$truth - forecasts_with_obs$med)^2
-  
-  # Calculate bias
-  cat("Calculating bias...\n")
-  forecasts_with_obs$bias <- forecasts_with_obs$med - forecasts_with_obs$truth
-  
-  # Calculate coverage
-  cat("Calculating coverage...\n")
-  forecasts_with_obs$coverage_95 <- forecasts_with_obs$truth >= forecasts_with_obs$lo & 
-                                   forecasts_with_obs$truth <= forecasts_with_obs$hi
-  
-  if ("lo_25" %in% colnames(forecasts_with_obs) && "hi_75" %in% colnames(forecasts_with_obs)) {
-    forecasts_with_obs$coverage_50 <- forecasts_with_obs$truth >= forecasts_with_obs$lo_25 & 
-                                     forecasts_with_obs$truth <= forecasts_with_obs$hi_75
-  }
-  
-  # Aggregate scoring metrics by model
-  cat("Aggregating scoring metrics...\n")
-  
-  scoring_metrics <- forecasts_with_obs %>%
-    group_by(model_id, model_name, rank.name, taxon, group) %>%
-    summarise(
-      n_obs = n(),
-      mean_crps = mean(crps, na.rm=TRUE),
-      median_crps = median(crps, na.rm=TRUE),
-      sd_crps = sd(crps, na.rm=TRUE),
-      mean_rmse = mean(rmse, na.rm=TRUE),
-      rmse = sqrt(mean(rmse, na.rm=TRUE)),
-      mean_bias = mean(bias, na.rm=TRUE),
-      median_bias = median(bias, na.rm=TRUE),
-      coverage_95 = mean(coverage_95, na.rm=TRUE),
-      coverage_50 = ifelse("coverage_50" %in% colnames(forecasts_with_obs), 
-                           mean(coverage_50, na.rm=TRUE), NA),
-      .groups = "drop"
-    )
-  
-  cat("Scoring metrics calculated for", nrow(scoring_metrics), "models\n")
-  
-  # Save scoring metrics
-  cat("\nSaving CLR scoring metrics...\n")
-  saveRDS(scoring_metrics, here("data/summary/scoring_metrics_CLR.rds"))
-  cat("✅ CLR scoring metrics saved to: scoring_metrics_CLR.rds\n")
-  
-  # Also save as Parquet for memory efficiency
-  if (require(arrow, quietly = TRUE)) {
-    parquet_dir <- here("data/summary/parquet")
-    if (!dir.exists(parquet_dir)) {
-      dir.create(parquet_dir, recursive = TRUE)
+# Calculate scoring metrics for hindcast data (by site_prediction)
+scoring_metrics <- as.data.table(hindcast_only) %>%
+  .[!is.na(site_prediction)] %>%
+  .[, {
+    if (.N == 0) {
+      list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, 
+           CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_,
+           RMSE.iqr = NA_real_, RMSE.norm = NA_real_, 
+           CRPS_truncated = NA_real_, residual_variance = NA_real_,
+           predictive_variance = NA_real_, total_PL = NA_real_)
+    } else {
+      tryCatch({
+        result <- robust_add_scoring_metrics(
+          observed = truth,
+          mean_predicted = mean,
+          median_predicted = med,
+          sd_predicted = sd
+        )
+        as.list(result)
+      }, error = function(e) {
+        cat("Warning in group:", paste(.BY, collapse = ", "), "-", e$message, "\n")
+        list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, 
+             CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_,
+             RMSE.iqr = NA_real_, RMSE.norm = NA_real_,
+             CRPS_truncated = NA_real_, residual_variance = NA_real_,
+             predictive_variance = NA_real_, total_PL = NA_real_)
+      })
     }
-    
-    arrow::write_parquet(scoring_metrics, 
-                         here("data/summary/parquet/scoring_metrics_CLR.parquet"))
-    cat("✅ CLR scoring metrics also saved as Parquet: scoring_metrics_CLR.parquet\n")
-  }
+  }, by = .(model_id, fcast_type, pretty_group, model_name, 
+            pretty_name, rank_name, taxon, site_prediction)] %>%
+  as.data.frame()
+
+# Add mean_crps_sample for skill score analysis
+scoring_metrics <- scoring_metrics %>%
+  mutate(mean_crps_sample = CRPS)
+
+# Calibration metrics (overall)
+calibration_metrics <- as.data.table(calibration_only_not_first) %>%
+  .[, {
+    if (.N == 0) {
+      list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, 
+           CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_,
+           RMSE.iqr = NA_real_, RMSE.norm = NA_real_,
+           CRPS_truncated = NA_real_, residual_variance = NA_real_,
+           predictive_variance = NA_real_, total_PL = NA_real_)
+    } else {
+      tryCatch({
+        result <- robust_add_scoring_metrics(
+          observed = truth,
+          median_predicted = med,
+          mean_predicted = mean,
+          sd_predicted = sd
+        )
+        as.list(result)
+      }, error = function(e) {
+        list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, 
+             CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_,
+             RMSE.iqr = NA_real_, RMSE.norm = NA_real_,
+             CRPS_truncated = NA_real_, residual_variance = NA_real_,
+             predictive_variance = NA_real_, total_PL = NA_real_)
+      })
+    }
+  }, by = .(model_id, fcast_type, pretty_group, model_name, 
+            rank_name, pretty_name, taxon)] %>%
+  as.data.frame()
+
+# Calibration metrics by site
+calibration_metrics_site <- as.data.table(calibration_only_not_first) %>%
+  .[, {
+    if (.N == 0) {
+      list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, 
+           CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_,
+           RMSE.iqr = NA_real_, RMSE.norm = NA_real_,
+           CRPS_truncated = NA_real_, residual_variance = NA_real_,
+           predictive_variance = NA_real_, total_PL = NA_real_)
+    } else {
+      tryCatch({
+        result <- robust_add_scoring_metrics(
+          observed = truth,
+          median_predicted = med,
+          mean_predicted = mean,
+          sd_predicted = sd
+        )
+        as.list(result)
+      }, error = function(e) {
+        list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, 
+             CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_,
+             RMSE.iqr = NA_real_, RMSE.norm = NA_real_,
+             CRPS_truncated = NA_real_, residual_variance = NA_real_,
+             predictive_variance = NA_real_, total_PL = NA_real_)
+      })
+    }
+  }, by = .(model_id, fcast_type, pretty_group, model_name, 
+            rank_name, pretty_name, taxon, siteID)] %>%
+  as.data.frame()
+
+# Hindcast metrics by site
+scoring_metrics_site <- as.data.table(hindcast_only) %>%
+  .[!is.na(site_prediction)] %>%
+  .[, {
+    if (.N <= 1) {
+      list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, 
+           CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_,
+           RMSE.iqr = NA_real_, RMSE.norm = NA_real_,
+           CRPS_truncated = NA_real_, residual_variance = NA_real_,
+           predictive_variance = NA_real_, total_PL = NA_real_)
+    } else {
+      tryCatch({
+        result <- robust_add_scoring_metrics(
+          observed = truth,
+          mean_predicted = mean,
+          median_predicted = med,
+          sd_predicted = sd
+        )
+        as.list(result)
+      }, error = function(e) {
+        list(RMSE = NA_real_, BIAS = NA_real_, MAE = NA_real_, 
+             CRPS = NA_real_, RSQ = NA_real_, RSQ.1 = NA_real_,
+             RMSE.iqr = NA_real_, RMSE.norm = NA_real_,
+             CRPS_truncated = NA_real_, residual_variance = NA_real_,
+             predictive_variance = NA_real_, total_PL = NA_real_)
+      })
+    }
+  }, by = .(model_id, siteID, site_prediction)] %>%
+  as.data.frame()
+
+# Pivot to long format
+scoring_metrics_long <- scoring_metrics %>% pivot_metrics()
+calibration_metrics_long <- calibration_metrics %>% pivot_metrics()
+calibration_metrics_site_long <- calibration_metrics_site %>% 
+  pivot_metrics() %>% 
+  filter(!is.infinite(score), !is.nan(score))
+scoring_metrics_site_long <- scoring_metrics_site %>% 
+  pivot_metrics() %>% 
+  filter(!is.infinite(score), !is.nan(score))
+
+# Calculate coefficient of variation (full granularity)
+truth_vals <- calibration_only %>%
+  filter(model_name == "env_cycl")
+
+# Per-plot CV, then average per site
+cv_tax_per_plot <- truth_vals %>%
+  group_by(pretty_group, rank_name, taxon, siteID, plotID) %>%
+  summarize(per_plot_cv = calc_cv(truth), .groups = "drop")
+
+cv_tax_per_plot_site <- cv_tax_per_plot %>%
+  group_by(pretty_group, rank_name, taxon, siteID) %>%
+  summarize(mean_per_plot_site_cv = mean(per_plot_cv, na.rm = TRUE), .groups = "drop")
+
+cv_tax_per_plot_taxon <- cv_tax_per_plot %>%
+  group_by(pretty_group, rank_name, taxon) %>%
+  summarize(mean_per_plot_cv = mean(per_plot_cv, na.rm = TRUE), .groups = "drop")
+
+# Per-site CV, then average per taxon
+cv_tax_per_site <- truth_vals %>%
+  group_by(pretty_group, rank_name, taxon, siteID) %>%
+  summarize(per_site_cv = calc_cv(truth), .groups = "drop")
+
+cv_tax_per_site_taxon <- cv_tax_per_site %>%
+  group_by(pretty_group, rank_name, taxon) %>%
+  summarize(mean_per_site_cv = mean(per_site_cv, na.rm = TRUE), .groups = "drop")
+
+# Overall CV
+cv_tax_overall <- truth_vals %>%
+  group_by(pretty_group, pretty_name, rank_name, taxon) %>%
+  summarize(overall_cv = calc_cv(truth), .groups = "drop")
+
+# Combine all CV metrics
+cv_tax <- cv_tax_overall %>%
+  left_join(cv_tax_per_site_taxon, by = c("pretty_group", "rank_name", "taxon")) %>%
+  left_join(cv_tax_per_site, by = c("pretty_group", "rank_name", "taxon"))
+
+# Merge CV with scoring metrics
+scoring_metrics_cv <- merge(scoring_metrics_long, cv_tax, all = TRUE)
+scoring_metrics_cv_site <- merge(scoring_metrics_site_long, cv_tax_per_site)
+
+# Pivot CV to long format for scaled analysis
+scoring_metrics_cv_long <- scoring_metrics_cv %>% 
+  pivot_longer(cols = c(overall_cv, per_site_cv, mean_per_site_cv),
+               names_to = "cv_type", values_to = "cv")
+
+# CV scaled by rank
+cv_metric_scaled <- scoring_metrics_cv_long %>%
+  group_by(pretty_group, pretty_name, rank_name, cv_type, metric) %>%
+  mutate(CV_scale = scale(cv)[, 1],
+         metric_scale = scale(score)[, 1]) %>%
+  ungroup()
+
+# Calculate skill scores if possible
+available_types <- unique(scoring_metrics_long$site_prediction)
+cat("Site prediction types:", paste(available_types, collapse = ", "), "\n")
+
+if (length(available_types) > 1 && 
+    "New time (observed site)" %in% available_types) {
   
-  # Summary of scoring metrics
-  cat("\nScoring Metrics Summary:\n")
-  print(scoring_metrics)
+  # CRPS-based skill score
+  skill_score_taxon <- scoring_metrics_long %>%
+    filter(metric == "CRPS_truncated") %>%
+    pivot_wider(
+      id_cols = c("model_id", "fcast_type", "pretty_group", "model_name", 
+                  "pretty_name", "rank_name", "taxon"),
+      values_from = "score", 
+      names_from = "site_prediction"
+    ) %>%
+    mutate(
+      skill_score = if ("New time x site (modeled effect)" %in% colnames(.)) {
+        (1 - (`New time x site (modeled effect)` / `New time (observed site)`))
+      } else NA_real_,
+      skill_score_random = if ("New time x site (random effect)" %in% colnames(.)) {
+        (1 - (`New time x site (random effect)` / `New time (observed site)`))
+      } else NA_real_
+    )
   
+  # RMSE-based skill score
+  skill_score_taxon_RMSE <- scoring_metrics_long %>%
+    filter(metric == "RMSE.norm") %>%
+    pivot_wider(
+      id_cols = c("model_id", "fcast_type", "pretty_group", "model_name", 
+                  "pretty_name", "rank_name", "taxon"),
+      values_from = "score", 
+      names_from = "site_prediction"
+    ) %>%
+    mutate(
+      skill_score = if ("New time x site (modeled effect)" %in% colnames(.)) {
+        (1 - (`New time x site (modeled effect)` / `New time (observed site)`))
+      } else NA_real_,
+      skill_score_random = if ("New time x site (random effect)" %in% colnames(.)) {
+        (1 - (`New time x site (random effect)` / `New time (observed site)`))
+      } else NA_real_
+    )
+  
+  skill_score_rank <- skill_score_taxon %>%
+    group_by(model_id, pretty_group, pretty_name, rank_name) %>%
+    summarize(mean_skill_score = mean(skill_score, na.rm = TRUE), .groups = "drop")
 } else {
-  cat("\n⚠️  No observations available - skipping scoring metric calculation\n")
-  cat("Only forecast statistics were calculated\n")
+  cat("Insufficient site_prediction types for skill score calculation\n")
+  skill_score_taxon <- data.frame()
+  skill_score_taxon_RMSE <- data.frame()
+  skill_score_rank <- data.frame()
 }
 
-# Save forecast statistics
-cat("\nSaving CLR forecast statistics...\n")
-saveRDS(forecast_stats, here("data/summary/forecast_stats_CLR.rds"))
-cat("✅ CLR forecast statistics saved to: forecast_stats_CLR.rds\n")
+# Load convergence lists if available
+unconverged <- if (file.exists(here("data/summary/unconverged_taxa_list.rds"))) {
+  readRDS(here("data/summary/unconverged_taxa_list.rds"))
+} else NULL
 
-# Also save as Parquet for memory efficiency
-if (require(arrow, quietly = TRUE)) {
-  parquet_dir <- here("data/summary/parquet")
-  if (!dir.exists(parquet_dir)) {
-    dir.create(parquet_dir, recursive = TRUE)
-  }
+converged <- if (file.exists(here("data/summary/weak_converged_taxa_list.rds"))) {
+  readRDS(here("data/summary/weak_converged_taxa_list.rds"))
+} else NULL
+
+converged_strict <- if (file.exists(here("data/summary/converged_taxa_list.rds"))) {
+  readRDS(here("data/summary/converged_taxa_list.rds"))
+} else NULL
+
+# Save all outputs
+to_save <- list(
+  cv_metric_scaled = cv_metric_scaled,
+  scoring_metrics_cv = scoring_metrics_cv,
+  scoring_metrics_cv_site = scoring_metrics_cv_site,
+  scoring_metrics_cv_long = scoring_metrics_cv_long,
+  calibration_truth_vals = truth_vals,
   
-  arrow::write_parquet(forecast_stats, 
-                       here("data/summary/parquet/forecast_stats_CLR.parquet"))
-  cat("✅ CLR forecast statistics also saved as Parquet: forecast_stats_CLR.parquet\n")
-}
+  scoring_metrics = scoring_metrics,
+  scoring_metrics_long = scoring_metrics_long,
+  scoring_metrics_site = scoring_metrics_site,
+  scoring_metrics_site_long = scoring_metrics_site_long,
+  
+  calibration_metrics = calibration_metrics,
+  calibration_metrics_long = calibration_metrics_long,
+  calibration_metrics_site = calibration_metrics_site,
+  calibration_metrics_site_long = calibration_metrics_site_long,
+  
+  skill_score_taxon = skill_score_taxon,
+  skill_score_taxon_RMSE = skill_score_taxon_RMSE,
+  skill_score_rank = skill_score_rank,
+  unconverged_list = unconverged,
+  converged_list = converged,
+  converged_strict_list = converged_strict
+)
 
-# Final summary
-cat("\n=== CLR Scoring Metrics Calculation Complete ===\n")
-cat("Forecast statistics calculated for", nrow(forecast_stats), "models\n")
-
-if (has_observations) {
-  cat("Scoring metrics calculated for", nrow(scoring_metrics), "models\n")
-  cat("Observations used:", sum(!is.na(all_hindcasts$truth)), "\n")
-}
-
-cat("\nOutput files created:\n")
-cat("  - forecast_stats_CLR.rds (RDS format)\n")
-if (has_observations) {
-  cat("  - scoring_metrics_CLR.rds (RDS format)\n")
-}
-if (require(arrow, quietly = TRUE)) {
-  cat("  - forecast_stats_CLR.parquet (Parquet format)\n")
-  if (has_observations) {
-    cat("  - scoring_metrics_CLR.parquet (Parquet format)\n")
-  }
-}
-
-cat("\nNext steps:\n")
-cat("1. Use scoring metrics for model comparison and analysis\n")
-cat("2. Create visualizations of forecast performance\n")
-cat("3. Analyze forecast uncertainty and coverage\n")
-
-# Clean up memory
-rm(all_hindcasts)
-if (has_observations) {
-  rm(forecasts_with_obs, scoring_metrics)
-}
-rm(forecast_stats)
-gc()
+saveRDS(to_save, here("data/summary/scoring_metrics_CLR.rds"))
+cat("Saved: scoring_metrics_CLR.rds with", length(to_save), "components\n")

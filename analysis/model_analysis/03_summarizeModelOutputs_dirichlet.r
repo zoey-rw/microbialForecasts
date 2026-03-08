@@ -4,9 +4,9 @@
 source("source.R")
 
 # Find all Dirichlet model output files
-file.list = intersect(list.files(here("data/model_outputs/dirichlet_regression/"),recursive = T,
-                                pattern = "20151101_20180101", full.names = T),
-                     list.files(here("data/model_outputs/dirichlet_regression/"), recursive = T,
+file.list = intersect(list.files(here("data/model_outputs/dirichlet_driver_uncertainty/"), recursive = T,
+                                pattern = "20130601_20180101", full.names = T),
+                     list.files(here("data/model_outputs/dirichlet_driver_uncertainty/"), recursive = T,
                                pattern = "samples", full.names = T))
 
 # Remove any files with only one chain
@@ -34,7 +34,7 @@ file_summaries = foreach(f=file.list, .errorhandling = "pass") %dopar% {
 stopCluster(cl)
 
 # Find all summary files
-summary_file_list = list.files(here("data/model_outputs/dirichlet_regression/"), recursive = T,
+summary_file_list = list.files(here("data/model_outputs/dirichlet_driver_uncertainty/"), recursive = T,
                               pattern = "summary", full.names = T)
 
 # Subset to newest output files
@@ -82,7 +82,7 @@ keep_models_weak <- model_median %>%
   filter(median_gbr_TRUE <= 1.15) %>%
   filter(mean_gbr_TRUE <= 1.5) %>%
   filter(mean_gbr_FALSE <= 2) %>%
-  filter(min_ess_TRUE > 15)
+  filter(min_es_TRUE > 15)
 keep_list_weak <- unique(keep_models_weak$model_id)
 
 rerun <- model_median %>% filter(!model_id %in% keep_list_weak)

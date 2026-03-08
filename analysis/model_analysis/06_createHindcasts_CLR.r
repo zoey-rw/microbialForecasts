@@ -1,58 +1,372 @@
-#### Create forecasts for individual taxonomic groups - CLR VERSION
+# Create hindcasts for CLR microbial forecasts
+# Updated to follow the working version's approach but adapted for CLR models
 
-testing=TRUE
-#### Reading in files ####
-
-source("../../source.R")
-source("../../microbialForecast/R/run_hindcast.r")
-
-# Load data.table for optimization
-if (!require(data.table, quietly = TRUE)) {
-  install.packages("data.table")
-}
+library(dplyr)
+library(here)
+library(foreach)
+library(doParallel)
 library(data.table)
+source(here("source.R"))
+
+cat("=== CREATING CLR HINDCASTS FOR ALL SITES ===\n")
+
+# Load required data files (following working version)
+cat("Loading required data files...\n")
 
 # Read in microbial abundances
 all.ranks <- c(readRDS(here("data/clean/groupAbundances_16S_2023.rds")),
-							 readRDS(here("data/clean/groupAbundances_ITS_2023.rds")))
+               readRDS(here("data/clean/groupAbundances_ITS_2023.rds")))
 
 # Read in CLR model outputs to grab parameter estimates
 calibration_model_summaries <- readRDS(here("data/summary/clr_regression_summaries.rds"))
 
 # Read in predicted site effects for CLR models
-read_in = readRDS(here("data/summary/site_effects_unobserved_CLR.rds"))
-pred_effects <- read_in[[2]]
-pred_effects$fit = pred_effects$Median
-pred_effects$se.fit = pred_effects$se_fit
+clr_site_effects_file <- here("data/summary/site_effects_unobserved_CLR.rds")
+if (file.exists(clr_site_effects_file)) {
+  cat("Using CLR-specific site effects file:", clr_site_effects_file, "\n")
+  read_in <- readRDS(clr_site_effects_file)
+  pred_effects <- read_in[[2]]
+  pred_effects$fit = pred_effects$Median
+  pred_effects$se.fit = pred_effects$se_fit
+} else {
+  cat("CLR-specific site effects not found, using fallback\n")
+  # Fall back to regular site effects if CLR-specific doesn't exist
+  fallback_file <- here("data/summary/site_effects_unobserved.rds")
+  if (file.exists(fallback_file)) {
+    read_in <- readRDS(fallback_file)
+    pred_effects <- read_in[[2]]
+    pred_effects$fit = pred_effects$Median
+    pred_effects$se.fit = pred_effects$se_fit
+  } else {
+    stop("No site effects files found!")
+  }
+}
 
 # Read in predictor data, just to get the list of sites missing pC data
 all_predictors = readRDS(here("data/clean/all_predictor_data.rds"))
 
-# Read in list of taxa that passed convergence for CLR models
-weak_converged_list <- readRDS(here("data/summary/clr_weak_converged_taxa_list.rds"))
-keep_list <- weak_converged_list
+cat("✅ Data files loaded successfully\n")
 
-# Filter for CLR models (those with "CLR_" in the name)
-clr_models <- keep_list[grepl("CLR_", keep_list)]
+# Get available CLR models
+model_outputs_dir <- here("data", "model_outputs", "CLR_regression")
+available_models <- list.dirs(model_outputs_dir, full.names = FALSE, recursive = FALSE)
+cat("Available CLR models:", paste(available_models, collapse = ", "), "\n\n")
 
-# Use only CLR models for this test
-model_id_list <- clr_models
+# Focus on env_cycl model for now (can be expanded to include cycl_only and env_cov)
+target_model <- "env_cycl"
+if (target_model %in% available_models) {
+  cat("Processing CLR model:", target_model, "\n")
+  
+  # Get available taxa for this model from the CLR summaries
+  # Extract env_cycl models from the CLR summaries
+  env_cycl_models <- calibration_model_summaries$plot_est$model_id[grepl(paste0('^', target_model, '_'), calibration_model_summaries$plot_est$model_id)]
+  env_cycl_models <- unique(env_cycl_models)
+  
+  cat("Found", length(env_cycl_models), "CLR env_cycl models in summaries\n")
+  
+  # Extract taxon names from model IDs (e.g., "env_cycl_ascomycota_20130601_20180101_with_legacy_covariate" -> "ascomycota")
+  available_taxa <- sapply(env_cycl_models, function(model_id) {
+    parts <- strsplit(model_id, "_")[[1]]
+    # Find the taxon part (between env_cycl and the date)
+    if (length(parts) >= 3) {
+      # Skip the first two parts (env_cycl) and take everything until the date
+      taxon_parts <- parts[3:(which(grepl("^[0-9]{8}$", parts))[1] - 1)]
+      paste(taxon_parts, collapse = "_")
+    } else {
+      NA
+    }
+  })
+  
+  available_taxa <- available_taxa[!is.na(available_taxa)]
+  available_taxa <- unique(available_taxa)
+  
+  cat("Extracted taxa from CLR summaries:", paste(available_taxa, collapse = ", "), "\n\n")
+  
+  # Check which taxa have samples files
+  samples_dir <- file.path(model_outputs_dir, target_model)
+  available_samples <- list.files(samples_dir, pattern = "samples.*\\.rds$", full.names = FALSE, recursive = TRUE)
+  
+  # Extract taxon names from samples files
+  samples_taxa <- sapply(available_samples, function(filename) {
+    parts <- strsplit(filename, "_")[[1]]
+    if (length(parts) >= 5) {
+      # Format: samples_clr_env_cycl_[taxon]_[date]_with_legacy_covariate.rds
+      # or: samples_env_cycl_[taxon]_[date]_with_legacy_covariate_clr.rds
+      if (parts[2] == "clr") {
+        parts[5]  # samples_clr_env_cycl_[taxon]...
+      } else if (parts[2] == "env" && parts[3] == "cycl") {
+        parts[4]  # samples_env_cycl_[taxon]...
+      } else {
+        NA
+      }
+    } else {
+      NA
+    }
+  })
+  
+  samples_taxa <- samples_taxa[!is.na(samples_taxa)]
+  samples_taxa <- unique(samples_taxa)
+  
+  cat("Taxa with CLR samples files:", paste(samples_taxa, collapse = ", "), "\n\n")
+  
+  # Use taxa that have both summaries and samples
+  working_taxa <- intersect(available_taxa, samples_taxa)
+  cat("Working CLR taxa (have both summaries and samples):", paste(working_taxa, collapse = ", "), "\n\n")
+  
+  # For testing, limit to first 2 taxa
+  working_taxa <- working_taxa[1:2]
+  cat("Testing with first 2 CLR taxa:", paste(working_taxa, collapse = ", "), "\n\n")
+  
+  if (length(working_taxa) == 0) {
+    cat("❌ No working CLR taxa found for", target_model, "\n")
+    quit(status = 1)
+  }
+  
+  # Initialize output list for all taxa
+  all_taxa_outputs <- list()
+  
+  # Process each taxon
+  for (taxon in working_taxa) {
+    cat("Processing CLR taxon:", taxon, "\n")
+    
+    # Find the model ID for this taxon
+    model_id <- env_cycl_models[grepl(paste0("_", taxon, "_"), env_cycl_models)][1]
+    if (is.na(model_id)) {
+      cat("  ❌ No model ID found for taxon:", taxon, "\n")
+      next
+    }
+    
+    cat("  Model ID:", model_id, "\n")
+    
+    # Find the samples file for this taxon
+    # Remove _clr suffix from model_id if present for samples file lookup
+    samples_model_id <- gsub("_clr$", "", model_id)
+    samples_file <- file.path(samples_dir, taxon, paste0("samples_", samples_model_id, "_clr.rds"))
+    
+    if (file.exists(samples_file)) {
+      cat("  ✅ Found samples file:", basename(samples_file), "\n")
+      
+      # Load the samples
+      samples_data <- readRDS(samples_file)
+      
+      # Extract parameter samples and plot summary
+      param_samples <- samples_data$samples[[1]]  # First chain for now
+      plot_summary <- samples_data$plot_summary
+      
+      cat("  Parameter samples dimensions:", dim(param_samples), "\n")
+      cat("  Plot summary dimensions:", dim(plot_summary), "\n")
+      
+      # Get the rank name for this taxon
+      rank.name <- ifelse(grepl("_bac", taxon), "phylum_bac", "phylum_fun")
+      cat("  Rank name:", rank.name, "\n")
+      
+      # CRITICAL FIX: Create model inputs using prepCLRData (following beta regression pattern)
+      cat("  Creating model inputs using prepCLRData\n")
+      
+      # Create keep_vec and prepare data (following beta regression approach)
+      # CRITICAL FIX: For CLR transformation, we need all taxonomic columns, not just the target taxon
+      rank.df <- all.ranks[[rank.name]]
+      # Get all taxonomic columns (columns 7 onwards)
+      taxonomic_cols <- colnames(rank.df)[7:ncol(rank.df)]
+      keep_vec <- c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date", taxonomic_cols)
+      
+      # Prep validation data using full time series 
+      full.ts.model.inputs <- prepCLRData(rank.df = rank.df,
+                                         min.prev = 0,
+                                         min.date = "20130601",
+                                         max.date = "20200101",  # Extend to 2020
+                                         full_timeseries = TRUE,
+                                         keep_vec = keep_vec,
+                                         s = taxon)
+      
+      cat("  Full time series model inputs created\n")
+      cat("  N.date:", full.ts.model.inputs$N.date, "\n")
+      cat("  Total plots:", length(full.ts.model.inputs$plotID), "\n")
+      
+      # Get truth data
+      truth.plot.long <- full.ts.model.inputs$truth.plot.long
+      
+      cat("  Model inputs loaded successfully\n")
+      cat("  Truth data dimensions:", dim(truth.plot.long), "\n")
+      
+      plot_site_key <- truth.plot.long %>%
+        select(siteID, plotID, dateID, date_num, plot_num, site_num) %>%
+        distinct()
+      site_list <- unique(plot_site_key$siteID)
+      
+      # Use new model inputs for full date, site, and plot keys
+      new_plot_site_key <- full.ts.model.inputs$truth.plot.long %>%
+        select(siteID, plotID, dateID, date_num, plot_num, site_num) %>%
+        distinct() %>%
+        filter(!siteID %in% plot_site_key$siteID)
+      new_site_list <- unique(new_plot_site_key$siteID)
+      
+      cat("  Observed sites:", length(site_list), "\n")
+      cat("  Unobserved sites:", length(new_site_list), "\n")
+      
+      # Combine site lists
+      full_site_list <- c(site_list, new_site_list)
+      
+      # Generate hindcasts for each site
+      cat("  Generating CLR hindcasts for", length(full_site_list), "sites...\n")
+      
+      site_output_list <- list()
+      successful_sites <- 0
+      
+      for (siteID in full_site_list) {
+        cat("    Processing site:", siteID, "\n")
+        
+        # Skip sites with missing predictor data
+        if (siteID %in% all_predictors$site_skip) {
+          cat("      ⚠️  Skipping site (missing predictor data)\n")
+          next
+        }
+        
+        # Determine if this is a new site
+        newsite <- siteID %in% new_plot_site_key$siteID
+        plot_key <- if (newsite) new_plot_site_key else plot_site_key
+        plot_key <- plot_key %>% filter(siteID == !!siteID)
+        plot_list <- unique(plot_key$plotID)
+        
+        cat("      Plots in site:", length(plot_list), "\n")
+        
+        plot_output_list <- list()
+        successful_plots <- 0
+        
+        for (plotID in plot_list) {
+          cat("        Processing plot:", plotID, "\n")
+          
+          tryCatch({
+            # Forecast with known or random site effect using CLR forecasting function
+            hindcast.plot <- fcast_clr(
+              plotID = plotID,
+              model.inputs = full.ts.model.inputs,
+              param_samples = param_samples,
+              truth.plot.long = truth.plot.long,
+              plot_summary = plot_summary,
+              Nmc = 100,  # Reduced for testing
+              predict_site_effects = NULL,
+              rank.name = rank.name,
+              model_id = model_id
+            )
+            
+            if (!is.null(hindcast.plot)) {
+              # Add metadata for CLR models
+              hindcast.plot <- hindcast.plot %>% 
+                mutate(
+                  model_name = target_model,
+                  time_period = "20130601_20180101",
+                  species = taxon,
+                  rank_name = rank.name,
+                  predicted_site_effect = FALSE,
+                  newsite = newsite,
+                  model_id = model_id
+                )
+              
+              # Forecast with estimated site effect, if available
+              if (siteID %in% pred_effects$siteID) {
+                pred_effects_filt <- pred_effects %>% filter(model_id == !!model_id)
+                
+                if (nrow(pred_effects_filt) > 0) {
+                  hindcast.plot_pred_site_eff <- fcast_clr(
+                    plotID = plotID,
+                    model.inputs = full.ts.model.inputs,
+                    param_samples = param_samples,
+                    truth.plot.long = truth.plot.long,
+                    plot_summary = plot_summary,
+                    Nmc = 100,  # Reduced for testing
+                    predict_site_effects = pred_effects_filt,
+                    rank.name = rank.name,
+                    model_id = model_id
+                  )
+                  
+                  if (!is.null(hindcast.plot_pred_site_eff)) {
+                    hindcast.plot_pred_site_eff <- hindcast.plot_pred_site_eff %>% 
+                      mutate(
+                        model_name = target_model,
+                        time_period = "20130601_20180101",
+                        species = taxon,
+                        rank_name = rank.name,
+                        predicted_site_effect = TRUE,
+                        newsite = newsite,
+                        model_id = model_id
+                      )
+                    
+                    # Combine both hindcasts
+                    hindcast.plot <- rbindlist(list(hindcast.plot, hindcast.plot_pred_site_eff), fill = TRUE)
+                  }
+                }
+              }
+              
+              plot_output_list[[plotID]] <- hindcast.plot
+              successful_plots <- successful_plots + 1
+              cat("          ✅ Success\n")
+            } else {
+              cat("          ❌ Returned NULL\n")
+            }
+          }, error = function(e) {
+            cat("          ❌ Error:", e$message, "\n")
+          })
+        }
+        
+        if (length(plot_output_list) > 0) {
+          site_output_list[[siteID]] <- rbindlist(plot_output_list, fill = TRUE)
+          successful_sites <- successful_sites + 1
+        }
+      }
+      
+      # Combine all site outputs for this taxon
+      if (length(site_output_list) > 0) {
+        tax_output <- rbindlist(site_output_list, fill = TRUE)
+        
+        # Add to overall results list
+        all_taxa_outputs[[taxon]] <- tax_output
+        
+        cat("  Total CLR hindcast rows:", nrow(tax_output), "\n")
+        cat("  Successful sites:", successful_sites, "\n")
+      } else {
+        cat("  ❌ No successful CLR hindcasts generated for this taxon\n")
+      }
+      
+    } else {
+      cat("  ❌ Missing samples file:", samples_file, "\n")
+    }
+    
+    cat("\n")
+  }
+  
+} else {
+  cat("Target CLR model", target_model, "not found in available models\n")
+}
 
-min.date = "20130601"  # Use calibration start date for CLR models
+# Combine all taxa outputs and save
+if (length(all_taxa_outputs) > 0) {
+  cat("\nCombining all CLR taxa outputs...\n")
+  all_hindcasts_combined <- rbindlist(all_taxa_outputs, fill = TRUE)
+  
+  # Save combined output in the format expected by 07_tidyHindcasts_CLR.r
+  output_file <- here("data", "summary", "all_hindcasts_raw_CLR.rds")
+  saveRDS(all_hindcasts_combined, output_file)
+  cat("✅ Combined CLR hindcasts saved to:", output_file, "\n")
+  cat("Total combined rows:", nrow(all_hindcasts_combined), "\n")
+  
+  # Also save as Parquet for memory efficiency
+  if (require(arrow, quietly = TRUE)) {
+    parquet_dir <- here("data/summary/parquet")
+    dir.create(parquet_dir, showWarnings = FALSE, recursive = TRUE)
+    
+    parquet_file <- file.path(parquet_dir, "all_hindcasts_raw_CLR.parquet")
+    arrow::write_parquet(all_hindcasts_combined, parquet_file)
+    cat("✅ Combined CLR hindcasts also saved as Parquet:", parquet_file, "\n")
+  }
+} else {
+  cat("❌ No CLR hindcast data to combine\n")
+}
 
-# Pre-allocate output list for better memory management
-tax_output_list = vector("list", length(model_id_list))
-
-# for testing - run sequentially instead of in parallel
-# Limit to first 3 models for quick testing
-model_limit <- if(testing) 3 else length(model_id_list)
-
-# Add progress bar
-cat("🚀 Starting CLR hindcast generation for", if(testing) paste0(model_limit, " models (TESTING MODE)") else paste0(length(model_id_list), " models"), "...\n")
-pb <- txtProgressBar(min = 0, max = model_limit, style = 3)
+cat("=== CLR HINDCAST GENERATION COMPLETE ===\n")
 
 for(k in 1:model_limit){
-	source("../../microbialForecast/R/run_hindcast.r")
+	source("../../microbialForecast/R/run_hindcast_CLR.r")
 
 	model_id=model_id_list[k]
 	# Update progress bar instead of verbose message
@@ -65,6 +379,7 @@ for(k in 1:model_limit){
 	taxon = species = parsed_id[[4]]
 	fcast_type = parsed_id[[7]]
 	model_name = parsed_id[[6]]
+	has_driver_uncertainty = if (length(parsed_id) >= 9) parsed_id[[9]] else FALSE
 
 	# Filter model estimates for each plot abundance
 	plot_summary <- rank_plot_summary <- calibration_model_summaries$plot_est %>%
@@ -101,17 +416,17 @@ for(k in 1:model_limit){
 	model_file <- here(file.path("data/model_outputs/CLR_regression/", model_name, paste0("samples_", model_id, ".rds")))
 	if (file.exists(model_file)) {
 		model_samples <- readRDS(model_file)
-		
+  
 		# For CLR models, the structure is different
 		if ("metadata" %in% names(model_samples) && "model_data" %in% names(model_samples$metadata)) {
 			calibration_model_data <- model_samples$metadata$model_data
 		} else {
 			calibration_model_data <- model_samples$model_data
 		}
-		
+  
 		# Create full time series model inputs for hindcasting
 		full.ts.model.inputs <- list()
-		
+  
 		# Copy over the basic structure from validation data
 		full.ts.model.inputs$N.date <- validation_inputs$N.date
 		full.ts.model.inputs$dateID <- validation_inputs$dateID
@@ -124,7 +439,7 @@ for(k in 1:model_limit){
 		full.ts.model.inputs$site_start <- calibration_model_data$site_start
 		full.ts.model.inputs$plot_start <- calibration_model_data$plot_start
 		full.ts.model.inputs$truth.plot.long <- validation_inputs$truth.plot.long
-		
+  
 		# Copy over environmental and seasonal covariates
 		full.ts.model.inputs$temp <- validation_inputs$temp
 		full.ts.model.inputs$temp_sd <- validation_inputs$temp_sd
@@ -138,12 +453,12 @@ for(k in 1:model_limit){
 		full.ts.model.inputs$LAI <- validation_inputs$LAI
 		full.ts.model.inputs$sin_mo <- validation_inputs$sin_mo
 		full.ts.model.inputs$cos_mo <- validation_inputs$cos_mo
-		
+  
 		# CRITICAL FIX: Validate arrays with proper NA handling for site start dates
 		required_arrays <- c("temp", "temp_sd", "mois", "mois_sd", "pH", "pH_sd", "pC", "pC_sd", "relEM", "LAI")
 		required_vectors <- c("sin_mo", "cos_mo")
 		cat("    Validating arrays with site start date consideration...\n")
-		
+  
 		for (array_name in required_arrays) {
 			if (is.null(full.ts.model.inputs[[array_name]])) {
 				cat("    ❌ CRITICAL ERROR: Required array '", array_name, "' is NULL\n")
@@ -282,21 +597,17 @@ for(k in 1:model_limit){
 
 			# Forecast with known or random site effect
 			tryCatch({
-				# For CLR models, we need to use a different forecasting function
-				# For now, create a simple placeholder
-				hindcast.plot <- data.frame(
+				# Use the actual CLR forecasting function
+				hindcast.plot <- fcast_clr(
 					plotID = plotID,
-					siteID = siteID,
-					dateID = "201306",
-					forecast = 0.5,  # Placeholder
-					lower = 0.3,     # Placeholder
-					upper = 0.7,     # Placeholder
-					model_name = model_name,
-					time_period = time_period,
-					species = taxon,
-					rank_name = rank.name,
-					predicted_site_effect = FALSE,
-					newsite = newsite,
+					model.inputs = model.inputs,
+					param_samples = param_samples,
+					truth.plot.long = truth.plot.long,
+					plot_summary = plot_summary,
+					Nmc = 1000,
+					drop_other = TRUE,
+					predict_site_effects = predict_site_effects,
+					rank.name = rank.name,
 					model_id = model_id
 				)
 				

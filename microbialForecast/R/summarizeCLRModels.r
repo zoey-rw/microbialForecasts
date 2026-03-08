@@ -231,9 +231,13 @@ summarize_clr_model <- function(file_path, save_summary = NULL, overwrite=NULL, 
 #' @param model_id The model ID string
 #' @export
 parse_clr_model_id = function(model_id){
-	
+
+	# Strip file suffixes added during saving (_with_legacy_covariate, _clr, _beta_regression)
+	# so that time_period and species parsing works regardless of naming convention
+	model_id <- gsub("_with_legacy_covariate.*$", "", model_id)
+
 	info <- model_id %>% str_split("_") %>% unlist()
-	
+
 	# For CLR models, expected format: clr_model_name_species_date1_date2
 	# Remove "clr" prefix if present
 	if (info[1] == "clr") {

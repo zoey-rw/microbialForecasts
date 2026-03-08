@@ -9,7 +9,7 @@ pacman::p_load(stringr, forestplot, gridExtra)
 
 dirichlet_summaries <- readRDS(here("data/summary/dirichlet_regression_summaries.rds"))
 
-sum.all <- dirichlet_summaries$summary_df %>% filter(time_period == "2015-11_2018-01") %>% 
+sum.all <- dirichlet_summaries$summary_df %>%
 	mutate(tax_rank = rank,
 				 time_period = recode(time_period, !!!microbialForecast:::date_recode))
 df <- sum.all %>%
@@ -32,14 +32,25 @@ df$only_rank <- sapply(str_split(df$rank_only, "_",  n = 2), `[`, 1) %>%
 
 # For saving: filter by effect type
 
-# Linear model beta (covariate) effects
-beta_effects <- df %>% filter(grepl("beta", rowname))
-beta_effects$beta <- ordered(beta_effects$beta, levels = c("sin", "cos",
-																													 "Ectomycorrhizal trees",
-																													 "LAI",
-																													 "pC",
-																													 "pH",
-																													 "Temperature",
-																													 "Moisture","rho"))
+# 1. Linear model beta (covariate) effects
+# Our updated summarize script cleanly labels covariates in the 'beta' column
+beta_effects <- df %>%
+	filter(!is.na(beta) & beta != "UNKNOWN")
+
+beta_effects$beta <- ordered(beta_effects$beta,
+                             levels = c("sin", "cos",
+                                        "Ectomycorrhizal trees",
+                                        "LAI", "pC", "pH",
+                                        "Temperature", "Moisture"))
+
 levels(beta_effects$beta)[levels(beta_effects$beta)=="Ectomycorrhizal trees"] <- "Ectomycorrhizal\ntrees"
+
+# 2. Temporal persistence (rho) effects
+# Isolate the AR(1) parameter into its own dataframe for separate analysis
+rho_effects <- df %>%
+	# Safely check parameter or rowname depending on how extract_summary_row formatted it
+	filter(if("parameter" %in% names(.)) grepl("rho", parameter) else grepl("rho", rowname))
+
+# Save the tidy outputs
 saveRDS(beta_effects, here("data", "summary/dirichlet_predictor_effects.rds"))
+saveRDS(rho_effects, here("data", "summary/dirichlet_rho_effects.rds"))

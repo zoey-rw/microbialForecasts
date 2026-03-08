@@ -1,76 +1,63 @@
 # Combine chains from each Dirichlet model, and create basic summary stats
 source("source.R")
-source("dirichlet_helper_functions.r")
+source(here::here("analysis/model_analysis/dirichlet_covariance/dirichlet_helper_functions.r"))
 
 # Function to combine Dirichlet chains and create summary structure
 combine_dirichlet_chains <- function(chain_paths, model_id) {
   message("Combining ", length(chain_paths), " chains for ", model_id)
   
-  # Separate parameter samples and plot predictions
-  param_chains <- chain_paths[grepl("samples_dirichlet", chain_paths)]
-  plot_chains <- chain_paths[grepl("samples2_dirichlet", chain_paths)]
-  
-  message("Parameter chains: ", length(param_chains))
-  message("Plot prediction chains: ", length(plot_chains))
-  
-  # Read parameter chains
+  # All chain files contain both samples and samples2 in a list
+  param_chains <- chain_paths
+
+  # Read parameter chains and plot chains from the unified files
   param_samples <- list()
+  plot_samples <- list()
   metadata_list <- list()
-  
+
   for (i in 1:length(param_chains)) {
     chain_data <- readRDS(param_chains[[i]])
-    message("Parameter chain ", i, " dimensions: ", nrow(chain_data), " x ", ncol(chain_data))
-    
-    # Extract metadata from the first chain
-    if (i == 1 && is.list(chain_data) && "metadata" %in% names(chain_data)) {
-      metadata_list[[i]] <- chain_data$metadata
+    message("Parameter chain ", i, " dimensions: ", nrow(chain_data$samples), " x ", ncol(chain_data$samples))
+
+    if (is.list(chain_data)) {
       param_samples[[i]] <- chain_data$samples
-    } else if (is.list(chain_data) && "metadata" %in% names(chain_data)) {
-      metadata_list[[i]] <- chain_data$metadata
-      param_samples[[i]] <- chain_data$samples
+
+      # FIX: Extract samples2 natively from the chain list
+      if ("samples2" %in% names(chain_data)) {
+        plot_samples[[i]] <- chain_data$samples2
+      }
+      if ("metadata" %in% names(chain_data)) {
+        metadata_list[[i]] <- chain_data$metadata
+      }
     } else {
-      # Fallback: treat as raw matrix
+      # Fallback
       param_samples[[i]] <- chain_data
       metadata_list[[i]] <- list(model_id = model_id)
     }
   }
-  
-  # Read plot prediction chains if they exist
-  plot_samples <- list()
-  if (length(plot_chains) > 0) {
-    for (i in 1:length(plot_chains)) {
-      plot_data <- readRDS(plot_chains[[i]])
-      if (is.list(plot_data) && "samples2" %in% names(plot_data)) {
-        plot_samples[[i]] <- plot_data$samples2
-      } else {
-        plot_samples[[i]] <- plot_data
-      }
-    }
-  }
-  
-  # Combine parameter chains using mcmc.list
+
+  # Combine parameter chains
   library(coda)
   param_mcmc_chains <- lapply(param_samples, mcmc)
   combined_param_chains <- mcmc.list(param_mcmc_chains)
-  
+
   # Combine plot chains if they exist
-  if (length(plot_samples) > 0) {
+  if (length(plot_samples) > 0 && !is.null(plot_samples[[1]])) {
     plot_mcmc_chains <- lapply(plot_samples, mcmc)
     combined_plot_chains <- mcmc.list(plot_mcmc_chains)
   } else {
     combined_plot_chains <- NULL
   }
   
-  # Calculate parameter summaries
-  param_summary <- list()
-  param_summary[[1]] <- summary(combined_param_chains)$statistics  # Means
-  param_summary[[2]] <- summary(combined_param_chains)$quantiles   # Quantiles
-  
+  # Calculate parameter summaries (use fast.summary.mcmc to tolerate NA/NaN in chains)
+  param_sum <- fast.summary.mcmc(combined_param_chains)
+  param_summary <- list(param_sum$statistics, param_sum$quantiles)
+
   # Calculate plot summaries if available
   plot_summary <- list()
   if (!is.null(combined_plot_chains)) {
-    plot_summary[[1]] <- summary(combined_plot_chains)$statistics  # Means
-    plot_summary[[2]] <- summary(combined_plot_chains)$quantiles   # Quantiles
+    plot_sum <- fast.summary.mcmc(combined_plot_chains)
+    plot_summary[[1]] <- plot_sum$statistics
+    plot_summary[[2]] <- plot_sum$quantiles
   } else {
     # Create minimal plot summaries for Dirichlet models
     plot_summary[[1]] <- data.frame()  # Placeholder for means
@@ -88,31 +75,34 @@ combine_dirichlet_chains <- function(chain_paths, model_id) {
     metadata$niteration <- nrow(param_samples[[1]])
   }
   
-  # Create the combined output structure
+  # Create the combined output structure (samples2 needed for post-combine plot_summary/gelman)
   out <- list(
     samples = combined_param_chains,
+    samples2 = combined_plot_chains,
     param_summary = param_summary,
     plot_summary = plot_summary,
     metadata = metadata
   )
-  
+
   return(out)
 }
 
-# For Dirichlet models: focus on fungal phylum models for 2015-2018
-model_name <- "env_cycl"  # Can be "env_cov", "env_cycl", or "cycl_only"
+# For Dirichlet models: focus on driver uncertainty outputs
+target_dir <- here("data/model_outputs/dirichlet_driver_uncertainty/")
 
-# For Dirichlet models: use phylum composition models
-model_id_list = c(
-  "env_cycl_phylum_fun_20151101_20180101",
-  "env_cov_phylum_fun_20151101_20180101"
-)
+cat("Processing Dirichlet regression models in:", target_dir, "\n")
 
-cat("Processing Dirichlet regression models for 2015-2018 data\n")
-cat("Model type:", model_name, "\n")
+# Dynamically find all sample chain files (exclude checkpoints and progress files)
+file.list <- list.files(path = target_dir,
+                        pattern = "_chain[0-9]+\\.rds$",
+                        recursive = TRUE,
+                        full.names = TRUE)
+file.list <- file.list[grepl("^samples_", basename(file.list))]
+
+# Extract unique model IDs directly from the file names
+model_id_list <- unique(gsub("_chain[0-9]+.rds$", "", gsub("^samples_", "", basename(file.list))))
+
 cat("Total models to process:", length(model_id_list), "\n\n")
-
-cat("Model ID list length:", length(model_id_list), "\n")
 cat("Model IDs:", paste(model_id_list, collapse = ", "), "\n")
 
 # Use sequential processing for debugging
@@ -121,34 +111,12 @@ cat("Starting sequential processing with", length(model_id_list), "models...\n")
 for(model_id in model_id_list) {
   # Do we want to keep all the chain files separately? Deleting them will save space
   delete_samples_files = F
-  
-  # Find chain files for Dirichlet models
-  file.list <- list.files(path = here("data/model_outputs/dirichlet_regression/"),
-                          pattern = "_chain",
-                          recursive = T,
-                          full.names = T)
-  
-  # Subset to newest output files
-  info <- file.info(file.list)
-  
-  # Subset more than 100KB (for our test files, reasonable threshold)
-  large_enough <- rownames(info[which(info$size > 100000), ])
-  
-  # Remove date filtering for now - all files are recent
-  newer <- rownames(info)  # Include all files
-  
-  # Don't want files still being written - at least 1 min old (for testing)
-  older <- rownames(info[which(info$mtime < (Sys.time()-60)), ])
-  
-  file.list <- file.list[file.list %in% newer & file.list %in% large_enough]
-  
+
+  # Subset to chain files for this model_id
+  chain_paths <- file.list[grepl(model_id, file.list, fixed = T)]
+
   message("Searching model outputs for ", model_id)
   message("Total files in file.list: ", length(file.list))
-  message("First few files: ", paste(head(file.list, 3), collapse = ", "))
-  
-  # Subset to files of interest
-  chain_paths <- file.list[grepl(model_id, file.list, fixed = T)]
-  
   message("Found ", length(chain_paths), " chain files for ", model_id)
   if (length(chain_paths) > 0) {
     message("Chain files: ", paste(basename(chain_paths), collapse = ", "))
@@ -189,8 +157,8 @@ for(model_id in model_id_list) {
       next
     }
     
-    # Check if intercept parameter exists (for Dirichlet models, this might be different)
-    if (!"intercept" %in% colnames(chains[[1]])) {
+    # Check if intercept parameter exists (NIMBLE uses bracketed names like intercept[1])
+    if (!any(grepl("^intercept", colnames(chains[[1]])))) {
       message("No intercept parameter found in chains for ", model_id, ", skipping...")
       next
     }
@@ -200,7 +168,8 @@ for(model_id in model_id_list) {
     if (min(sapply(chains, nrow)) < min_chain_size) {
       message("Chains too small for reliable outlier detection in ", model_id, ", skipping outlier removal")
     } else {
-      means <- lapply(chains, function(x) mean(x[,"intercept"], na.rm=T))
+      intercept_col <- grep("^intercept", colnames(chains[[1]]), value = TRUE)[1]
+      means <- lapply(chains, function(x) mean(x[, intercept_col], na.rm=T))
       scaled_means = scale(unlist(means))
       potential_outlier <- which(abs(scaled_means) > 1.3)
       if (length(potential_outlier) %in% c(1,2)){
