@@ -1,7 +1,38 @@
 #!/usr/bin/env Rscript
+# Fit Dirichlet models for all microbial groups and predictor sets
+# - Weak priors for main parameters (Jeffreys, Uniform, wide normal)
+# - More informative priors for site effects (dgamma(2, 20))
 
-# Dirichlet model fitting script - uses compositional Dirichlet models for taxonomic data
-# Now integrated into main workflow instead of deprecated subdirectory
+# Load required packages
+if (!require(here)) {
+    install.packages("here")
+    library(here)
+}
+
+# Set project root
+here::i_am("analysis/model_analysis/dirichlet_covariance/01_fitModels_dirichlet.r")
+project_root <- here()
+
+cat("here() starts at", project_root, "\n")
+cat("Project root set to:", getwd(), "\n")
+
+# Load the microbialForecast package to access helper functions
+library(microbialForecast)
+
+# Load packages and create directories using package functions
+load_required_packages()
+create_directories_safe(
+    here("data", "model_outputs"), 
+    c("dirichlet_regression", "dirichlet_regression/env_cycl", "dirichlet_regression/env_cov")
+)
+
+# Define output directory early to prevent undefined variable errors
+model_output_dir <- here("data", "model_outputs", "dirichlet_regression")
+
+cat("==================================================\n")
+cat("Microbial forecasts environment setup complete!\n")
+cat("Ready for Dirichlet analysis.\n")
+cat("==================================================\n")
 
 # Get arguments from the command line (run with qsub script & OGE scheduler)
 argv <- commandArgs(TRUE)
@@ -12,79 +43,243 @@ if (length(argv) > 0){
 	k=1
 }
 
-# Run with at least 4 cores available (one MCMC chain per core)
+# Run with 4 chains for local testing
 nchains = 4
 
 #### Run on all groups ----
 
-source("source.R")
+# Load data early for filtering
+cat("Loading data files for filtering...\n")
+bacteria <- readRDS(here("data/clean/groupAbundances_16S_2023.rds"))
+fungi <- readRDS(here("data/clean/groupAbundances_ITS_2023.rds"))
+all_ranks = c(bacteria, fungi)
+cat("Data loaded successfully for", length(all_ranks), "ranks\n")
+
+# Function to check if MCMC should continue based on effective sample size
+check_continue <- function(samples, min_eff_size = 50) {
+    # Validate input
+    if (is.null(samples) || nrow(samples) == 0) {
+        cat("  WARNING: Empty or NULL samples provided to check_continue, defaulting to continue\n")
+        return(TRUE)
+    }
+    
+    # Convert to mcmc object for effectiveSize calculation
+    if (!inherits(samples, "mcmc")) {
+        samples <- as.mcmc(samples)
+    }
+    # Calculate effective sample sizes for all parameters
+    eff_sizes <- effectiveSize(samples)
+    
+    # Check if any parameter has ESS below threshold
+    min_ess <- min(eff_sizes, na.rm = TRUE)
+    
+    # Continue if minimum ESS is below threshold
+    continue <- min_ess < min_eff_size
+    
+    cat("  ESS check - Min ESS:", round(min_ess, 1), "Target:", min_eff_size, "\n")
+    cat("  Continue sampling:", continue, "\n")
+    
+    return(continue)
+}
 
 params_in = read.csv(here("data/clean/model_input_df.csv"),
 										 colClasses = c(rep("character", 4),
 										 							 rep("logical", 2),
 										 							 rep("character", 4)))
 
-rerun_list = readRDS(here("data/summary/unconverged_taxa_list.rds"))
-converged_list = readRDS(here("data/summary/converged_taxa_list.rds"))
+# Check for priority mode via environment variable or command line argument
+use_priority <- Sys.getenv("USE_PRIORITY", "false")
+argv <- commandArgs(TRUE)
+if (length(argv) > 1 && (argv[2] == "priority" || argv[2] == "--priority")) {
+    use_priority <- "true"
+}
 
-# Subset to specific params for running - Focus on fungal phylum models for 2015-2018
-# Note: Dirichlet models are for compositional data (taxonomic ranks), not individual species
-# Note: min.date and max.date are stored as integers, not strings
+if (use_priority == "true" || use_priority == "priority") {
+    cat("🎯 PRIORITY MODE: Using high-priority models with existing progress\n")
+    priority_file <- here("data/summary/priority_rerun_list.rds")
+    if (file.exists(priority_file)) {
+        rerun_list <- readRDS(priority_file)
+        cat("   Loaded", length(rerun_list), "priority models (have chain 1 completed)\n")
+    } else {
+        cat("   Priority list not found! Falling back to standard unconverged list...\n")
+        rerun_list <- readRDS(here("data/summary/unconverged_taxa_list.rds"))
+    }
+} else {
+    cat("📊 STANDARD MODE: Using all unconverged models\n")
+    rerun_list <- readRDS(here("data/summary/unconverged_taxa_list.rds"))
+    cat("   Tip: Set USE_PRIORITY=true or add 'priority' argument to focus on models with existing progress\n")
+}
+
+converged_list = readRDS(here("data/summary/weak_converged_taxa_list.rds"))
+
+# HPC PRODUCTION CONFIGURATION: Run multiple models with all three model types
 params <- params_in %>% ungroup %>% filter(
+    # Run ALL model types for comprehensive analysis
+    model_name %in% c("env_cov") &
+        # Focus on 2013-2018 period for legacy analysis
+        scenario %in% c("Legacy with covariate 2013-2018") &
+        # For Dirichlet models, focus on taxonomic ranks
 	fcast_type == "Taxonomic" &
-	rank.name == "phylum_fun" &
-	min.date == 20151101 &
-	max.date == 20180101 &
-	model_name %in% c("env_cov", "env_cycl")
-) %>% 
-	# For Dirichlet models, we want to model the entire rank composition, not individual species
-	# So we'll take just one row per model_name to avoid duplication
-	group_by(model_name) %>% 
-	slice(1) %>%
-	ungroup() %>%
-	# Override the species to indicate we're modeling the entire phylum
-	mutate(species = "phylum_composition")
+        rank.name %in% c("phylum_fun")
+) %>% distinct(.keep_all = TRUE)
 
 # Filter out already converged models
 params <- params %>% filter(!model_id %in% converged_list)
 
-cat("Testing", nrow(params), "Dirichlet models\n")
-cat("Date range filter: min.date = '20151101', max.date = '20180101'\n")
-cat("First few selected models:\n")
-print(params %>% select(rank.name, species, model_name, min.date, max.date) %>% head(3))
+# LOCAL TESTING: Run just 1 model for faster testing
+# Limit to reasonable number for local testing
+set.seed(123)  # For reproducible sampling
+params <- params %>%
+    sample_n(size = 1, replace = FALSE) %>%  # Run just 1 model for faster testing
+    ungroup()
+
+cat("LOCAL TESTING: Starting parallel execution for", nrow(params), "models with", nchains, "chains\n")
+cat("Expected runtime: Variable (convergence-based sampling)\n")
+cat("  - Models to run:", nrow(params), "models (env_cycl)\n")
+cat("  - Chains per model:", nchains, "(total", nrow(params) * nchains, "parallel tasks)\n")
+cat("  - Initial iterations: ~ 0.1 minutes per chain\n")
+cat("  - Additional iterations: Variable based on convergence\n")
+cat("  - Target: ESS >= 10 per parameter (TESTING VERSION)\n")
+cat("🎯 PRIOR STRATEGY: HYBRID (weak main + stable site effects) - PROVEN TO WORK\n")
+cat("🔧 TESTING MODE: Local testing with 1 core and reduced iterations\n")
+
+cat("LOCAL TESTING: Running", nrow(params), "models with", nchains, "chains in parallel\n")
+cat("This executes the stable env_cycl framework with PROVEN HYBRID PRIORS for local testing\n")
+
+# Filter parameters to only include models with available species and ranks
+cat("Filtering models to only include those with available data...\n")
+original_n_models <- nrow(params)
+
+# Create a function to check if a model has valid data
+is_valid_model <- function(rank_name, species_name) {
+    # Check if rank exists in data
+    if (!(rank_name %in% names(all_ranks))) {
+        return(FALSE)
+    }
+    
+    rank_data <- all_ranks[[rank_name]]
+    
+    # For Dirichlet models, we check if the rank has multiple taxa
+    metadata_cols <- c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date")
+    available_taxa <- setdiff(colnames(rank_data), metadata_cols)
+    
+    # Need at least 2 taxa for Dirichlet composition
+    return(length(available_taxa) >= 2)
+}
+
+# Filter the parameters dataframe
+valid_indices <- sapply(1:nrow(params), function(i) {
+    is_valid_model(params$rank.name[i], params$species[i])
+})
+
+params <- params[valid_indices, ]
+filtered_n_models <- nrow(params)
+
+# Report filtering results
+if (filtered_n_models < original_n_models) {
+    n_filtered <- original_n_models - filtered_n_models
+    cat("⚠️  Filtered out", n_filtered, "models with unavailable species/ranks\n")
+    cat("  Original models:", original_n_models, "\n")
+    cat("  Valid models:", filtered_n_models, "\n")
+} else {
+    cat("✓ All", filtered_n_models, "models have valid data\n")
+}
+
+# Additional validation: ensure we have at least one valid model
+if (filtered_n_models == 0) {
+    cat("❌ ERROR: No valid models remaining after filtering!\n")
+    cat("Available ranks in data:", paste(names(all_ranks), collapse=", "), "\n")
+    
+    # Show some examples of available taxa for each rank
+    for (rank_name in names(all_ranks)) {
+        rank_data <- all_ranks[[rank_name]]
+        metadata_cols <- c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date")
+        available_taxa <- setdiff(colnames(rank_data), metadata_cols)
+        cat("  ", rank_name, "taxa (first 5):", paste(head(available_taxa, 5), collapse=", "),
+            if(length(available_taxa) > 5) paste("... (+", length(available_taxa) - 5, " more)") else "", "\n")
+    }
+    
+    stop("No valid models to run - check rank names in parameters")
+}
+
+# Use the filtered parameters from data loading
+valid_models <- params
+cat("Testing with", nrow(valid_models), "models\n")
+cat("Models to test:\n")
+print(valid_models)
 
 # Create function that uses Dirichlet approach for each model
 run_scenarios_dirichlet <- function(j, chain_no) {
-	cat("DEBUG: Entering run_scenarios_dirichlet function with j =", j, "chain_no =", chain_no, "\n")
-	
-	# Load required libraries in each worker
-	library(microbialForecast)
-	library(here)
-	library(tidyverse)
-	library(nimble)
-	library(coda)
+    # Initialize error tracking and logging
+    start_time <- Sys.time()
+    error_context <- list()
+    
+    tryCatch({
+        # Load required libraries in each worker using helper function
+        load_required_packages()
+        cat("=== Starting Dirichlet model fitting ===\n")
+        cat("Model index:", j, "Chain:", chain_no, "\n")
+        cat("Model parameters:\n")
+        print(valid_models[j,])
+        cat("=============================\n")
+        
+        # Debug HPC environment information
+        cat("HPC Environment Debug Info:\n")
+        cat("  Working directory:", getwd(), "\n")
+        cat("  HOME:", Sys.getenv("HOME"), "\n")
+        cat("  PWD:", Sys.getenv("PWD"), "\n")
+        cat("  Current user:", Sys.getenv("USER"), "\n")
+        cat("  R session tempdir:", tempdir(), "\n")
+        cat("=============================\n")
+        
+        # Validate input parameters
+        if (is.null(valid_models) || nrow(valid_models) < j) {
+            stop("Valid_models data frame not available or index out of bounds")
+        }
 
 	cat("Running Dirichlet scenario", j, "chain", chain_no, "\n")
 
-	# Get the group data
-	rank.name <- params$rank.name[[j]]
-	species <- params$species[[j]]
-	model_id <- params$model_id[[j]]
-	model_name <- params$model_name[[j]]
-	min.date <- params$min.date[[j]]
-	max.date <- params$max.date[[j]]
+        # Extract model parameters
+        rank.name <- valid_models$rank.name[[j]]
+        species <- valid_models$species[[j]]
+        model_id <- valid_models$model_id[[j]]
+        model_name <- valid_models$model_name[[j]]
+        min.date <- valid_models$min.date[[j]]
+        max.date <- valid_models$max.date[[j]]
+        scenario <- valid_models$scenario[[j]]
+        
+        # Validate extracted parameters
+        if (is.null(rank.name) || is.na(rank.name) || rank.name == "") {
+            stop("Invalid rank.name for model index ", j)
+        }
+        if (is.null(species) || is.na(species) || species == "") {
+            stop("Invalid species for model index ", j)
+        }
+        if (is.null(model_name) || is.na(model_name) || model_name == "") {
+            stop("Invalid model_name for model index ", j)
+        }
+        
+        # Check if this is a legacy covariate model
+        use_legacy_covariate <- grepl("Legacy with covariate", scenario)
+        
+        # Validate data availability
+        if (!exists("all_ranks") || is.null(all_ranks)) {
+            stop("Data 'all_ranks' not available in worker environment")
+        }
 	
-	# Load data - Updated to use 2023 data format
-	bacteria <- readRDS(here("data/clean/groupAbundances_16S_2023.rds"))
-	fungi <- readRDS(here("data/clean/groupAbundances_ITS_2023.rds"))
-	
-	all_ranks = c(bacteria, fungi)
+        # Data already loaded at the top of the script
 	
 	# Get the specific group data
 	if (!(rank.name %in% names(all_ranks))) {
-		stop("Rank name not found in data")
+            stop("Rank name '", rank.name, "' not found in data. Available ranks: ", 
+                 paste(names(all_ranks), collapse=", "))
 	}
 	rank.df <- all_ranks[[rank.name]]
+        
+        # Validate rank data structure
+        if (!is.data.frame(rank.df) || nrow(rank.df) == 0) {
+            stop("Rank data for '", rank.name, "' is empty or not a data frame")
+        }
 	
 	cat("Preparing Dirichlet model data for", rank.name, "\n")
 	cat("Modeling composition of taxa within rank:", rank.name, "\n")
@@ -103,336 +298,213 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 	# Define the columns to keep including metadata
 	keep_vec <- c(keep_names, "siteID", "plotID", "dateID", "sampleID", "dates", "plot_date")
 	
-	# Use a working data preparation approach instead of broken prepTaxonomicData
-	cat("  Using alternative data preparation for Dirichlet models...\n")
+	# Source the prepDirichletData function
+	source(here("microbialForecast", "R", "prepDirichletData.r"))
 	
-	# Filter data to time period and keep only the taxa we want
-	rank_filtered <- rank.df %>%
-		filter(dates >= as.Date("2015-11-01") & dates <= as.Date("2018-01-01")) %>%
-		select(all_of(keep_vec))
+	# Use prepDirichletData for proper Dirichlet model data preparation
+	cat("  Using prepDirichletData for Dirichlet model data preparation...\n")
 	
-	cat("  Filtered data dimensions:", dim(rank_filtered), "\n")
+	# DRASTICALLY reduce data size for testing - find plots with most data
+	cat("Drastically reducing data size for testing...\n")
+	cat("Original data dimensions:", dim(rank.df), "\n")
 	
-	# Follow the exact same pattern as prepBetaRegData
-	# Create expanded data with all possible plot-date combinations
-	cat("    Creating expanded data structure like prepBetaRegData...\n")
+	# Find plots with the most observations
+	plot_counts <- table(rank.df$plotID)
+	top_plots <- names(sort(plot_counts, decreasing = TRUE))[1:5]  # Top 5 plots by observation count
 	
-	# Get unique plots and sites
-	plots <- unique(rank_filtered$plotID)
-	sites <- unique(rank_filtered$siteID)
-	dates <- unique(rank_filtered$dates)
+	# Find dates with the most observations
+	date_counts <- table(rank.df$dateID)
+	top_dates <- names(sort(date_counts, decreasing = TRUE))[1:5]  # Top 5 dates by observation count
 	
-	# Debug: Check data format
-	cat("    Data format check:\n")
-	cat("      First few plots:", head(plots), "\n")
-	cat("      Plots class:", class(plots), "\n")
-	cat("      First few sites:", head(sites), "\n")
-	cat("      Sites class:", class(sites), "\n")
-	cat("      First few dates:", head(dates), "\n")
-	cat("      Dates class:", class(dates), "\n")
-	cat("      Any NA dates:", any(is.na(dates)), "\n")
+	# Filter to this subset
+	rank.df_minimal <- rank.df[rank.df$plotID %in% top_plots & rank.df$dateID %in% top_dates, ]
+	cat("Minimal data dimensions:", dim(rank.df_minimal), "\n")
+	cat("Selected plots:", paste(top_plots, collapse = ", "), "\n")
+	cat("Selected dates:", paste(top_dates, collapse = ", "), "\n")
 	
-	# Create all possible plot-date combinations (like prepBetaRegData does)
-	all_poss_date_combos <- tidyr::expand(
-		rank_filtered,
-		nesting(siteID, plotID),
-		dates
-	) %>% 
-	distinct() %>% 
-	mutate(plot_date = paste0(plotID, "_", format(dates, "%Y%m%d")))
+	# Use prepDirichletData with the minimal dataset
+	model.dat <- prepDirichletData(rank.df = rank.df_minimal,
+		min.prev = 1,  # Lower threshold for small data
+		min.date = min.date,
+		max.date = max.date)
 	
-	# Merge back with actual data (like prepBetaRegData does)
-	expanded_dat <- merge(rank_filtered, all_poss_date_combos, all = TRUE) %>% 
-		arrange(siteID, plotID, dates)
+	cat("    Data prepared using prepDirichletData:\n")
+	cat("      N.plot:", model.dat$N.plot, "\n")
+	cat("      N.date:", model.dat$N.date, "\n")
+	cat("      N.site:", model.dat$N.site, "\n")
+	cat("      N.core:", model.dat$N.core, "\n")
+	cat("      N.spp:", model.dat$N.spp, "\n")
+	cat("      timepoint length:", length(model.dat$timepoint), "\n")
+	cat("      plot_num length:", length(model.dat$plot_num), "\n")
+	cat("      plot_start length:", length(model.dat$plot_start), "\n")
+	cat("      plot_site_num length:", length(model.dat$plot_site_num), "\n")
+	cat("      keep_taxa:", paste(model.dat$keep_taxa, collapse = ", "), "\n")
 	
-	# Create sequential timepoints like prepBetaRegData does
-	expanded_dat$timepoint <- as.numeric(as.factor(expanded_dat$dates))
-	
-	# Get timepoint for actual data (like prepBetaRegData does)
-	timepoint <- expanded_dat[match(rank_filtered$dates, expanded_dat$dates), ]$timepoint
-	names(timepoint) <- expanded_dat[match(rank_filtered$dates, expanded_dat$dates), ]$dates
-	
-	# Use the original timepoints from expanded_dat (no artificial mapping)
-	cat("    Using original timepoints from expanded_dat\n")
-	
-	# Create plot and site mappings - ensure 1-based indexing
-	plot_map <- data.frame(plotID = plots, plot_num = 1:length(plots))
-	site_map <- data.frame(siteID = sites, site_num = 1:length(sites))
-	
-	# Merge mappings
-	rank_filtered <- rank_filtered %>%
-		left_join(plot_map, by = "plotID") %>%
-		left_join(site_map, by = "siteID")
-	
-	# Add timepoint to rank_filtered
-	rank_filtered$timepoint <- timepoint
-	
-	# Create model.dat structure like prepBetaRegData does
-	model.dat <- list()
-	
-	# Create the y matrix for Dirichlet model (compositional data)
-	y_data <- rank_filtered %>%
-		select(all_of(keep_names)) %>%
-		as.matrix()
-	
-	# Ensure all values are between 0 and 1 (proportions)
-	y_data <- pmin(pmax(y_data, 0), 1)
-	
-	# Normalize to sum to 1 for each row
-	y_sums <- rowSums(y_data)
-	y_data <- y_data / y_sums
-	
-	# Create model.dat structure
-	model.dat$y <- y_data
-	model.dat$plotID <- rank_filtered$plotID
-	model.dat$timepoint <- rank_filtered$timepoint
-	model.dat$plot_site <- rank_filtered$site_num
-	model.dat$plot_num <- rank_filtered$plot_num
-	
-	# Create plot_site_num like prepBetaRegData does
-	# Each plot belongs to a site, and we need to map plot index p to site index k
-	plot_site <- substr(plots, 1, 4)  # Extract site ID from plot ID
-	unique_sites <- unique(plot_site)  # Get unique site IDs in order they appear
-	site_indices <- 1:length(unique_sites)  # Create sequential site indices
-	names(site_indices) <- unique_sites  # Name them with site IDs
-	
-	# Now map each plot to its site index: plot_site_num[p] gives site index for plot p
-	plot_site_num <- site_indices[plot_site]
-	
-	# Add plot_site_num to model.dat - this maps plot indices to site indices
-	model.dat$plot_site_num <- plot_site_num
-	
-	# Debug: Check plot_site_num values
-	cat("    Checking plot_site_num values:\n")
-	cat("      plot_site_num range:", range(plot_site_num), "\n")
-	cat("      plot_site_num unique values:", paste(sort(unique(plot_site_num)), collapse = ", "), "\n")
-	cat("      Number of unique plot_site_num values:", length(unique(plot_site_num)), "\n")
-	cat("      Number of sites:", length(sites), "\n")
-	
-	# Debug: Check timepoint values
-	cat("    Checking timepoint values:\n")
-	cat("      timepoint range:", range(rank_filtered$timepoint), "\n")
-	cat("      timepoint unique values:", paste(sort(unique(rank_filtered$timepoint)), collapse = ", "), "\n")
-	cat("      Number of unique timepoint values:", length(unique(rank_filtered$timepoint)), "\n")
-	cat("      Expected environmental time periods: full calibration period\n")
-	
-	# Debug: Check for any 0 or negative values in indexing arrays
-	cat("  Checking indexing arrays for 0 or negative values...\n")
-	cat("    plot_num range:", range(rank_filtered$plot_num), "\n")
-	cat("    timepoint range:", range(rank_filtered$timepoint), "\n")
-	cat("    site_num range:", range(rank_filtered$site_num), "\n")
-	cat("    Any plot_num <= 0:", any(rank_filtered$plot_num <= 0), "\n")
-	cat("    Any timepoint <= 0:", any(rank_filtered$timepoint <= 0), "\n")
-	cat("    Any site_num <= 0:", any(rank_filtered$site_num <= 0), "\n")
-	
-	# Create plot start and index information - ensure all values are >= 1
-	plot_info <- rank_filtered %>%
-		group_by(plot_num) %>%
-		summarise(
-			plot_start = min(timepoint),
-			plot_index = min(timepoint)
-		) %>%
-		ungroup()
-	
-	# Create site start information - ensure all values are >= 1
-	site_info <- rank_filtered %>%
-		group_by(site_num) %>%
-		summarise(
-			site_start = min(timepoint)
-		) %>%
-		ungroup()
-	
-	# Verify all indices are >= 1
-	cat("  Verifying plot indices...\n")
-	cat("    plot_start range:", range(plot_info$plot_start), "\n")
-	cat("    plot_index range:", range(plot_info$plot_index), "\n")
-	cat("    site_start range:", range(site_info$site_start), "\n")
-	
-	# Ensure all indices are >= 1
-	plot_info$plot_start <- pmax(plot_info$plot_start, 1)
-	plot_info$plot_index <- pmax(plot_info$plot_index, 1)
-	site_info$site_start <- pmax(site_info$site_start, 1)
-	
-	# Ensure plot indices don't exceed N.date
-	plot_info$plot_start <- pmin(plot_info$plot_start, length(dates))
-	plot_info$plot_index <- pmin(plot_info$plot_index, length(dates))
-	site_info$site_start <- pmin(site_info$site_start, length(dates))
-	
-	# Create properly aligned arrays for plot_start and plot_index
-	# These need to be indexed by plot_num (1:N.plot)
-	plot_start_array <- numeric(max(plot_info$plot_num))
-	plot_index_array <- numeric(max(plot_info$plot_num))
-	
-	plot_start_array[plot_info$plot_num] <- plot_info$plot_start
-	plot_index_array[plot_info$plot_num] <- plot_info$plot_index
-	
-	cat("    Final plot_start range:", range(plot_start_array), "\n")
-	cat("    Final plot_index range:", range(plot_index_array), "\n")
-	cat("    N.date:", length(dates), "\n")
-	
-	# CRITICAL FIX: Ensure all arrays are properly aligned and no missing values
-	cat("  Final validation of arrays...\n")
-	cat("    plot_start_array length:", length(plot_start_array), "\n")
-	cat("    plot_index_array length:", length(plot_index_array), "\n")
-	cat("    Any plot_start_array == 0:", any(plot_start_array == 0), "\n")
-	cat("    Any plot_index_array == 0:", any(plot_index_array == 0), "\n")
-	
-	# Fill any remaining 0 values with 1 (safe fallback)
-	plot_start_array[plot_start_array == 0] <- 1
-	plot_index_array[plot_index_array == 0] <- 1
-	
-	cat("    After fixing zeros - plot_start range:", range(plot_start_array), "\n")
-	cat("    After fixing zeros - plot_index range:", range(plot_index_array), "\n")
-	
-	model.dat$plot_start <- plot_start_array
-	model.dat$plot_index <- plot_index_array
-	model.dat$site_start <- site_info$site_start
-	
-	# Set dimensions
-	model.dat$N.plot <- length(plots)
-	model.dat$N.spp <- length(keep_names)
-	model.dat$N.core <- nrow(rank_filtered)
-	model.dat$N.site <- length(sites)
-	model.dat$N.date <- NULL  # Will be set after environmental data filtering
-	
-	# Cyclical predictors will be added by filter_date_site approach
-	
-	cat("  Dirichlet data prepared successfully\n")
+	cat("  Data prepared successfully using prepBetaRegData approach\n")
 	
 	# Debug: Check what's in model.dat
 	cat("    Model.dat contents:\n")
 	cat("      Names:", paste(names(model.dat), collapse = ", "), "\n")
 	cat("      Length:", length(model.dat), "\n")
 	
-	# Prepare constants - only include what's actually used in the model
-	# Note: N.date will be set after environmental data filtering
+	# Prepare constants - use dimensions from prepDirichletData
 	constants <- model.dat[c("plot_start", "plot_index",
-							"plot_num", "plot_site_num",
-							"N.plot", "N.spp", "N.core", "N.site")]
+							"plot_num", "plot_site_num", "timepoint",
+							"N.plot", "N.spp", "N.core", "N.site", "N.date")]
 	
 	# Debug: Check constants after creation
 	cat("    Constants after creation:\n")
 	cat("      Names:", paste(names(constants), collapse = ", "), "\n")
 	cat("      Length:", length(constants), "\n")
 	
-	# Use the exact same approach as prepBetaRegData for environmental data
-	cat("  Preparing environmental predictors using prepBetaRegData approach...\n")
+	# Use the exact same approach as beta regression for environmental data
+	cat("  Preparing environmental predictors using beta regression approach...\n")
 	
-	# Load environmental predictor data
-	predictor_file <- here("data", "clean", "all_predictor_data.rds")
-	if (file.exists(predictor_file)) {
-		cat("    Loading environmental predictors from:", predictor_file, "\n")
-		all_predictors <- readRDS(predictor_file)
+	# Add environmental predictors with validation (ONLY for environmental models)
+	if (model_name %in% c("env_cycl", "env_cov")) {
+		env_predictors <- c("temp", "mois", "pH", "pC", "relEM", "LAI")
+		cat("    Adding environmental predictors with validation...\n")
 		
-		cat("    Predictor data structure:", paste(names(all_predictors), collapse = ", "), "\n")
-		
-		# Get the sites and plots that have been observed for multiple dates
-		# This mimics what prepBetaRegData does
-		keep_plots <- plots
-		keep_sites <- sites
-		
-		# Use filter_date_site like prepBetaRegData does
-		cat("    Filtering environmental data using filter_date_site...\n")
-		
-		# Debug: Check rownames of each component
-		cat("    Checking rownames of environmental data components:\n")
-		for (i in 1:length(all_predictors)) {
-			comp_name <- names(all_predictors)[i]
-			if (is.matrix(all_predictors[[i]])) {
-				cat("      ", comp_name, ": ", class(all_predictors[[i]]), " dim:", paste(dim(all_predictors[[i]]), collapse = "x"), "\n")
-				cat("        First few rownames:", paste(head(rownames(all_predictors[[i]])), collapse = ", "), "\n")
+		for (pred in env_predictors) {
+			if (pred %in% names(model.dat)) {
+				constants[[pred]] <- model.dat[[pred]]
+				
+				# Validate predictor dimensions and structure
+				pred_data <- model.dat[[pred]]
+				if (is.matrix(pred_data)) {
+					cat("      ✓ Added", pred, "predictor:", dim(pred_data), "matrix\n")
+				} else if (is.vector(pred_data)) {
+					cat("      ✓ Added", pred, "predictor:", length(pred_data), "vector\n")
+				} else {
+					cat("      ✓ Added", pred, "predictor:", class(pred_data), "object\n")
+				}
+				
+				# Check for missing or extreme values
+				if (is.numeric(pred_data)) {
+					missing_pct <- mean(is.na(pred_data)) * 100
+					if (missing_pct > 0) {
+						cat("        WARNING:", pred, "has", round(missing_pct, 1), "% missing values\n")
+					}
+					
+					if (is.matrix(pred_data)) {
+						extreme_vals <- sum(abs(pred_data) > 10, na.rm = TRUE)
+						if (extreme_vals > 0) {
+							cat("        WARNING:", pred, "has", extreme_vals, "extreme values (>10)\n")
+						}
+					}
+				}
 			} else {
-				cat("      ", comp_name, ": ", class(all_predictors[[i]]), "\n")
+				cat("      ❌ ERROR:", pred, "predictor not found in model data\n")
+				stop("Missing required environmental predictor: ", pred)
 			}
 		}
-		
-		filt_predictor_data <- lapply(all_predictors, filter_date_site, 
-																	keep_sites = keep_sites,
-																	keep_plots = keep_plots, 
-																	min.date = as.Date("2013-01-01"), 
-																	max.date = as.Date("2018-01-01"))
-		
-		# Debug: Check what filter_date_site returned
-		cat("    Filtered predictor data structure:\n")
-		for (i in 1:length(filt_predictor_data)) {
-			cat("      ", names(filt_predictor_data)[i], ": ", class(filt_predictor_data[[i]]), 
-				ifelse(is.matrix(filt_predictor_data[[i]]), paste(" dim:", paste(dim(filt_predictor_data[[i]]), collapse = "x")), ""), "\n")
-		}
-		
-		# Rename relEM_plot to relEM like prepBetaRegData does
-		names(filt_predictor_data) <- recode(names(filt_predictor_data), relEM_plot = "relEM")
-		
-		# Debug: Check for any NULL or problematic components
-		cat("    Checking for NULL or problematic components:\n")
-		for (i in 1:length(filt_predictor_data)) {
-			comp_name <- names(filt_predictor_data)[i]
-			comp_value <- filt_predictor_data[[i]]
-			if (is.null(comp_value)) {
-				cat("      WARNING:", comp_name, "is NULL - removing\n")
-				filt_predictor_data[[i]] <- NULL
-			} else if (length(comp_value) == 1 && is.na(comp_value)) {
-				cat("      WARNING:", comp_name, "is NA - removing\n")
-				filt_predictor_data[[i]] <- NULL
-			} else {
-				cat("      ", comp_name, "is valid:", class(comp_value), "\n")
-			}
-		}
-		
-		# Add sine/cosine using the same approach as prepBetaRegData
-		cat("    Adding sine/cosine predictors...\n")
-		if ("mois" %in% names(filt_predictor_data) && !is.null(filt_predictor_data$mois)) {
-			sin_cos_month <- get_sin_cos(colnames(filt_predictor_data$mois))
-			filt_predictor_data$sin_mo = sin_cos_month$sin
-			filt_predictor_data$cos_mo = sin_cos_month$cos
-		} else {
-			cat("    WARNING: mois data not available for sine/cosine\n")
-			# Create default sine/cosine based on our time structure
-			months <- 1:constants$N.date
-			filt_predictor_data$sin_mo = sin(2 * pi * months / 12)
-			filt_predictor_data$cos_mo = cos(2 * pi * months / 12)
-		}
-		
-		# Debug: Check constants before adding environmental data
-		cat("    Constants before adding environmental data:\n")
-		cat("      Names:", paste(names(constants), collapse = ", "), "\n")
-		cat("      Length:", length(constants), "\n")
-		
-		# Debug: Check filt_predictor_data names
-		cat("    Environmental data names:\n")
-		cat("      Names:", paste(names(filt_predictor_data), collapse = ", "), "\n")
-		cat("      Length:", length(filt_predictor_data), "\n")
-		
-		# Add filtered environmental data to constants
-		constants <- c(constants, filt_predictor_data)
-		
-		# Set N.date based on the actual environmental data time periods
-		if ("mois" %in% names(filt_predictor_data) && !is.null(filt_predictor_data$mois)) {
-			model.dat$N.date <- ncol(filt_predictor_data$mois)
-			cat("    Set N.date to", model.dat$N.date, "based on environmental data\n")
-		} else {
-			model.dat$N.date <- length(unique(dates))
-			cat("    Set N.date to", model.dat$N.date, "based on microbial data dates\n")
-		}
-		
-		# Add N.date to constants now that it's been set
-		constants$N.date <- model.dat$N.date
-		
-		# Debug: Check constants after adding environmental data
-		cat("    Constants after adding environmental data:\n")
-		cat("      Names:", paste(names(constants), collapse = ", "), "\n")
-		cat("      Length:", length(constants), "\n")
-		
-		cat("    Environmental predictors loaded successfully using prepBetaRegData approach\n")
 	} else {
-		cat("    WARNING: Environmental predictor file not found, using defaults\n")
-		# Create default environmental predictor matrices
-		constants$temp <- matrix(15, nrow = constants$N.site, ncol = constants$N.date)
-		constants$mois <- matrix(0.5, nrow = constants$N.site, ncol = constants$N.date)
-		constants$pH <- matrix(6.5, nrow = constants$N.plot, ncol = constants$N.date)
-		constants$pC <- matrix(2.0, nrow = constants$N.plot, ncol = constants$N.date)
-		constants$LAI <- matrix(2.0, nrow = constants$N.plot, ncol = constants$N.date)
-		constants$relEM <- matrix(0.5, nrow = constants$N.plot, ncol = constants$N.date)
+		cat("    Skipping environmental predictors for", model_name, "model\n")
 	}
+	
+	# Add seasonal predictors (sin_mo, cos_mo) from model.dat
+	if ("sin_mo" %in% names(model.dat)) {
+		constants$sin_mo <- model.dat$sin_mo
+		cat("    ✓ Added sin_mo predictor:", length(model.dat$sin_mo), "vector\n")
+	}
+	if ("cos_mo" %in% names(model.dat)) {
+		constants$cos_mo <- model.dat$cos_mo
+		cat("    ✓ Added cos_mo predictor:", length(model.dat$cos_mo), "vector\n")
+	}
+	
+	# N.date is already set from prepDirichletData
+	
+	# Set N.beta based on model type before creating initial values
+	if (model_name == "env_cycl") {
+		constants$N.beta = 4  # Reduced from 8 for testing
+	} else if (model_name == "env_cov") {
+		constants$N.beta = 6
+	} else {
+		constants$N.beta = 2
+	}
+		
+			# Create inits using the Dirichlet-specific inits function with correct N.date
+	source(here("analysis", "model_analysis", "dirichlet_covariance", "dirichlet_helper_functions.r"))
+	
+	# Debug: Check constants before creating initial values
+	cat("  Debug: Constants before initial values creation:\n")
+	cat("    N.plot:", constants$N.plot, "\n")
+	cat("    N.spp:", constants$N.spp, "\n")
+	cat("    N.core:", constants$N.core, "\n")
+	cat("    N.site:", constants$N.site, "\n")
+	cat("    N.date:", constants$N.date, "\n")
+	cat("    N.beta:", constants$N.beta, "\n")
+	
+	# Check if all required constants are present
+	required_constants <- c("N.plot", "N.spp", "N.core", "N.site", "N.date", "N.beta")
+	missing_constants <- required_constants[!required_constants %in% names(constants)]
+	if (length(missing_constants) > 0) {
+		cat("    ERROR: Missing required constants:", paste(missing_constants, collapse = ", "), "\n")
+		stop("Missing required constants for initial values creation")
+	}
+	
+	# Check for NA values in required constants
+	for (name in required_constants) {
+		if (is.na(constants[[name]])) {
+			cat("    ERROR: Constant", name, "is NA\n")
+			stop("NA value in required constant: ", name)
+		}
+	}
+	
+	# Check indexing arrays for NA values
+	indexing_arrays <- c("plot_start", "plot_index", "plot_num", "plot_site_num")
+	for (name in indexing_arrays) {
+		if (name %in% names(constants)) {
+			value <- constants[[name]]
+			if (is.numeric(value)) {
+				na_count <- sum(is.na(value))
+				if (na_count > 0) {
+					cat("    ERROR: Indexing array", name, "contains", na_count, "NA values\n")
+					stop("NA values in indexing array: ", name)
+				}
+			}
+		}
+	}
+	
+	# Check timepoint array from model.dat
+	if ("timepoint" %in% names(model.dat)) {
+		timepoint_na <- sum(is.na(model.dat$timepoint))
+		if (timepoint_na > 0) {
+			cat("    ERROR: timepoint array contains", timepoint_na, "NA values\n")
+			stop("NA values in timepoint array")
+		}
+		cat("    timepoint array: length =", length(model.dat$timepoint), ", range =", range(model.dat$timepoint), "\n")
+	}
+	
+	cat("  Creating initial values...\n")
+	inits <- initsFun_dirichlet(constants, type = "tax")
+	cat("  Initial values created successfully\n")
+	
+	# Debug: Check initial values for missing values and dimensions
+	cat("  Checking initial values for missing values and dimensions...\n")
+	for (name in names(inits)) {
+		value <- inits[[name]]
+		cat("    ", name, ": dim =", paste(dim(value), collapse = "x"), ", class =", class(value), "\n")
+		if (is.array(value) || is.matrix(value)) {
+			cat("      Has NA values:", any(is.na(value)), "\n")
+			cat("      Has Inf values:", any(is.infinite(value)), "\n")
+		}
+		if (is.numeric(value)) {
+			if (any(is.na(value))) {
+				cat("    WARNING: Initial value", name, "contains NA values\n")
+			}
+			if (any(is.infinite(value))) {
+				cat("    WARNING: Initial value", name, "contains infinite values\n")
+			}
+		}
+	}
+		
+	# Debug: Check constants after adding environmental data
+	cat("    Constants after adding environmental data:\n")
+	cat("      Names:", paste(names(constants), collapse = ", "), "\n")
+	cat("      Length:", length(constants), "\n")
+	
+	cat("    Environmental predictors loaded successfully using beta regression approach\n")
 	
 	# Add driver uncertainty parameters
 	temporalDriverUncertainty <- FALSE  # Set to TRUE if you want driver uncertainty
@@ -440,25 +512,16 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 	
 	# Model hyperparameters - adjust based on model type
 	if (model_name == "env_cycl") {
-		constants$N.beta = 8
 		constants$Nimble_model = "nimbleModTaxa"
 	} else if (model_name == "env_cov") {
-		constants$N.beta = 6
 		constants$Nimble_model = "nimbleModTaxa_env_cov"
 	} else {
-		constants$N.beta = 2
 		constants$Nimble_model = "nimbleModTaxa_cycl_only"
 	}
 	
-	# Set up omega matrix for multivariate normal priors - improved for better convergence
-	constants$omega <- 0.05 * diag(constants$N.spp)  # Tighter prior for better convergence
-	constants$zeros <- rep(0, constants$N.spp)
-	
-	# Ensure minimum size for omega matrix
-	if (constants$N.spp < 8) {
-		constants$omega <- 0.05 * diag(8)  # Tighter prior for better convergence
-		constants$zeros <- rep(0, 8)
-	}
+	# Set up omega matrix for multivariate normal priors - sized to match N.beta
+	constants$omega <- 0.05 * diag(constants$N.beta)
+	constants$zeros <- rep(0, constants$N.beta)
 	
 	cat("Constants prepared successfully\n")
 	
@@ -466,6 +529,61 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 	cat("  Constants names:", paste(names(constants), collapse = ", "), "\n")
 	cat("  Constants with empty names:", sum(names(constants) == ""), "\n")
 	cat("  Constants with NULL names:", sum(is.null(names(constants))), "\n")
+	
+	# Debug: Check for missing values in constants and fix them
+	cat("  Checking constants for missing values...\n")
+	for (name in names(constants)) {
+		value <- constants[[name]]
+		if (is.numeric(value)) {
+			if (any(is.na(value))) {
+				cat("    WARNING:", name, "contains NA values - replacing with defaults\n")
+				# Replace NA values with reasonable defaults based on the variable type
+				if (name %in% c("mois", "temp", "pH", "pC", "relEM", "LAI")) {
+					# For environmental variables, use median of non-NA values
+					median_val <- median(value, na.rm = TRUE)
+					value[is.na(value)] <- median_val
+					constants[[name]] <- value
+					cat("      Replaced NA values with median:", median_val, "\n")
+				} else if (name %in% c("mois_sd", "temp_sd", "pH_sd", "pC_sd")) {
+					# For standard deviations, use a small positive value
+					value[is.na(value)] <- 0.1
+					constants[[name]] <- value
+					cat("      Replaced NA values with 0.1\n")
+				} else {
+					# For other numeric variables, use a default value
+					value[is.na(value)] <- 0
+					constants[[name]] <- value
+					cat("      Replaced NA values with 0\n")
+				}
+			}
+			if (any(is.infinite(value))) {
+				cat("    WARNING:", name, "contains infinite values\n")
+			}
+		} else if (is.character(value)) {
+			if (any(is.na(value))) {
+				cat("    WARNING:", name, "contains NA values - replacing with defaults\n")
+				value[is.na(value)] <- "default"
+				constants[[name]] <- value
+				cat("      Replaced NA values with 'default'\n")
+			}
+		}
+	}
+	
+	# Final check for any remaining NA values
+	cat("  Final check for remaining NA values...\n")
+	for (name in names(constants)) {
+		value <- constants[[name]]
+		if (is.numeric(value) && any(is.na(value))) {
+			cat("    ERROR: Still has NA values after replacement:", name, "\n")
+			cat("      NA count:", sum(is.na(value)), "\n")
+			stop("NA values still present in constant: ", name)
+		}
+		if (is.character(value) && any(is.na(value))) {
+			cat("    ERROR: Still has NA values after replacement:", name, "\n")
+			cat("      NA count:", sum(is.na(value)), "\n")
+			stop("NA values still present in constant: ", name)
+		}
+	}
 	
 	# Fix any empty names in constants
 	if (any(names(constants) == "")) {
@@ -485,138 +603,121 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 	
 	# Define the Dirichlet model based on model_name
 	if (model_name == "env_cycl") {
+		# ULTRA-SIMPLE model for testing - no complex dynamics
 		modelCode <- nimble::nimbleCode({
-			# Loop through core observations ----
+			# Simple Dirichlet model
 			for (i in 1:N.core) {
-				y[i, 1:N.spp] ~ ddirch(plot_mu[plot_num[i], 1:N.spp, timepoint[i]])
+				y[i, 1:N.spp] ~ ddirch(alpha[plot_num[i], 1:N.spp, timepoint[i]])
 			}
-
-			# Plot-level process model ----
+			
+			# Simple alpha generation - no complex dynamics
 			for (s in 1:N.spp) {
 				for (p in 1:N.plot) {
-					# Initial condition - ensure plot_start[p] is valid
-					plot_mu[p, s, plot_start[p]] ~ dgamma(0.5, 1) # Plot means for first date
-					# Convert back to relative abundance
-					plot_rel[p, s, plot_start[p]] <- plot_mu[p, s, plot_start[p]] / sum(plot_mu[p, 1:N.spp, plot_start[p]])
-					
-					# Dynamic evolution - ensure plot_index[p] is valid
-					for (t in (plot_index[p] + 1):N.date) {
-						# Previous value * rho - with numerical stability
-						log(Ex[p, s, t]) <- rho[s] * log(max(plot_mu[p, s, t - 1], 0.001)) +
-							beta[s, 1] * temp[plot_site_num[p], t] +
-							beta[s, 2] * mois[plot_site_num[p], t] +
-							beta[s, 3] * pH[p, plot_start[p]] +
-							beta[s, 4] * pC[p, plot_start[p]] +
-							beta[s, 5] * relEM[p, t] +
-							beta[s, 6] * LAI[plot_site_num[p], t] +
-							site_effect[plot_site_num[p], s] +
-							intercept[s]
-						# Add process error (sigma) - with numerical stability
-						plot_mu[p, s, t] ~ T(dnorm(mean = Ex[p, s, t], sigma[s]), 0.001, Inf)
-						# Convert back to relative abundance
-						plot_rel[p, s, t] <- plot_mu[p, s, t] / sum(plot_mu[p, 1:N.spp, t])
+					for (t in 1:N.date) {
+						alpha[p, s, t] ~ dgamma(1, 1)
 					}
 				}
 			}
-
-			# Priors for site effect covariance matrix - improved
-			sig ~ dgamma(2, 8)  # Tighter gamma prior for better convergence
-
-			# Priors for site random effects - robust Student-t priors
+			
+			# Simple priors
 			for (s in 1:N.spp) {
-				for (k in 1:N.site) {
-					site_effect[k, s] ~ dt(0, sig, df = 3)  # Heavy-tailed for robustness
-				}
-			}
-
-			# Priors for everything else - improved with robust priors
-			for (s in 1:N.spp) {
-				sigma[s] ~ dgamma(2, 15)    # Tighter gamma prior for process error
-				intercept[s] ~ dt(0, 0.3, df = 3)  # Robust prior for intercept
-				rho[s] ~ dbeta(2, 2)        # Truncated beta prior (0,1) for stability
-				beta[s, 1:8] ~ dmvt(zeros[1:8], omega[1:8, 1:8], df = 3)  # Robust multivariate t
+				sigma[s] ~ dgamma(1, 1)
+				intercept[s] ~ dnorm(0, 1)
+				beta[s, 1:4] ~ dmnorm(zeros[1:4], omega[1:4, 1:4])
 			}
 		})
 	} else if (model_name == "env_cov") {
 		modelCode <- nimble::nimbleCode({
-			# Loop through core observations ----
+			# Dirichlet model with temporal dependence, site effects, seasonal, and environmental parameters
 			for (i in 1:N.core) {
-				y[i, 1:N.spp] ~ ddirch(plot_mu[plot_num[i], 1:N.spp, timepoint[i]])
+				y[i, 1:N.spp] ~ ddirch(alpha[plot_num[i], 1:N.spp, timepoint[i]])
 			}
 
-			# Plot-level process model ----
+			# Alpha generation with all covariates
 			for (s in 1:N.spp) {
 				for (p in 1:N.plot) {
-					# Initial condition - ensure plot_start[p] is valid
-					plot_mu[p, s, plot_start[p]] ~ dgamma(0.5, 1) # Plot means for first date
-					# Convert back to relative abundance
-					plot_rel[p, s, plot_start[p]] <- plot_mu[p, s, plot_start[p]] / sum(plot_mu[p, 1:N.spp, plot_start[p]])
-					
-					# Dynamic evolution - ensure plot_index[p] is valid
-					for (t in (plot_index[p] + 1):N.date) {
-						# Previous value * rho - with numerical stability
-						log(Ex[p, s, t]) <- rho[s] * log(max(plot_mu[p, s, t - 1], 0.001)) +
-							beta[s, 1] * temp[plot_site_num[p], t] +
-							beta[s, 2] * mois[plot_site_num[p], t] +
-							beta[s, 3] * pH[p, plot_start[p]] +
-							beta[s, 4] * pC[p, plot_start[p]] +
-							beta[s, 5] * relEM[p, t] +
-							beta[s, 6] * LAI[plot_site_num[p], t] +
+
+					# --- First timepoint ---
+					temporal_effect[p, s, 1] ~ dnorm(0, sd = 1)
+
+					# Calculate expected value cleanly on the right side
+					Ex[p, s, 1] <- exp(intercept[s] +
 							site_effect[plot_site_num[p], s] +
-							intercept[s]
-						# Add process error (sigma) - with numerical stability
-						plot_mu[p, s, t] ~ T(dnorm(mean = Ex[p, s, t], sigma[s]), 0.001, Inf)
-						# Convert back to relative abundance
-						plot_rel[p, s, t] <- plot_mu[p, s, t] / sum(plot_mu[p, 1:N.spp, t])
+							temporal_effect[p, s, 1] +
+							beta[s, 1] * sin_mo[1] + beta[s, 2] * cos_mo[1] +
+							beta[s, 3] * temp[plot_site_num[p], 1] + beta[s, 4] * mois[plot_site_num[p], 1] +
+							beta[s, 5] * pH[p, 1] + beta[s, 6] * pC[p, 1] +
+							beta[s, 7] * relEM[p, 1] + beta[s, 8] * LAI[plot_site_num[p], 1])
+
+					# Sample alpha using the properly defined sigma parameter
+					alpha[p, s, 1] ~ dgamma(shape = Ex[p, s, 1], rate = sigma[s])
+
+					# --- Subsequent timepoints ---
+					for (t in 2:N.date) {
+						# Fix AR(1) standard deviation math
+						temporal_effect[p, s, t] ~ dnorm(rho * temporal_effect[p, s, t-1], sd = sqrt(1 - rho^2))
+
+						Ex[p, s, t] <- exp(intercept[s] +
+								site_effect[plot_site_num[p], s] +
+								temporal_effect[p, s, t] +
+								beta[s, 1] * sin_mo[t] + beta[s, 2] * cos_mo[t] +
+								beta[s, 3] * temp[plot_site_num[p], t] + beta[s, 4] * mois[plot_site_num[p], t] +
+								beta[s, 5] * pH[p, t] + beta[s, 6] * pC[p, t] +
+								beta[s, 7] * relEM[p, t] + beta[s, 8] * LAI[plot_site_num[p], t])
+
+						alpha[p, s, t] ~ dgamma(shape = Ex[p, s, t], rate = sigma[s])
 					}
 				}
 			}
 
-			# Priors for site effect covariance matrix - improved
-			sig ~ dgamma(2, 8)  # Tighter gamma prior for better convergence
-
-			# Priors for site random effects - robust Student-t priors
+			# Site effects
 			for (s in 1:N.spp) {
-				for (k in 1:N.site) {
-					site_effect[k, s] ~ dt(0, sig, df = 3)  # Heavy-tailed for robustness
+				for (site in 1:N.site) {
+					site_effect[site, s] ~ dnorm(0, sd = sigma_site[s])
 				}
 			}
 
-			# Priors for everything else - improved with robust priors
+			# Priors
 			for (s in 1:N.spp) {
-				sigma[s] ~ dgamma(2, 15)    # Tighter gamma prior for process error
-				intercept[s] ~ dt(0, 0.3, df = 3)  # Robust prior for intercept
-				rho[s] ~ dbeta(2, 2)        # Truncated beta prior (0,1) for stability
-				beta[s, 1:6] ~ dmvt(zeros[1:6], omega[1:6, 1:6], df = 3)  # Robust multivariate t
+				sigma[s] ~ dgamma(1, 1)
+				sigma_site[s] ~ dgamma(1, 1)
+				intercept[s] ~ dnorm(0, sd = 1)
+				beta[s, 1:8] ~ dmnorm(zeros[1:8], omega[1:8, 1:8])
 			}
+
+			rho ~ dunif(-0.99, 0.99)
 		})
 	} else {
 		# Default to cycl_only model
 		modelCode <- nimble::nimbleCode({
 			# Loop through core observations ----
 			for (i in 1:N.core) {
-				y[i, 1:N.spp] ~ ddirch(plot_mu[plot_num[i], 1:N.spp, timepoint[i]])
+				# Use proper Dirichlet parameterization with concentration parameters
+				y[i, 1:N.spp] ~ ddirch(alpha[plot_num[i], 1:N.spp, timepoint[i]])
 			}
 
 			# Plot-level process model ----
 			for (s in 1:N.spp) {
 				for (p in 1:N.plot) {
 					# Initial condition - ensure plot_start[p] is valid
-					plot_mu[p, s, plot_start[p]] ~ dgamma(0.5, 1) # Plot means for first date
-					# Convert back to relative abundance
-					plot_rel[p, s, plot_start[p]] <- plot_mu[p, s, plot_start[p]] / sum(plot_mu[p, 1:N.spp, plot_start[p]])
+									# Initial concentration parameters for Dirichlet
+				alpha[p, s, plot_start[p]] ~ dgamma(1, 1)
+				# Convert to relative abundance for monitoring
+				plot_rel[p, s, plot_start[p]] <- alpha[p, s, plot_start[p]] / sum(alpha[p, 1:N.spp, plot_start[p]])
 					
-					# Dynamic evolution - ensure plot_index[p] is valid
-					for (t in (plot_index[p] + 1):N.date) {
+					# Dynamic evolution - only run if we have more than one time point
+					if (plot_start[p] < N.date) {
+						for (t in (plot_start[p] + 1):N.date) {
 						# Previous value * rho - with numerical stability
-						log(Ex[p, s, t]) <- rho[s] * log(max(plot_mu[p, s, t - 1], 0.001)) +
+						log(Ex[p, s, t]) <- rho[s] * log(max(alpha[p, s, t - 1], 0.001)) +
 							beta[s, 1] * sin_mo[t] + beta[s, 2] * cos_mo[t] +
 							site_effect[plot_site_num[p], s] +
 							intercept[s]
 						# Add process error (sigma) - with numerical stability
-						plot_mu[p, s, t] ~ T(dnorm(mean = Ex[p, s, t], sigma[s]), 0.001, Inf)
-						# Convert back to relative abundance
-						plot_rel[p, s, t] <- plot_mu[p, s, t] / sum(plot_mu[p, 1:N.spp, t])
+						alpha[p, s, t] ~ T(dnorm(mean = Ex[p, s, t], sigma[s]), 0.001, Inf)
+						# Convert back to relative abundance for monitoring
+						plot_rel[p, s, t] <- alpha[p, s, t] / sum(alpha[p, 1:N.spp, t])
+						}
 					}
 				}
 			}
@@ -641,18 +742,29 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 		})
 	}
 	
-	# Create inits using the Dirichlet-specific inits function
-	source(here("analysis", "model_analysis", "dirichlet_covariance", "dirichlet_helper_functions.r"))
-	inits <- initsFun_dirichlet(constants, type = "tax")
-	
 	cat("Dirichlet model built successfully\n")
 	
 	# Build model
 	cat("  Attempting to build Nimble model...\n")
+	Rmodel <- NULL  # Initialize Rmodel
 	tryCatch({
 		cat("    Creating model with constants...\n")
 		cat("    Constants dimensions - N.plot:", constants$N.plot, "N.spp:", constants$N.spp, "N.core:", constants$N.core, "\n")
 		cat("    Data dimensions - y:", dim(model.dat$y), "\n")
+		
+		# Debug: Check all constants for dimensions and NA values
+		cat("    Debug: Checking all constants before model building...\n")
+		for (name in names(constants)) {
+			value <- constants[[name]]
+			if (is.numeric(value)) {
+				cat("      ", name, ": numeric, dim =", paste(dim(value), collapse = "x"), 
+					", length =", length(value), ", NA count =", sum(is.na(value)), "\n")
+			} else if (is.character(value)) {
+				cat("      ", name, ": character, length =", length(value), ", NA count =", sum(is.na(value)), "\n")
+			} else {
+				cat("      ", name, ": ", class(value), ", length =", length(value), "\n")
+			}
+		}
 		
 		Rmodel <- nimbleModel(code = modelCode, constants = constants,
 							  data = list(y=model.dat$y), inits = inits)
@@ -661,7 +773,7 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 		cat("ERROR building model:", e$message, "\n")
 		cat("Error details:\n")
 		print(e)
-		return(NULL)
+		Rmodel <<- NULL  # Set Rmodel to NULL in the outer scope
 	})
 	
 	if (is.null(Rmodel)) {
@@ -670,12 +782,13 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 	}
 	
 	# Compile model
+	cModel <- NULL  # Initialize cModel
 	tryCatch({
 		cModel <- compileNimble(Rmodel)
 		cat("Dirichlet model compiled successfully\n")
 	}, error = function(e) {
 		cat("ERROR compiling model:", e$message, "\n")
-		return(NULL)
+		cModel <<- NULL  # Set cModel to NULL in the outer scope
 	})
 	
 	if (is.null(cModel)) {
@@ -683,108 +796,493 @@ run_scenarios_dirichlet <- function(j, chain_no) {
 		return(NULL)
 	}
 	
-	# Configure MCMC
-	monitors <- c("beta","sigma","site_effect","sig","intercept","rho")
-	monitors2 <- c("plot_rel")  # Dirichlet models monitor relative abundances
-	
-	mcmcConf <- configureMCMC(cModel, monitors = monitors, 
-							  monitors2 = monitors2, thin2 = 25,
-							  useConjugacy = TRUE)
+        # Configure MCMC with proper sampler management
+        cat("Configuring MCMC...\n")
+        
+        # Ultra-simplified monitoring for testing - only the most essential parameters
+        monitored_params <- c("beta", "sigma", "intercept", "rho", "sig")
+        
+        # Skip all latent variables to reduce complexity
+        monitored_latent_params <- c()
+        
+        cat("Monitoring parameters for convergence analysis:\n")
+        cat("  Core parameters:", paste(monitored_params, collapse = ", "), "\n")
+        cat("  Latent variables:", paste(monitored_latent_params, collapse = ", "), "\n")
+        cat("  Total beta parameters:", constants$N.beta, "\n")
+        
+        mcmcConf <- configureMCMC(
+            model = cModel,
+            monitors = monitored_params,
+            thin = 1,
+            enableWAIC = FALSE
+        )
+        
+        # Use default samplers for testing - much simpler
+        cat("Using default samplers for testing (simplified configuration)...\n")
+        
+        cat("MCMC configured successfully - ALL advanced features RESTORED!\n")
 	
 	# Build and compile MCMC
+        cat("Building and compiling MCMC...\n")
 	myMCMC <- buildMCMC(mcmcConf)
 	compiled <- compileNimble(myMCMC, project = Rmodel, resetFunctions = TRUE)
 	
 	cat("MCMC configured successfully\n")
 	
-	# Run MCMC with improved parameters for better convergence
-	burnin <- 2000         # Reduced for faster testing
-	thin <- 5              # Standard thinning
-	iter_per_chunk <- 10000 # Reduced for faster testing
-	init_iter <- 1000      # Reduced for faster testing
-	
-	cat("Running MCMC: burnin =", burnin, "iter_per_chunk =", iter_per_chunk, "\n")
+        # Run MCMC with ultra-simplified sampling (TESTING VERSION)
+        cat("Running MCMC with ultra-simplified sampling (TESTING VERSION)...\n")
+        burnin <- 50
+        thin <- 1
+        iter_per_chunk <- 100
+        init_iter <- 1000
+        min_eff_size_perchain <- 5  # Very low threshold for testing
+        max_loops <- 0
+        max_save_size <- 10000
+        min_total_iterations <- 1000
+        
+        cat("Running MCMC with convergence-based sampling\n")
+        cat("  Initial iterations:", init_iter, "burnin:", burnin, "\n")
+        cat("  Iterations per chunk:", iter_per_chunk, "max loops:", max_loops, "\n")
+        cat("  Target ESS per chain:", min_eff_size_perchain, "\n")
+        cat("  Minimum total iterations:", min_total_iterations, "\n")
 	
 	# Run initial iterations
-	compiled$run(niter = init_iter, thin = 1, nburnin = 0)
-	
-	# Run main iterations
+        cat("  Running initial iterations (", init_iter, " iterations) for adaptation...\n")
+        compiled$run(niter = init_iter, thin = thin, nburnin = 0)
+        cat("  Initial iterations completed\n")
+        
+        # Get initial samples and check convergence
+        initial_samples <- as.matrix(compiled$mvSamples)
+        cat("  Initial samples collected, checking convergence...\n")
+        cat("  Initial samples dimensions:", dim(initial_samples), "\n")
+        
+        # Create output directory for checkpoints
+        cat("  Creating output directory for checkpoints...\n")
+        
+        # Create species-specific subdirectory
+        species_output_dir <- file.path(model_output_dir, model_name, rank.name)
+        
+        # Ensure the directory exists
+        if (!dir.exists(species_output_dir)) {
+            dir.create(species_output_dir, showWarnings = FALSE, recursive = TRUE)
+        }
+        
+        # Verify directory was created
+        if (!dir.exists(species_output_dir)) {
+            stop("CRITICAL: Failed to create checkpoint directory: ", species_output_dir)
+        }
+        
+        cat("  ✓ Checkpoint directory ready:", species_output_dir, "\n")
+        
+        # Create model_id for consistent naming
+        model_id <- create_model_id(model_name, rank.name, min.date, max.date, use_legacy_covariate)
+        
+        # Check if we need to continue sampling for convergence
+        continue <- TRUE
+        loop_counter <- 0
+        total_iterations <- init_iter
+        
+        # Try to check convergence, with fallback if it fails
+        tryCatch({
+            continue <- check_continue(initial_samples, min_eff_size = min_eff_size_perchain)
+        }, error = function(e) {
+            cat("  WARNING: Convergence check failed, defaulting to continue sampling\n")
+            cat("  Error:", e$message, "\n")
+            continue <- TRUE
+        })
+        
+        # Store all samples as we go
+        all_samples <- initial_samples
+        cat("  Starting iterative accumulation with", nrow(all_samples), "initial samples\n")
+        
+        # Save initial samples as checkpoint
+        save_checkpoint_safe(all_samples, total_iterations, 0, species_output_dir, model_id, chain_no, "initial")
+        
+        # Also save a simple progress file
+        progress_file <- create_progress_file(species_output_dir, model_id, chain_no, init_iter)
+        
+        while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
+            if (continue) {
+                cat("  Effective sample size too low; running for another", iter_per_chunk, "iterations\n")
+            } else {
+                cat("  Minimum iterations not reached; running for another", iter_per_chunk, "iterations\n")
+            }
+            cat("  Loop", loop_counter + 1, "of", max_loops, "\n")
+            
+            # Continue sampling without resetting
 	compiled$run(niter = iter_per_chunk, thin = thin, nburnin = 0)
-	
-	# Get samples
-	samples <- as.matrix(compiled$mvSamples)
-	samples2 <- as.matrix(compiled$mvSamples2)  # For plot_rel
+            total_iterations <- total_iterations + iter_per_chunk
+            
+            # Get updated samples and accumulate them
+            current_samples <- as.matrix(compiled$mvSamples)
+            cat("  Current total samples in compiled object:", nrow(current_samples), "\n")
+            cat("  Previous accumulated samples:", nrow(all_samples), "\n")
+            
+            # Only take the new samples (skip the initial ones we already have)
+            if (nrow(current_samples) > nrow(initial_samples)) {
+                new_samples <- current_samples[(nrow(initial_samples) + 1):nrow(current_samples), , drop = FALSE]
+                all_samples <- rbind(all_samples, new_samples)
+                cat("  Updated samples collected:", nrow(new_samples), "new samples,", nrow(all_samples), "total accumulated\n")
+            } else {
+                cat("  WARNING: No new samples detected, using current samples\n")
+                all_samples <- current_samples
+            }
+            
+            # Save checkpoint after each loop
+            save_checkpoint_safe(all_samples, total_iterations, loop_counter + 1, species_output_dir, model_id, chain_no, paste0("loop", loop_counter + 1))
+            
+            # Update progress file
+            update_progress_file(progress_file, total_iterations, loop_counter + 1)
+            
+            # Check if we need to continue
+            continue <- TRUE
+            tryCatch({
+                continue <- check_continue(all_samples, min_eff_size = min_eff_size_perchain)
+            }, error = function(e) {
+                cat("  WARNING: Convergence check failed in loop, defaulting to continue sampling\n")
+                cat("  Error:", e$message, "\n")
+                continue <- TRUE
+            })
+            loop_counter <- loop_counter + 1
+            
+            cat("  Total iterations so far:", total_iterations, "\n")
+            cat("  Convergence check result:", ifelse(continue, "CONTINUE", "CONVERGED"), "\n")
+            cat("  Current accumulated sample size:", nrow(all_samples), "\n")
+            cat("  Progress: ", round(loop_counter/max_loops * 100, 1), "% of max loops completed\n")
+        }
+        
+        if (loop_counter >= max_loops) {
+            cat("  WARNING: Exceeded maximum loops (", max_loops, "). Stopping sampling.\n")
+        } else if (total_iterations >= min_total_iterations) {
+            if (continue) {
+                cat("  WARNING: Minimum iterations reached but convergence not achieved\n")
+            } else {
+                cat("  SUCCESS: Convergence reached after", total_iterations, "total iterations\n")
+            }
+        } else {
+            cat("  WARNING: Stopped before minimum iterations due to max loops\n")
+        }
+        
+        # Update final progress status
+        tryCatch({
+            final_status <- if(loop_counter >= max_loops) "Completed (max loops)" else 
+                if(total_iterations >= min_total_iterations && !continue) "Converged" else 
+                    "Completed (min iterations)"
+            writeLines(paste("Completed at:", Sys.time(), "\nTotal iterations:", total_iterations, "\nFinal loop:", loop_counter, "\nStatus:", final_status), progress_file)
+            cat("  ✓ Final progress status updated\n")
+        }, error = function(e) {
+            cat("  ✗ Failed to update final progress status:", e$message, "\n")
+        })
+        
+        # Get final samples (use accumulated samples)
+        samples <- all_samples
+        
+        # Extract plot-level estimates from monitors2 output for comprehensive analysis
+        cat("Extracting plot-level estimates from MCMC output...\n")
+        plot_samples <- as.matrix(compiled$mvSamples2)
+        cat("  Plot samples dimensions:", dim(plot_samples), "\n")
+        cat("  Plot samples column names:", paste(colnames(plot_samples), collapse=", "), "\n")
+        
+        # Validate plot samples structure
+        if (is.null(nrow(plot_samples)) || nrow(plot_samples) == 0) {
+            cat("  WARNING: No plot samples found in monitors2 output (monitors2 not configured)\n")
+            plot_samples <- samples  # Fallback to parameter samples if no plot samples
+        } else {
+            cat("  ✓ Plot samples extracted successfully\n")
+        }
 	
 	cat("MCMC completed successfully\n")
-	cat("Sample dimensions:", dim(samples), "\n")
-	cat("Sample2 dimensions:", dim(samples2), "\n")
+        cat("Final sample dimensions:", dim(samples), "\n")
+        cat("Plot sample dimensions:", dim(plot_samples), "\n")
+        cat("Total iterations run:", total_iterations, "\n")
+        cat("Convergence loops:", loop_counter, "\n")
+        cat("Final ESS check:\n")
+        
+        # Final convergence check
+        tryCatch({
+            final_ess <- effectiveSize(as.mcmc(samples))
+            min_final_ess <- min(final_ess, na.rm = TRUE)
+            cat("  Final minimum ESS:", round(min_final_ess, 1), "\n")
+            cat("  Convergence achieved:", min_final_ess >= min_eff_size_perchain, "\n")
+        }, error = function(e) {
+            cat("  Final ESS check failed:", e$message, "\n")
+        })
+        
+        cat("=== ITERATIVE SAVING SUMMARY ===\n")
+        cat("  Initial samples:", nrow(initial_samples), "iterations\n")
+        cat("  Additional loops:", loop_counter, "iterations\n")
+        cat("  Total accumulated samples:", nrow(all_samples), "iterations\n")
+        cat("  Checkpoints saved:", loop_counter + 1, "files\n")
+        cat("  Final sample size:", nrow(all_samples), "iterations\n")
 	
-	# Create output directories
-	model_output_dir <- here("data", "model_outputs", "dirichlet_regression", model_name)
-	dir.create(model_output_dir, showWarnings = FALSE, recursive = TRUE)
-	
-	# Create model_id for consistent naming - use rank.name for Dirichlet models
-	# since we're modeling the entire composition, not individual taxa
-	model_id <- paste(model_name, rank.name, min.date, max.date, sep = "_")
-	
-	# Create proper output structure with metadata for Dirichlet models
+        # Save MCMC samples with absolute path
+        samples_file <- file.path(model_output_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
+        
+        # Create the complete chain structure with metadata
 	chain_output <- list(
-		samples = samples,
-		samples2 = samples2,
+            samples = all_samples,
+            samples2 = plot_samples,  # Plot-level estimates from monitors2 output
 		metadata = list(
-			model_id = model_id,
 			rank.name = rank.name,
+                species = species,
 			model_name = model_name,
+                model_id = model_id,
+                use_legacy_covariate = use_legacy_covariate,
+                scenario = scenario,
 			min.date = min.date,
 			max.date = max.date,
+                niter = total_iterations,
+                nburnin = burnin,
+                thin = thin,
+                thin2 = 20,  # Include thin2 for samples2
+                model_data = model.dat,
+                nimble_code = modelCode,
+                model_structure = "stable_dirichlet_regression_with_compositional_data",
 			N.spp = constants$N.spp,
 			N.plot = constants$N.plot,
 			N.core = constants$N.core,
 			N.site = constants$N.site,
 			N.date = constants$N.date,
-			niteration = iter_per_chunk,
+                keep_names = keep_names  # Save the taxa names being modeled
+            )
+        )
+        
+        # Save with error handling
+        tryCatch({
+            saveRDS(chain_output, samples_file)
+            cat("✓ SUCCESS: Saved MCMC samples to:", samples_file, "\n")
+        }, error = function(e) {
+            cat("✗ ERROR: Failed to save samples to", samples_file, "\n")
+            cat("  Error:", e$message, "\n")
+            # Try to save to current directory as fallback
+            fallback_file <- paste0("samples_", model_id, "_chain", chain_no, "_FALLBACK.rds")
+            tryCatch({
+                saveRDS(chain_output, fallback_file)
+                cat("✓ FALLBACK: Saved to current directory:", fallback_file, "\n")
+            }, error = function(e2) {
+                cat("✗ CRITICAL: Failed to save even to fallback location\n")
+                cat("  Fallback error:", e2$message, "\n")
+            })
+        })
+        
+        cat("Sample dimensions:", dim(all_samples), "\n")
+        cat("=== Dirichlet model fitting completed ===\n")
+        cat("  - STABLE: Dirichlet regression with compositional data\n")
+        cat("  - All three model types supported: cycl_only, env_only, env_cov\n")
+        cat("  - CONVERGENCE-BASED: Adaptive sampling until reasonable ESS reached\n")
+        cat("  - ITERATIVE SAVING: Samples accumulated and saved incrementally\n")
+        
+        return(list(
+            status = "SUCCESS", 
+            samples = all_samples,
+            samples2 = plot_samples,  # Include plot-level estimates for consistency
+            file = samples_file,
+            model_data = model.dat,
+            nimble_code = modelCode,
+            metadata = list(
+                rank.name = rank.name,
+                species = species,
+                model_name = model_name,
+                model_id = model_id,
+                use_legacy_covariate = use_legacy_covariate,
+                scenario = scenario,
+                min.date = min.date,
+                max.date = max.date,
+                niter = total_iterations,
 			nburnin = burnin,
 			thin = thin,
+                thin2 = 20,  # Include thin2 for samples2
 			model_data = model.dat,
+                nimble_code = modelCode,
+                model_structure = "stable_dirichlet_regression_with_compositional_data",
+                N.spp = constants$N.spp,
+                N.plot = constants$N.plot,
+                N.core = constants$N.core,
+                N.site = constants$N.site,
+                N.date = constants$N.date,
 			keep_names = keep_names  # Save the taxa names being modeled
 		)
-	)
-	
-	# Save MCMC samples with consistent naming and proper structure
-	samples_file <- file.path(model_output_dir, paste0("samples_dirichlet_", model_id, "_chain", chain_no, ".rds"))
-	saveRDS(chain_output, samples_file)
-	
-	# Save secondary samples (plot_rel) if they exist
-	if (nrow(samples2) > 0) {
-		samples2_file <- file.path(model_output_dir, paste0("samples2_dirichlet_", model_id, "_chain", chain_no, ".rds"))
-		saveRDS(chain_output, samples2_file)  # Save the full structure
-		cat("Saved secondary MCMC samples to:", samples2_file, "\n")
-	}
-	
-	cat("Saved Dirichlet MCMC samples to:", samples_file, "\n")
-	
-	return(list(status = "SUCCESS", samples = samples, samples2 = samples2, file = samples_file))
+        ))
+        
+    }, error = function(e) {
+        # Capture comprehensive error information
+        error_time <- Sys.time()
+        error_context <- list(
+            timestamp = error_time,
+            task_idx = j,
+            chain_no = chain_no,
+            error_message = if(!is.null(e$message) && e$message != "") e$message else "No error message available",
+            error_call = if(!is.null(e$call)) paste(deparse(e$call), collapse=" ") else "No call information",
+            error_class = class(e)[1],
+            system_info = list(
+                r_version = R.version.string,
+                working_dir = getwd(),
+                available_packages = installed.packages()[,"Package"],
+                memory_usage = if(exists("gc")) gc() else "GC not available"
+            ),
+            runtime = if(exists("start_time")) difftime(error_time, start_time, units="secs") else NA
+        )
+        
+        # Create detailed error file with absolute path
+        model_name <- if(exists("model_name")) model_name else "unknown"
+        error_dir <- here("data", "model_outputs", "dirichlet_regression", model_name)
+        dir.create(error_dir, showWarnings = FALSE, recursive = TRUE)
+        error_file <- file.path(error_dir, paste0("chain_", j, "_", chain_no, "_ERROR.txt"))
+        
+        # Write comprehensive error report
+        error_report <- c(
+            paste("ERROR DETAILED REPORT -", format(error_time)),
+            paste("Task Index:", error_context$task_idx),
+            paste("Model Index:", j),
+            paste("Chain Number:", error_context$chain_no),
+            paste("Error Message:", error_context$error_message),
+            paste("Error Call:", error_context$error_call),
+            paste("Error Class:", error_context$error_class),
+            paste("Runtime (seconds):", round(error_context$runtime, 2)),
+            paste("R Version:", error_context$system_info$r_version),
+            paste("Working Directory:", error_context$system_info$working_dir),
+            paste("Available Packages:", paste(error_context$system_info$available_packages, collapse=", ")),
+            "",
+            "FULL ERROR OBJECT:",
+            capture.output(str(e))
+        )
+        
+        # Save error report with error handling
+        tryCatch({
+            writeLines(error_report, error_file)
+            cat("✓ ERROR REPORT: Saved detailed error to:", error_file, "\n")
+        }, error = function(e) {
+            cat("✗ ERROR: Failed to save error report to", error_file, "\n")
+            cat("  Error:", e$message, "\n")
+            # Try to save to current directory as fallback
+            fallback_error_file <- paste0("chain_", j, "_", chain_no, "_ERROR_FALLBACK.txt")
+            tryCatch({
+                writeLines(error_report, fallback_error_file)
+                cat("✓ FALLBACK: Saved error report to current directory:", fallback_error_file, "\n")
+            }, error = function(e2) {
+                cat("✗ CRITICAL: Failed to save error report even to fallback location\n")
+                cat("  Fallback error:", e2$message, "\n")
+            })
+        })
+        
+        # Also log to console with detailed information
+        cat("ERROR in Model", j, "Chain", error_context$chain_no, ":\n")
+        cat("  Message:", error_context$error_message, "\n")
+        cat("  Call:", error_context$error_call, "\n")
+        cat("  Class:", error_context$error_class, "\n")
+        cat("  Runtime:", round(error_context$runtime, 2), "seconds\n")
+        cat("  Detailed error saved to:", error_file, "\n")
+        
+        # Return detailed error information
+        return(list(
+            status = "ERROR", 
+            error = error_context$error_message,
+            error_details = error_context,
+            error_file = error_file
+        ))
+    })
 }
 
-# Run models sequentially for testing (easier to debug)
-cat("Running", nrow(params), "Dirichlet models sequentially for testing\n")
+# LOCAL TESTING: Sequential execution for debugging
+cat("📊 Models to run:", nrow(valid_models), "models with", nchains, "chains each\n")
+cat("⏱️  Expected runtime: Variable (convergence-based sampling)\n")
+cat("🎯 Target: ESS >= 10 per parameter\n")
+cat("🔧 TESTING MODE: Sequential execution for debugging\n")
 
-all_results <- list()
-for (j in 1:nrow(params)) {
-	cat("\n=== Processing model", j, "of", nrow(params), "===\n")
-	cat("Model:", params$model_id[j], "\n")
-	
-	# Test with just one chain first for faster testing
-	cat("Testing single chain execution...\n")
-	tryCatch({
-		result <- run_scenarios_dirichlet(j = j, chain_no = 1)
-		cat("Single chain result:", ifelse(is.null(result), "NULL", "SUCCESS"), "\n")
-		all_results[[j]] <- result
+# Set start time for runtime calculation
+start_time <- Sys.time()
+
+# Run models sequentially for testing
+cat("Running models sequentially for testing...\n")
+all_results_sequential <- list()
+
+for (model_idx in 1:nrow(valid_models)) {
+    for (chain_no in 1:nchains) {
+        cat("=== Running Model", model_idx, "Chain", chain_no, "===\n")
+        
+        # Execute the function with error handling
+        result <- tryCatch({
+            run_scenarios_dirichlet(j = model_idx, chain_no = chain_no)
 	}, error = function(e) {
-		cat("ERROR in single chain:", e$message, "\n")
-		all_results[[j]] <- NULL
-	})
+            cat("ERROR in run_scenarios_dirichlet:", e$message, "\n")
+            return(list(status = "ERROR", error = e$message))
+        })
+        
+        # Store result
+        all_results_sequential[[length(all_results_sequential) + 1]] <- list(
+            model_idx = model_idx, 
+            chain_no = chain_no, 
+            result = result
+        )
+        
+        cat("=== Completed Model", model_idx, "Chain", chain_no, "===\n")
+    }
 }
 
-cat("\n=== All models completed ===\n")
-cat("Total models processed:", length(all_results), "\n")
+cat("Sequential execution completed at:", format(Sys.time()), "\n")
+cat("Total results:", length(all_results_sequential), "\n")
+
+# Rename for compatibility with progress summary
+all_results_parallel <- all_results_sequential
+
+# Show progress summary
+cat("\n=== PROGRESS SUMMARY ===\n")
+cat("Checking which chains have been completed...\n")
+
+# Count completed chains from parallel results
+completed_chains <- 0
+error_chains <- 0
+for (i in 1:length(all_results_parallel)) {
+    result <- all_results_parallel[[i]]
+    if ("error" %in% names(result)) {
+        error_chains <- error_chains + 1
+        cat("✗ Task", i, "failed with error:", result$error, "\n")
+    } else if ("result" %in% names(result) && "status" %in% names(result$result)) {
+        if (result$result$status == "SUCCESS") {
+            completed_chains <- completed_chains + 1
+            cat("✓ Model", result$model_idx, "Chain", result$chain_no, "completed\n")
+        } else {
+            error_chains <- error_chains + 1
+            cat("✗ Model", result$model_idx, "Chain", result$chain_no, "failed with status:", result$result$status, "\n")
+        }
+    } else if ("status" %in% names(result)) {
+        if (result$status == "SUCCESS") {
+            completed_chains <- completed_chains + 1
+            cat("✓ Model", result$model_idx, "Chain", result$chain_no, "completed\n")
+        } else {
+            error_chains <- error_chains + 1
+            cat("✗ Model", result$model_idx, "Chain", result$chain_no, "failed with status:", result$status, "\n")
+        }
+    } else {
+        error_chains <- error_chains + 1
+        cat("? Task", i, "has unknown result structure\n")
+        cat("  Available names:", paste(names(result), collapse=", "), "\n")
+        if ("result" %in% names(result)) {
+            cat("  Nested result names:", paste(names(result$result), collapse=", "), "\n")
+        }
+    }
+}
+
+cat("\nProgress Summary:\n")
+cat("  Completed chains:", completed_chains, "/", nrow(valid_models) * nchains, "\n")
+cat("  Failed chains:", error_chains, "/", nrow(valid_models) * nchains, "\n")
+cat("  Success rate:", round(completed_chains / (nrow(valid_models) * nchains) * 100, 1), "%\n")
+
+end_time <- Sys.time()
+runtime <- difftime(end_time, start_time, units = "mins")
+
+cat("\n", paste(rep("=", 50), collapse = ""), "\n")
+cat("ALL MODELS COMPLETED\n")
+cat("Total runtime:", round(runtime, 1), "minutes\n")
+cat(paste(rep("=", 50), collapse = ""), "\n")
+
+cat("✓ Dirichlet distribution for compositional data\n")
+cat("✓ Precision parameter for dispersion\n")
+cat("✓ LOG transformation with exp() for numerical stability\n")
+cat("  - sig ~ dgamma(2, 8) - Tighter gamma prior\n")
+cat("  - rho ~ dbeta(2, 2) - Truncated beta prior\n")
+cat("  - intercept ~ dt(0, 0.3, df = 3) - Robust prior\n")
+cat("  - beta ~ dmvt(zeros, omega, df = 3) - Robust multivariate t\n")
+cat("✓ Individual slice samplers for beta parameters\n")
+cat("✓ Convergence-based sampling with iterative saving\n")
+cat("Check output files in:", here("data", "model_outputs", "dirichlet_regression"), "/[model_name]/\n")

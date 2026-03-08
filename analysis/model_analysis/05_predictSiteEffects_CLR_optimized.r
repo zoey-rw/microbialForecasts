@@ -70,14 +70,32 @@ model_types <- c("cycl_only", "env_cov", "env_cycl")
 for(model_type in model_types) {
   unobserved_file <- here(paste0("data/summary/site_effects_unobserved_", model_type, "_CLR.rds"))
   if(file.exists(unobserved_file)) {
-    unobserved_data[[model_type]] <- readRDS(unobserved_file)
-    cat("Pre-loaded unobserved data for", model_type, ":", nrow(unobserved_data[[model_type]]), "sites\n")
+    temp_data <- readRDS(unobserved_file)
+    # Handle list structure - extract the data frame
+    if(is.list(temp_data) && length(temp_data) > 0 && is.data.frame(temp_data[[1]])) {
+      unobserved_data[[model_type]] <- temp_data[[1]]
+      cat("Pre-loaded unobserved data for", model_type, ":", nrow(unobserved_data[[model_type]]), "sites\n")
+    } else if(is.data.frame(temp_data)) {
+      unobserved_data[[model_type]] <- temp_data
+      cat("Pre-loaded unobserved data for", model_type, ":", nrow(unobserved_data[[model_type]]), "sites\n")
+    } else {
+      cat("Warning: Unexpected data structure in", unobserved_file, "\n")
+    }
   } else {
     # Try fallback to regular unobserved data
     fallback_file <- here(paste0("data/summary/site_effects_unobserved_", model_type, ".rds"))
     if(file.exists(fallback_file)) {
-      unobserved_data[[model_type]] <- readRDS(fallback_file)
-      cat("Pre-loaded fallback unobserved data for", model_type, ":", nrow(unobserved_data[[model_type]]), "sites\n")
+      temp_data <- readRDS(fallback_file)
+      # Handle list structure - extract the data frame
+      if(is.list(temp_data) && length(temp_data) > 0 && is.data.frame(temp_data[[1]])) {
+        unobserved_data[[model_type]] <- temp_data[[1]]
+        cat("Pre-loaded fallback unobserved data for", model_type, ":", nrow(unobserved_data[[model_type]]), "sites\n")
+      } else if(is.data.frame(temp_data)) {
+        unobserved_data[[model_type]] <- temp_data
+        cat("Pre-loaded fallback unobserved data for", model_type, ":", nrow(unobserved_data[[model_type]]), "sites\n")
+      } else {
+        cat("Warning: Unexpected data structure in", fallback_file, "\n")
+      }
     } else {
       cat("Warning: Unobserved data file not found:", unobserved_file, "\n")
     }
@@ -95,11 +113,10 @@ cat("Processing", length(model_id_list), "CLR models sequentially\n")
 cat("Models:", paste(model_id_list, collapse=", "), "\n")
 
 # OPTIMIZATION: Pre-define predictor list to avoid repeated creation
-# Mehlich III extractable metals replace former oxalate columns (megapit update)
 pred_list <- c("MAT", "MAP", "latitude_scaled",
                "caNh4d", "kNh4d", "mgNh4d",
-               "naNh4d", "cecdNh4", "feMjelm", "mnMjelm",
-               "pMjelm", "siMjelm", "totalP")
+               "naNh4d", "cecdNh4", "feOxalate", "mnOxalate",
+               "pOxalate", "siOxalate", "totalP")
 
 # TESTING: Use sequential processing for debugging
 cat("Using sequential processing for debugging\n")
@@ -189,7 +206,7 @@ for(s in model_id_list) {
     # OPTIMIZATION: Limit dredge to max 5 predictors to reduce computation
     dredge_result <- tryCatch({
       dredge(base_model, 
-             subset = dc(MAT, MAP, latitude_scaled, caNh4d, kNh4d, mgNh4d, naNh4d, cecdNh4, feMjelm, mnMjelm, pMjelm, siMjelm, totalP) <= 5,
+             subset = dc(MAT, MAP, latitude_scaled, caNh4d, kNh4d, mgNh4d, naNh4d, cecdNh4, feOxalate, mnOxalate, pOxalate, siOxalate, totalP) <= 5,
              rank = "AICc",
              trace = FALSE)
     }, error = function(e) {

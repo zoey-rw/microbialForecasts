@@ -1,15 +1,11 @@
 # Process and tidy CLR hindcast outputs for downstream analysis
 # This script processes the raw CLR hindcast data and prepares it for scoring metrics
 
-source("../../source_local.R")
+source("../../source.R")
+library(data.table)
+library(dplyr)
 
 cat("=== CLR Hindcast Processing and Tidying ===\n\n")
-
-# Load data.table for optimization
-if (!require(data.table, quietly = TRUE)) {
-  install.packages("data.table")
-}
-library(data.table)
 
 # Try to load CLR hindcasts first, then fall back to regular hindcasts if needed
 clr_hindcasts_file <- here("data/model_outputs/CLR_hindcasts.rds")
@@ -36,6 +32,9 @@ if (length(missing_cols) > 0) {
   stop("Missing required columns for hindcast processing")
 }
 
+# Convert to data.table for better performance
+all_hindcasts <- as.data.table(all_hindcasts)
+
 # Basic data validation
 cat("\nData Validation:\n")
 cat("Total forecasts:", nrow(all_hindcasts), "\n")
@@ -50,103 +49,83 @@ missing_lo <- sum(is.na(all_hindcasts$lo))
 missing_hi <- sum(is.na(all_hindcasts$hi))
 
 cat("Missing values:\n")
-cat("  Median:", missing_med, "(", round(100*missing_med/nrow(all_hindcasts), 1), "%)\n")
-cat("  Lower bound:", missing_lo, "(", round(100*missing_lo/nrow(all_hindcasts), 1), "%)\n")
-cat("  Upper bound:", missing_hi, "(", round(100*missing_hi/nrow(all_hindcasts), 1), "%)\n")
+cat("  med:", missing_med, "\n")
+cat("  lo:", missing_lo, "\n")
+cat("  hi:", missing_hi, "\n")
 
-# Remove rows with missing critical values
+# Clean data - remove rows with missing critical values
 cat("\nCleaning data...\n")
-initial_rows <- nrow(all_hindcasts)
-all_hindcasts_clean <- all_hindcasts %>%
-  filter(!is.na(med), !is.na(lo), !is.na(hi))
+all_hindcasts_clean <- all_hindcasts[!is.na(med) & !is.na(lo) & !is.na(hi)]
+cat("After cleaning:", nrow(all_hindcasts_clean), "rows\n")
 
-cat("Rows after cleaning:", nrow(all_hindcasts_clean), "\n")
-cat("Rows removed:", initial_rows - nrow(all_hindcasts_clean), "\n")
-
-# Add additional metadata columns if they don't exist
-if (!"rank.name" %in% colnames(all_hindcasts_clean)) {
-  cat("Adding rank.name column...\n")
-  all_hindcasts_clean$rank.name <- sapply(strsplit(all_hindcasts_clean$model_id, "_"), function(x) x[2])
-}
-
-if (!"taxon" %in% colnames(all_hindcasts_clean)) {
-  cat("Adding taxon column...\n")
-  all_hindcasts_clean$taxon <- sapply(strsplit(all_hindcasts_clean$model_id, "_"), function(x) x[3])
-}
-
-if (!"time_period" %in% colnames(all_hindcasts_clean)) {
-  cat("Adding time_period column...\n")
-  all_hindcasts_clean$time_period <- sapply(strsplit(all_hindcasts_clean$model_id, "_"), function(x) paste(x[4:5], collapse="_"))
-}
-
-if (!"model_name" %in% colnames(all_hindcasts_clean)) {
-  cat("Adding model_name column...\n")
-  all_hindcasts_clean$model_name <- sapply(strsplit(all_hindcasts_clean$model_id, "_"), function(x) x[1])
-}
-
-# Add group classification
-cat("Adding group classification...\n")
-all_hindcasts_clean$group <- ifelse(grepl("bac|16S", all_hindcasts_clean$rank.name), "16S", "ITS")
-all_hindcasts_clean$pretty_group <- ifelse(all_hindcasts_clean$group == "16S", "Bacteria", "Fungi")
-
-# Add rank classification
-cat("Adding rank classification...\n")
-all_hindcasts_clean$rank_only <- sapply(strsplit(all_hindcasts_clean$rank.name, "_"), function(x) x[1])
-
-# Add forecast type classification
-cat("Adding forecast type classification...\n")
-all_hindcasts_clean$fcast_type <- "CLR"  # All CLR models
-
-# Add pretty names for ranks
-cat("Adding pretty rank names...\n")
-rank_names_map <- c(
-  "phylum" = "Phylum",
-  "class" = "Class", 
-  "order" = "Order",
-  "family" = "Family",
-  "genus" = "Genus",
-  "functional" = "Functional group"
-)
-all_hindcasts_clean$pretty_name <- rank_names_map[all_hindcasts_clean$rank_only]
-
-# Add year and month columns for temporal analysis
-cat("Adding temporal columns...\n")
-all_hindcasts_clean$year <- lubridate::year(all_hindcasts_clean$dates)
-all_hindcasts_clean$month <- lubridate::month(all_hindcasts_clean$dates)
-all_hindcasts_clean$season <- case_when(
-  all_hindcasts_clean$month %in% c(12, 1, 2) ~ "Winter",
-  all_hindcasts_clean$month %in% c(3, 4, 5) ~ "Spring", 
-  all_hindcasts_clean$month %in% c(6, 7, 8) ~ "Summer",
-  all_hindcasts_clean$month %in% c(9, 10, 11) ~ "Fall"
-)
+# Add derived columns for analysis
+cat("\nAdding derived columns...\n")
 
 # Add uncertainty measures
-cat("Adding uncertainty measures...\n")
-all_hindcasts_clean$uncertainty <- all_hindcasts_clean$hi - all_hindcasts_clean$lo
-all_hindcasts_clean$uncertainty_50 <- all_hindcasts_clean$hi_75 - all_hindcasts_clean$lo_25
+all_hindcasts_clean[, uncertainty := hi - lo]
+all_hindcasts_clean[, uncertainty_50 := hi_75 - lo_25]
 
-# Add forecast horizon (days from start of forecast period)
-cat("Adding forecast horizon...\n")
-all_hindcasts_clean <- all_hindcasts_clean %>%
-  group_by(model_id, plotID) %>%
-  mutate(
-    min_date = min(dates, na.rm=TRUE),
-    forecast_horizon = as.numeric(difftime(dates, min_date, units="days"))
-  ) %>%
-  ungroup()
+# Add model metadata if missing
+if (!"model_name" %in% colnames(all_hindcasts_clean)) {
+  all_hindcasts_clean[, model_name := "CLR"]
+}
 
-# Quality checks
-cat("\nQuality Checks:\n")
-cat("Forecasts with valid uncertainty:", sum(all_hindcasts_clean$uncertainty > 0, na.rm=TRUE), "\n")
-cat("Forecasts with valid 50% uncertainty:", sum(all_hindcasts_clean$uncertainty_50 > 0, na.rm=TRUE), "\n")
-cat("Forecasts with reasonable bounds (lo < med < hi):", 
-    sum(all_hindcasts_clean$lo < all_hindcasts_clean$med & 
-         all_hindcasts_clean$med < all_hindcasts_clean$hi, na.rm=TRUE), "\n")
+if (!"fcast_type" %in% colnames(all_hindcasts_clean)) {
+  all_hindcasts_clean[, fcast_type := "CLR"]
+}
 
-# Summary statistics by model
-cat("\nSummary by Model:\n")
+if (!"pretty_group" %in% colnames(all_hindcasts_clean)) {
+  all_hindcasts_clean[, pretty_group := "CLR"]
+}
+
+# Add site prediction if missing
+if (!"site_prediction" %in% colnames(all_hindcasts_clean)) {
+  all_hindcasts_clean[, site_prediction := "CLR Model"]
+}
+
+# Add timepoint if missing
+if (!"timepoint" %in% colnames(all_hindcasts_clean)) {
+  all_hindcasts_clean[, timepoint := date_num]
+}
+
+# Add start date processing for script 8 compatibility
+cat("\nAdding start date information...\n")
+
+# Add required columns for script 8 compatibility
+# Now that hindcast functions include plot_start and site_start, use those values
+all_hindcasts_clean[, is_site_start_date := FALSE]
+all_hindcasts_clean[, is_plot_start_date := FALSE]
+all_hindcasts_clean[, is_any_start_date := FALSE]
+
+# Use the actual start date values from the hindcast functions
+if ("site_start" %in% colnames(all_hindcasts_clean)) {
+  all_hindcasts_clean[, site_start_date := site_start]
+} else {
+  all_hindcasts_clean[, site_start_date := NA]
+}
+
+if ("plot_start" %in% colnames(all_hindcasts_clean)) {
+  all_hindcasts_clean[, plot_start_date := plot_start]
+} else {
+  all_hindcasts_clean[, plot_start_date := NA]
+}
+
+# Determine if dates are start dates using the actual start date values
+if ("site_start_date" %in% colnames(all_hindcasts_clean) && "plot_start_date" %in% colnames(all_hindcasts_clean)) {
+  all_hindcasts_clean[, is_site_start_date := (date_num == site_start_date)]
+  all_hindcasts_clean[, is_plot_start_date := (date_num == plot_start_date)]
+  all_hindcasts_clean[, is_any_start_date := (is_site_start_date | is_plot_start_date)]
+} else {
+  # Fallback if start date columns don't exist
+  all_hindcasts_clean[, is_site_start_date := FALSE]
+  all_hindcasts_clean[, is_plot_start_date := FALSE]
+  all_hindcasts_clean[, is_any_start_date := FALSE]
+}
+
+# Model summary
+cat("\nModel Summary:\n")
 model_summary <- all_hindcasts_clean %>%
-  group_by(model_id, model_name, rank.name, taxon, group) %>%
+  group_by(model_id, model_name) %>%
   summarise(
     n_forecasts = n(),
     n_plots = n_distinct(plotID),

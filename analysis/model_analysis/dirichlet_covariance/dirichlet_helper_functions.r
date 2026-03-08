@@ -12,12 +12,12 @@ initsFun_dirichlet <- function(constants, type = "tax") {
     y_init <- matrix(rep(rep(1/constants$N.spp, constants$N.spp), constants$N.core),
                      ncol = constants$N.spp, nrow = constants$N.core)
     
-    # Initialize plot means for each taxon and time
-    plot_mu_init <- array(rnorm(constants$N.plot * constants$N.spp * constants$N.date, 0.5, 0.1),
-                          dim = c(constants$N.plot, constants$N.spp, constants$N.date))
+    # Initialize concentration parameters for each taxon and time
+    alpha_init <- array(rgamma(constants$N.plot * constants$N.spp * constants$N.date, 1, 1),
+                        dim = c(constants$N.plot, constants$N.spp, constants$N.date))
     
-    # Ensure positive values for gamma distribution
-    plot_mu_init <- pmax(plot_mu_init, 0.001)
+    # Ensure positive values for Dirichlet concentration parameters
+    alpha_init <- pmax(alpha_init, 0.001)
     
     # Initialize relative abundances
     plot_rel_init <- array(rep(rep(rep(1/constants$N.spp, constants$N.spp), constants$N.plot), constants$N.date),
@@ -44,11 +44,11 @@ initsFun_dirichlet <- function(constants, type = "tax") {
     sig_init <- 0.1
     
     # Initialize expected values
-    Ex_init <- plot_mu_init
+    Ex_init <- alpha_init
     
     return(list(
       y = y_init,
-      plot_mu = plot_mu_init,
+      alpha = alpha_init,
       plot_rel = plot_rel_init,
       beta = beta_init,
       rho = rho_init,
@@ -117,19 +117,57 @@ parse_model_id <- function(model_id) {
   # Split by underscores
   parts <- strsplit(model_id, "_")[[1]]
   
+  # CRITICAL FIX: Improved model ID parsing with better error handling
   # Extract components based on expected format
   # Format: model_name_taxon_time_period
   if (length(parts) >= 3) {
     model_name <- parts[1]
+    
+    # CRITICAL FIX: More robust model name detection
     if (parts[2] == "env" && parts[3] == "cycl") {
       model_name <- "env_cycl"
-      taxon <- parts[4]
-      time_period <- paste(parts[5:6], collapse = "_")
+      # Find taxon after "cycl" and before date pattern
+      taxon_start <- 4
+      date_idx <- which(grepl("^[0-9]{8}$", parts))
+      if (length(date_idx) > 0 && taxon_start < date_idx[1]) {
+        taxon_parts <- parts[taxon_start:(date_idx[1]-1)]
+        # Filter out non-taxon parts
+        taxon_parts <- taxon_parts[!taxon_parts %in% c("with", "legacy", "covariate", "beta", "regression")]
+        taxon <- if (length(taxon_parts) > 0) paste(taxon_parts, collapse = "_") else "unknown"
+      } else {
+        taxon <- "unknown"
+      }
+      time_period <- if (length(date_idx) >= 2) paste(parts[date_idx[1]:date_idx[2]], collapse = "_") else "unknown"
     } else if (parts[2] == "env" && parts[3] == "cov") {
       model_name <- "env_cov"
-      taxon <- parts[4]
-      time_period <- paste(parts[5:6], collapse = "_")
+      # Find taxon after "cov" and before date pattern
+      taxon_start <- 4
+      date_idx <- which(grepl("^[0-9]{8}$", parts))
+      if (length(date_idx) > 0 && taxon_start < date_idx[1]) {
+        taxon_parts <- parts[taxon_start:(date_idx[1]-1)]
+        # Filter out non-taxon parts
+        taxon_parts <- taxon_parts[!taxon_parts %in% c("with", "legacy", "covariate", "beta", "regression")]
+        taxon <- if (length(taxon_parts) > 0) paste(taxon_parts, collapse = "_") else "unknown"
+      } else {
+        taxon <- "unknown"
+      }
+      time_period <- if (length(date_idx) >= 2) paste(parts[date_idx[1]:date_idx[2]], collapse = "_") else "unknown"
+    } else if (parts[1] == "cycl" && parts[2] == "only") {
+      model_name <- "cycl_only"
+      # Find taxon after "only" and before date pattern
+      taxon_start <- 3
+      date_idx <- which(grepl("^[0-9]{8}$", parts))
+      if (length(date_idx) > 0 && taxon_start < date_idx[1]) {
+        taxon_parts <- parts[taxon_start:(date_idx[1]-1)]
+        # Filter out non-taxon parts
+        taxon_parts <- taxon_parts[!taxon_parts %in% c("with", "legacy", "covariate", "beta", "regression")]
+        taxon <- if (length(taxon_parts) > 0) paste(taxon_parts, collapse = "_") else "unknown"
+      } else {
+        taxon <- "unknown"
+      }
+      time_period <- if (length(date_idx) >= 2) paste(parts[date_idx[1]:date_idx[2]], collapse = "_") else "unknown"
     } else {
+      # Fallback for other formats
       taxon <- parts[2]
       time_period <- paste(parts[3:4], collapse = "_")
     }
@@ -137,6 +175,12 @@ parse_model_id <- function(model_id) {
     model_name <- "unknown"
     taxon <- "unknown"
     time_period <- "unknown"
+  }
+  
+  # CRITICAL FIX: Validate extracted values
+  if (is.null(taxon) || nchar(taxon) == 0 || taxon %in% c("", "NA", "unknown")) {
+    warning("Could not extract valid taxon name from model_id: ", model_id)
+    taxon <- "unknown"
   }
   
   # Determine rank and group

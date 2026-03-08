@@ -5,7 +5,7 @@ library(ggpubr)
 library(scoringRules)
 
 clr_summaries <- readRDS(here("data/summary/clr_regression_summaries.rds"))
-beta_summaries <- readRDS(here("data/summary/logit_beta_regression_summaries.rds"))
+beta_summaries <- readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
 
 beta_mean_abun = beta_summaries$plot_est %>% filter(!is.na(truth)) %>% 
 	group_by(model_id) %>% summarize(beta_mean_abun = mean(truth))

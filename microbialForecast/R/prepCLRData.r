@@ -52,9 +52,18 @@ prepCLRData <- function(rank.df,
 	
 	
 	
-	# CLR TRANSFORM
-	clr_result <- compositions::clr(dat[,7:ncol(dat)])
-	# Convert to matrix first, then to data frame
+	# CLR TRANSFORM (WITH ZERO AND NA HANDLING)
+	taxa_mat <- as.matrix(dat[,7:ncol(dat)])
+	mode(taxa_mat) <- "numeric"
+
+	# CRITICAL FIX: Handle NAs (unobserved taxa) before doing math
+	taxa_mat[is.na(taxa_mat)] <- 0
+
+	# Add a tiny pseudocount to handle exact zeros, then re-normalize
+	taxa_mat[taxa_mat == 0] <- 1e-6
+	taxa_mat <- taxa_mat / rowSums(taxa_mat)
+
+	clr_result <- compositions::clr(taxa_mat)
 	clr_matrix <- as.matrix(clr_result)
 	dat <- cbind.data.frame(dat[,1:6], clr_matrix)
 	
@@ -208,11 +217,25 @@ prepCLRData <- function(rank.df,
 									 sample_values = expanded_dat
 	)
 	
-	# subset covariates to plots/sites that have been observed for multiple (min.prev) dates, and before the max date
-	filt_predictor_data <- lapply(predictor_data, filter_date_site, keep_sites = keep_sites,
-																keep_plots = keep_plots, min.date = min.date,
-																max.date = max.date, max.predictor.date)
-	names(filt_predictor_data) <- recode(names(filt_predictor_data), relEM_plot = "relEM")
+	# CRITICAL FIX: Use filter_date_site to ensure clean environmental matrices
+	keep_plots <- as.character(unique(keep_plots))
+	keep_sites <- as.character(unique(keep_sites))
+
+	if (full_timeseries) {
+		# For full time series, use the full environmental data range
+		env_min_date <- min(colnames(predictor_data$temp))
+		env_max_date <- max(colnames(predictor_data$temp))
+		env_max_predictor_date <- paste0(substr(env_max_date, 1, 4), "-", substr(env_max_date, 5, 6), "-01")
+		filt_predictor_data <- lapply(predictor_data, filter_date_site, keep_sites = keep_sites,
+																	keep_plots = keep_plots, min.date = env_min_date,
+																	max.date = env_max_date, max.predictor.date = env_max_predictor_date)
+	} else {
+		# For regular processing, use the taxonomic data range
+		filt_predictor_data <- lapply(predictor_data, filter_date_site, keep_sites = keep_sites,
+																	keep_plots = keep_plots, min.date = min.date,
+																	max.date = max.date, max.predictor.date = NULL)
+	}
+	names(filt_predictor_data) <- dplyr::recode(names(filt_predictor_data), relEM_plot = "relEM")
 
 	# CRITICAL FIX: Handle LAI data structure - convert data.frame to matrix
 	if ("LAI" %in% names(filt_predictor_data)) {
@@ -220,14 +243,18 @@ prepCLRData <- function(rank.df,
 			filt_predictor_data$LAI <- as.matrix(filt_predictor_data$LAI)
 		}
 	}
-	
+
 	# Add sine/cosine
 	sin_cos_month <- get_sin_cos(colnames(filt_predictor_data$mois))
 	filt_predictor_data$sin_mo = sin_cos_month$sin
 	filt_predictor_data$cos_mo = sin_cos_month$cos
-	
+
 	out.list <- c(out.list, filt_predictor_data)
-	
+
+	# EXPORT all_dates to cleanly align the legacy covariate
+	out.list$all_dates <- as.Date(paste0(substr(colnames(filt_predictor_data$temp), 1, 4), "-",
+																			 substr(colnames(filt_predictor_data$temp), 5, 6), "-01"))
+
 	return(out.list)
 }
 

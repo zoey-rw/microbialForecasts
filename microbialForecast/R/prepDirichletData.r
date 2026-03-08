@@ -41,157 +41,145 @@ prepDirichletData <- function(rank.df,
 	plotID <- unique(dat$plotID)
 	dateID <- unique(dat$dateID)
 
-	# For Dirichlet models, we need to identify which taxa to keep
-	# Get all non-metadata columns (these are the taxa)
+	# For Dirichlet models, we need at least 3 taxa (composition requires multiple components)
 	metadata_cols <- c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date")
 	taxa_cols <- setdiff(colnames(dat), metadata_cols)
-	
-	# Filter to top 3 taxa plus "other" category (ultra-reduced complexity for Dirichlet)
 	taxa_prevalence <- sapply(taxa_cols, function(taxa) sum(dat[[taxa]] > 0, na.rm = TRUE))
 	taxa_prevalence <- taxa_prevalence[order(taxa_prevalence, decreasing = TRUE)]
-	
-	# Keep top 3 taxa
-	top_taxa <- names(taxa_prevalence)[1:min(3, length(taxa_prevalence))]
-	
-	# Create "other" category by summing remaining taxa
-	other_taxa <- names(taxa_prevalence)[4:length(taxa_prevalence)]
+
+	if (length(taxa_prevalence) < 3) {
+		stop("Dirichlet model requires at least 3 taxa; this rank has ", length(taxa_prevalence), ".")
+	}
+
+	# Keep top 3 taxa; optionally sum the rest into "other"
+	top_taxa <- names(taxa_prevalence)[1:3]
+	other_taxa <- if (length(taxa_prevalence) > 3) names(taxa_prevalence)[4:length(taxa_prevalence)] else character(0)
 	if (length(other_taxa) > 0) {
 		dat$other <- rowSums(dat[, other_taxa, drop = FALSE], na.rm = TRUE)
 		keep_taxa <- c(top_taxa, "other")
 	} else {
-		# If we have 3 or fewer taxa, just use them all
 		keep_taxa <- top_taxa
 	}
-	
-	# Remove the original taxa columns that are not in keep_taxa
-	# This prevents duplication issues
+
 	remove_taxa <- setdiff(taxa_cols, keep_taxa)
 	if (length(remove_taxa) > 0) {
 		dat <- dat[, !colnames(dat) %in% remove_taxa]
 	}
-	
-	if (length(keep_taxa) == 0) {
-		stop("No taxa available for Dirichlet modeling")
-	}
-	cat("Keeping", length(keep_taxa, "\n"), "taxa (top 3 + other) for Dirichlet modeling\n")
-	
+	cat("Keeping", length(keep_taxa), "taxa (top 3 + other) for Dirichlet modeling\n")
+
 	# Note: y matrix will be created after all NA filtering is complete
-	
-	# Create timepoint mapping
-	unique_dates <- sort(unique(dat$dateID))
-	# Remove any NA values from unique_dates
-	unique_dates <- unique_dates[!is.na(unique_dates)]
-	date_to_timepoint <- setNames(1:length(unique_dates), unique_dates)
-	timepoint <- date_to_timepoint[as.character(dat$dateID)]
-	
-	# Handle any NA values in timepoint by filtering out those rows
-	if (any(is.na(timepoint))) {
-		cat("WARNING: Found", sum(is.na(timepoint, "\n")), "NA values in timepoint, filtering out these rows\n")
-		# Filter out rows with NA timepoint
-		valid_rows <- !is.na(timepoint)
-		dat <- dat[valid_rows, ]
-		timepoint <- timepoint[valid_rows]
-		cat("  Filtered to", nrow(dat, "\n"), "rows after removing NA timepoint values\n")
+
+	# --- CRITICAL FIX: Date Reconstruction ---
+	if (!"dateID" %in% colnames(dat)) stop("Required column 'dateID' missing")
+	if (any(is.na(dat$dateID))) {
+		na_mask <- is.na(dat$dateID)
+		if ("sampleID" %in% colnames(dat)) {
+			try({
+				parsed <- parseNEONsampleIDs(dat$sampleID[na_mask])
+				if ("dateID" %in% colnames(parsed)) {
+					dat$dateID[na_mask] <- suppressWarnings(as.numeric(as.character(parsed$dateID)))
+				}
+			}, silent = TRUE)
+		}
+		if (any(is.na(dat$dateID)) && "dates" %in% colnames(dat)) {
+			dat$dateID[is.na(dat$dateID)] <- as.numeric(format(as.Date(dat$dates[is.na(dat$dateID)]), "%Y%m"))
+		}
+		dat <- dat[!is.na(dat$dateID), ]
 	}
-	
-	# Create plot mapping
+
+	# --- CRITICAL FIX: Continuous Timeline for AR(1) ---
+	poss_dateID <- as.numeric(format(seq.Date(as.Date(min.date, format = "%Y%m%d"), as.Date(max.date, format = "%Y%m%d"), by = "month"), "%Y%m"))
+
+	date_to_timepoint <- setNames(1:length(poss_dateID), poss_dateID)
+	timepoint <- date_to_timepoint[as.character(dat$dateID)]
+
+	dat <- dat[!is.na(timepoint), ]
+	timepoint <- timepoint[!is.na(timepoint)]
+
+	# Create plot and site mappings
 	unique_plots <- sort(unique(dat$plotID))
-	# Remove any NA values from unique_plots
-	unique_plots <- unique_plots[!is.na(unique_plots)]
 	plot_to_num <- setNames(1:length(unique_plots), unique_plots)
 	plot_num <- plot_to_num[as.character(dat$plotID)]
-	
-	# Handle any NA values in plot_num by filtering out those rows
-	if (any(is.na(plot_num))) {
-		cat("WARNING: Found", sum(is.na(plot_num, "\n")), "NA values in plot_num, filtering out these rows\n")
-		# Filter out rows with NA plot_num
-		valid_rows <- !is.na(plot_num)
-		dat <- dat[valid_rows, ]
-		plot_num <- plot_num[valid_rows]
-		timepoint <- timepoint[valid_rows]  # Also update timepoint to match
-		cat("  Filtered to", nrow(dat, "\n"), "rows after removing NA plot_num values\n")
-	}
-	
-	# Create site mapping
+
 	unique_sites <- sort(unique(dat$siteID))
-	# Remove any NA values from unique_sites
-	unique_sites <- unique_sites[!is.na(unique_sites)]
 	site_to_num <- setNames(1:length(unique_sites), unique_sites)
 	site_num <- site_to_num[as.character(dat$siteID)]
-	
-	# Handle any NA values in site_num by filtering out those rows
-	if (any(is.na(site_num))) {
-		cat("WARNING: Found", sum(is.na(site_num, "\n")), "NA values in site_num, filtering out these rows\n")
-		# Filter out rows with NA site_num
-		valid_rows <- !is.na(site_num)
-		dat <- dat[valid_rows, ]
-		site_num <- site_num[valid_rows]
-		plot_num <- plot_num[valid_rows]  # Also update plot_num to match
-		timepoint <- timepoint[valid_rows]  # Also update timepoint to match
-		cat("  Filtered to", nrow(dat, "\n"), "rows after removing NA site_num values\n")
-	}
-	
+
 	# Create plot_site_num mapping
-	plot_site_num <- rep(NA, length(unique_plots))
-	for (i in 1:length(unique_plots)) {
-		plot_id <- unique_plots[i]
-		plot_data <- dat[dat$plotID == plot_id, ]
-		if (nrow(plot_data) > 0) {
-			site_id <- unique(plot_data$siteID)[1]
-			plot_site_num[i] <- site_to_num[as.character(site_id)]
-		}
-	}
-	
-	# Create plot_start mapping (first timepoint for each plot)
-	plot_start <- rep(1, length(unique_plots))
-	for (i in 1:length(unique_plots)) {
-		plot_id <- unique_plots[i]
-		plot_data <- dat[dat$plotID == plot_id, ]
-		if (nrow(plot_data) > 0) {
-			plot_timepoints <- date_to_timepoint[as.character(plot_data$dateID)]
-			plot_start[i] <- min(plot_timepoints, na.rm = TRUE)
-		}
-	}
-	
-	# Create plot_index (for compatibility with existing code)
+	plot_site_num <- sapply(unique_plots, function(p) {
+		site_to_num[as.character(dat$siteID[dat$plotID == p][1])]
+	})
+
+	# Create plot_start relative to continuous timeline
+	plot_start <- sapply(unique_plots, function(p) {
+		min(date_to_timepoint[as.character(dat$dateID[dat$plotID == p])], na.rm = TRUE)
+	})
+
 	plot_index <- 1:length(unique_plots)
-	
-	# Create site_start (for compatibility with existing code)
-	site_start <- rep(1, length(unique_sites))
-	
-	# Create truth.plot.long (for compatibility with existing code)
-	truth.plot.long <- dat[, c("plotID", "dateID", "sampleID")]
-	
-	# Create dates_per_plot (for compatibility with existing code)
-	dates_per_plot <- rep(1, length(unique_plots))
-	for (i in 1:length(unique_plots)) {
-		plot_id <- unique_plots[i]
-		plot_data <- dat[dat$plotID == plot_id, ]
-		dates_per_plot[i] <- length(unique(plot_data$dateID))
-	}
-	
-	# Get environmental predictors using the same approach as prepBetaRegData
-	env_predictors <- c("temp", "mois", "pH", "pC", "relEM", "LAI")
-	env_data <- list()
-	
-	cat("Available predictors in predictor_data:", paste(names(predictor_data, "\n"), collapse = ", "), "\n")
-	
-	for (pred in env_predictors) {
-		# Handle special case where relEM is stored as relEM_plot
-		pred_name <- ifelse(pred == "relEM" && "relEM_plot" %in% names(predictor_data), "relEM_plot", pred)
-		
-		if (pred_name %in% names(predictor_data)) {
-			env_data[[pred]] <- predictor_data[[pred_name]]
-			cat("Added", pred, "predictor (from", pred_name, ")\n")
-		} else {
-			cat("WARNING:", pred, "predictor not found in predictor_data\n", "\n")
+
+	# CRITICAL FIX 1: Calculate actual site_start instead of rep(1)
+	# This ensures the sanitizer ignores valid NAs that exist before the site's first observation
+	site_start <- sapply(unique_sites, function(s) {
+		min(date_to_timepoint[as.character(dat$dateID[dat$siteID == s])], na.rm = TRUE)
+	})
+
+	truth.plot.long <- dat[, c("plotID", "dateID", "sampleID", "siteID")]
+	truth.plot.long$site_num <- as.integer(site_num)
+
+	dates_per_plot <- sapply(unique_plots, function(p) length(unique(dat$dateID[dat$plotID == p])))
+
+	# --- CRITICAL FIX 2: Use filter_date_site to ensure clean environmental matrices ---
+	keep_plots <- as.character(unique_plots)
+	keep_sites <- as.character(unique_sites)
+
+	# Inject rownames into uncertainty matrices so filter_date_site can actually filter them
+	for (var in c("temp_sd", "mois_sd", "LAI")) {
+		if (var %in% names(predictor_data) && is.null(rownames(predictor_data[[var]])) && !is.null(rownames(predictor_data$temp))) {
+			rownames(predictor_data[[var]]) <- rownames(predictor_data$temp)
 		}
 	}
-	
-	# Add seasonal predictors
-	months <- 1:length(unique_dates)
-	env_data$sin_mo <- sin(2 * pi * months / 12)
-	env_data$cos_mo <- cos(2 * pi * months / 12)
+	for (var in c("pH_sd", "pC_sd", "relEM_plot")) {
+		if (var %in% names(predictor_data) && is.null(rownames(predictor_data[[var]])) && !is.null(rownames(predictor_data$pH))) {
+			rownames(predictor_data[[var]]) <- rownames(predictor_data$pH)
+		}
+	}
+
+	# Only run filter_date_site on env vars the Dirichlet model needs (exclude site_skip, nspp, etc. that lack filterable rownames)
+	env_vars_needed <- c("temp", "mois", "LAI", "temp_sd", "mois_sd", "pH", "pC", "relEM_plot", "pH_sd", "pC_sd")
+	predictor_data_sub <- predictor_data[names(predictor_data) %in% env_vars_needed]
+
+	if (full_timeseries) {
+		# For full time series, use the full environmental data range
+		env_min_date <- min(colnames(predictor_data$temp))
+		env_max_date <- max(colnames(predictor_data$temp))
+		env_max_predictor_date <- paste0(substr(env_max_date, 1, 4), "-", substr(env_max_date, 5, 6), "-01")
+		env_data <- lapply(predictor_data_sub, filter_date_site, keep_sites = keep_sites,
+																keep_plots = keep_plots, min.date = env_min_date,
+																max.date = env_max_date, max.predictor.date = env_max_predictor_date)
+	} else {
+		# For regular processing, use the taxonomic data range
+		env_data <- lapply(predictor_data_sub, filter_date_site, keep_sites = keep_sites,
+																keep_plots = keep_plots, min.date = min.date,
+																max.date = max.date, max.predictor.date = NULL)
+	}
+	names(env_data) <- dplyr::recode(names(env_data), relEM_plot = "relEM")
+
+	# CRITICAL FIX: Handle LAI data structure - convert data.frame to matrix
+	if ("LAI" %in% names(env_data)) {
+		if (is.data.frame(env_data$LAI)) {
+			env_data$LAI <- as.matrix(env_data$LAI)
+		}
+	}
+
+	# Add sine/cosine matching the environmental data columns
+	sin_cos_month <- get_sin_cos(colnames(env_data$mois))
+	env_data$sin_mo = sin_cos_month$sin
+	env_data$cos_mo = sin_cos_month$cos
+
+	# Update N.date for full time series if necessary
+	if (full_timeseries) {
+		poss_dateID <- as.numeric(gsub("-", "", substr(colnames(env_data$temp), 1, 7)))
+	}
 	
 	# Create the response matrix for Dirichlet (compositional data) AFTER all filtering
 	y <- as.matrix(dat[, keep_taxa, drop = FALSE])
@@ -201,6 +189,11 @@ prepDirichletData <- function(rank.df,
 	
 	# Normalize to sum to 1 for each row (Dirichlet requirement)
 	y_sums <- rowSums(y)
+
+	# FIX: Prevent NaN if an observation row is all zeroes
+	y[y_sums == 0, ] <- 1 / ncol(y)
+	y_sums[y_sums == 0] <- 1
+
 	y <- y / y_sums
 	
 	# Create the final output list
@@ -215,7 +208,7 @@ prepDirichletData <- function(rank.df,
 		plot_num = plot_num,
 		plot_site_num = plot_site_num,
 		truth.plot.long = truth.plot.long,
-		N.date = length(unique_dates),
+		N.date = length(poss_dateID),
 		timepoint = timepoint,
 		dates_per_plot = dates_per_plot,
 		N.plot = length(unique_plots),
