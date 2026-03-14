@@ -2337,50 +2337,12 @@ if (nrow(site_horizons) > 0) {
   crps_finite <- site_horizons$crps_horizon[is.finite(site_horizons$crps_horizon)]
   rmse_finite <- site_horizons$rmse_horizon[is.finite(site_horizons$rmse_horizon)]
   
-  # Calculate median, handling empty vectors (all Inf)
-  if (length(rsq_finite) > 0) {
-    rsq_fcast_horizon <- median(rsq_finite, na.rm = TRUE)
-  } else {
-    # All sites had Inf (no crossing) - set to max_horizon
-    rsq_fcast_horizon <- 20
-  }
-  
-  if (length(crps_finite) > 0) {
-    crps_fcast_horizon <- median(crps_finite, na.rm = TRUE)
-  } else {
-    # All sites had Inf (no crossing) - set to max_horizon
-    crps_fcast_horizon <- 20
-  }
-  
-  if (length(rmse_finite) > 0) {
-    rmse_fcast_horizon <- median(rmse_finite, na.rm = TRUE)
-  } else {
-    # All sites had Inf (no crossing) - set to max_horizon
-    rmse_fcast_horizon <- 20
-  }
-  
-  # If median is NA/NaN, try mean (shouldn't happen with above checks, but just in case)
-  if (is.na(rsq_fcast_horizon) || !is.finite(rsq_fcast_horizon)) {
-    if (length(rsq_finite) > 0) {
-      rsq_fcast_horizon <- mean(rsq_finite, na.rm = TRUE)
-    } else {
-      rsq_fcast_horizon <- 20
-    }
-  }
-  if (is.na(crps_fcast_horizon) || !is.finite(crps_fcast_horizon)) {
-    if (length(crps_finite) > 0) {
-      crps_fcast_horizon <- mean(crps_finite, na.rm = TRUE)
-    } else {
-      crps_fcast_horizon <- 20
-    }
-  }
-  if (is.na(rmse_fcast_horizon) || !is.finite(rmse_fcast_horizon)) {
-    if (length(rmse_finite) > 0) {
-      rmse_fcast_horizon <- mean(rmse_finite, na.rm = TRUE)
-    } else {
-      rmse_fcast_horizon <- 20
-    }
-  }
+  # Calculate median across sites. NA when no sites produced a valid horizon
+  # (no data or no null crossing). Do NOT substitute a fallback value — that
+  # would produce misleading horizons for taxa with missing scoring data.
+  rsq_fcast_horizon  <- if (length(rsq_finite)  > 0) median(rsq_finite,  na.rm = TRUE) else NA_real_
+  crps_fcast_horizon <- if (length(crps_finite) > 0) median(crps_finite, na.rm = TRUE) else NA_real_
+  rmse_fcast_horizon <- if (length(rmse_finite) > 0) median(rmse_finite, na.rm = TRUE) else NA_real_
   # Aggregate GAM and LM horizons separately when present
   rsq_fcast_horizon_gam <- if ("rsq_horizon_gam" %in% names(site_horizons)) {
     x <- site_horizons$rsq_horizon_gam[is.finite(site_horizons$rsq_horizon_gam)]
@@ -2464,17 +2426,18 @@ if (debug_this_model) {
 # rmse_fcast_horizon <- first_crossing(xgrid, yhat_rmse, rmse_null_line, dir = "above")
 # This is removed because yhat_* vectors are all NA and would produce Inf
 
-# Cap horizons at 20 (already calculated from site-level data above)
+# Cap finite horizons at 20; preserve NA for taxa with no valid scoring data
 max_horizon <- 20
-rsq_fcast_horizon  <- min(rsq_fcast_horizon,  max_horizon)
-crps_fcast_horizon <- min(crps_fcast_horizon, max_horizon)
-rmse_fcast_horizon <- min(rmse_fcast_horizon, max_horizon)
-rsq_fcast_horizon_gam  <- min(rsq_fcast_horizon_gam,  max_horizon)
-rsq_fcast_horizon_lm   <- min(rsq_fcast_horizon_lm,   max_horizon)
-crps_fcast_horizon_gam <- min(crps_fcast_horizon_gam, max_horizon)
-crps_fcast_horizon_lm  <- min(crps_fcast_horizon_lm,  max_horizon)
-rmse_fcast_horizon_gam <- min(rmse_fcast_horizon_gam, max_horizon)
-rmse_fcast_horizon_lm  <- min(rmse_fcast_horizon_lm,  max_horizon)
+cap <- function(x) if (is.finite(x)) min(x, max_horizon) else x
+rsq_fcast_horizon  <- cap(rsq_fcast_horizon)
+crps_fcast_horizon <- cap(crps_fcast_horizon)
+rmse_fcast_horizon <- cap(rmse_fcast_horizon)
+rsq_fcast_horizon_gam  <- cap(rsq_fcast_horizon_gam)
+rsq_fcast_horizon_lm   <- cap(rsq_fcast_horizon_lm)
+crps_fcast_horizon_gam <- cap(crps_fcast_horizon_gam)
+crps_fcast_horizon_lm  <- cap(crps_fcast_horizon_lm)
+rmse_fcast_horizon_gam <- cap(rmse_fcast_horizon_gam)
+rmse_fcast_horizon_lm  <- cap(rmse_fcast_horizon_lm)
 # ------------------------------------
 
 if (MAKE_PLOTS) {

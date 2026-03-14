@@ -18,7 +18,7 @@ params = data.frame(
 								"Legacy + 1 year current methods","Full dataset",
 								"Legacy with covariate 2013-2018","Legacy with covariate 2013-2018","Legacy with covariate 2013-2018"),
 	model_name = c("cycl_only","env_cov","env_cycl",NA,"cycl_only","env_cycl","env_cov")) %>%
-	expand(nesting(min.date, max.date, scenario), model_name) %>%
+	expand(tidyr::nesting(min.date, max.date, scenario), model_name) %>%
 	filter(!is.na(model_name)) %>%
 	mutate(temporalDriverUncertainty = T,
 				 spatialDriverUncertainty = T) %>% merge(groups_to_model) %>%

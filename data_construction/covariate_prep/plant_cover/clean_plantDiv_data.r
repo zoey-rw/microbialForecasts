@@ -30,8 +30,8 @@ plant_subset <- plant_stats %>%
 
 microbe_plots <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/microbe_plot_list.rds")
 # Get all plotID x year combinations
-poss_site_dates <- plant_subset %>% tidyr::expand(nesting(siteID, year_date))
-poss_site_plots <- plant_subset %>% tidyr::expand(nesting(siteID, plotID))
+poss_site_dates <- plant_subset %>% tidyr::expand(tidyr::nesting(siteID, year_date))
+poss_site_plots <- plant_subset %>% tidyr::expand(tidyr::nesting(siteID, plotID))
 poss_site_plots <- merge(poss_site_plots, microbe_plots, all=T)
 poss_plot_dates <- merge(poss_site_dates, poss_site_plots)
 

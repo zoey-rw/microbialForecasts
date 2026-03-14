@@ -13,7 +13,7 @@ basal_relEM <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/d
 # Output from clean_plantDiv_data.r
 div <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/annual_plant_data.rds")
 
-poss_site_plots <- div %>% tidyr::expand(nesting(siteID, plotID))
+poss_site_plots <- div %>% tidyr::expand(tidyr::nesting(siteID, plotID))
 basal_relEM <- merge(poss_site_plots, basal_relEM, all=T)
 
 # Fill missing values with site means
@@ -63,14 +63,16 @@ lai_dat_orig <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/d
 lai_dat <- lai_dat_orig %>% mutate(dateID = substr(calendar_date, 1, 7), 
 																	 dateID = gsub("-","",dateID, fixed = T))
 
-# Mean by site/month
+# Mean and SD by site/month
 lai_site_monthly <- lai_dat %>% group_by(siteID, dateID) %>% 
-	summarize(mean_lai = mean(data, na.rm=T)) %>% 
+	summarize(mean_lai = mean(data, na.rm=T),
+						sd_lai = mean(sd, na.rm=T)) %>% 
 	mutate(missing = ifelse(is.na(mean_lai), TRUE, FALSE))
 
 # Mean center and scale data
 lai_site_monthly$LAI <- scale(lai_site_monthly$mean_lai)[,1]
 lai_site_monthly$LAI_orig <- lai_site_monthly$mean_lai
+lai_site_monthly$LAI_sd <- lai_site_monthly$sd_lai
 
 saveRDS(lai_site_monthly, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/mean_LAI_data.rds")
 

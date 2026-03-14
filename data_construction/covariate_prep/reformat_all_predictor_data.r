@@ -74,7 +74,23 @@ LAI_site <- LAI %>% dplyr::select(siteID, dateID, LAI) %>%
 	arrange(siteID) %>%
 
 	column_to_rownames(var = "siteID")
-temp_site <- temp_site %>% data.matrix()
+LAI_site <- LAI_site %>% data.matrix()
+
+# reformat LAI_sd to be site x date
+LAI_sd_site <- LAI %>% dplyr::select(siteID, dateID, LAI_sd) %>%
+	filter(siteID %in% temp$siteID) %>%
+	filter(dateID %in% temp$month) %>%
+	arrange(dateID) %>% unique() %>%
+	pivot_wider(names_from = dateID, values_from = LAI_sd,
+							values_fill = NA) %>%
+	pivot_longer(cols = 2:ncol(.), names_to = "dateID", values_to = "LAI_sd") %>%
+	group_by(siteID) %>%
+	tidyr::fill(LAI_sd, .direction = "updown") %>% ungroup() %>%
+	pivot_wider(names_from = dateID, values_from = LAI_sd,
+							values_fill = NA) %>%
+	arrange(siteID) %>%
+	column_to_rownames(var = "siteID")
+LAI_sd_site <- LAI_sd_site %>% data.matrix()
 
 # reformat pH to be plot x date (even though dates aren't real) - use dates from temperature
 pH_plot <- chem  %>% #merge(unique(dat[,c("siteID", "plotID")]), all.y=T) %>% #filter(plotID %in% dat$plotID) %>%
@@ -196,6 +212,7 @@ all_predictors <- list("mois" = mois_site,
 											 "pC_sd" = pC_plot_sd,
 											 "nspp" = nspp_plot,
 											 "LAI" = LAI_site,
+											 "LAI_sd" = LAI_sd_site,
 											 "rc_grass" = rc_grass_plot,
 											 "rc_exotic" = rc_exotic_plot,
 											 "relEM_plot" = relEM_plot,
