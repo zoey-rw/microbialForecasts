@@ -156,10 +156,10 @@ fig_pheno <- ggarrange(
   widths  = c(1, 0.9)
 )
 
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig_legacy_pheno.png"),
        fig_pheno, width = 12, height = 8, dpi = 200)
 
-cat("Saved: data/figures/fig_legacy_pheno.png\n")
+cat("Saved: figures/fig_legacy_pheno.png\n")

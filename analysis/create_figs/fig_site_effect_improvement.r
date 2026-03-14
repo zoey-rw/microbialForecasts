@@ -93,7 +93,13 @@ panel_b <- ggplot(improvement_summary,
   theme(legend.position = "right")
 
 # ── Panel C: Prediction vs truth scatter (env_cycl, unobserved sites) ─────────
-hindcasts <- readRDS(here("data/summary/all_hindcasts_plsr2.rds"))
+parquet_path <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
+rds_path <- here("data/summary/all_hindcasts_plsr2.rds")
+if (file.exists(parquet_path) && requireNamespace("nanoparquet", quietly = TRUE)) {
+  hindcasts <- nanoparquet::read_parquet(parquet_path)
+} else {
+  hindcasts <- readRDS(rds_path)
+}
 
 scatter_df <- hindcasts %>%
   filter(model_name == "env_cycl",
@@ -131,12 +137,12 @@ fig_improvement <- (panel_a) / (panel_b | panel_c) +
   ) +
   plot_layout(heights = c(1.2, 1))
 
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig_site_effect_improvement.png"), fig_improvement,
        width = 13, height = 13, dpi = 200)
-cat("Saved: data/figures/fig_site_effect_improvement.pdf / .png\n")
+cat("Saved: figures/fig_site_effect_improvement.png\n")
 
 # ── Summary stats ─────────────────────────────────────────────────────────────
 cat("\n=== Improvement by model type ===\n")

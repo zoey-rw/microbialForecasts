@@ -324,13 +324,13 @@ combined <- plot_grid(
   labels = c("A", "B"), label_size = 16
 )
 
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig_patchiness_predictability.png"), combined,
        width = 9, height = 10, dpi = 200)
 
-cat("Saved: data/figures/fig_patchiness_predictability.png\n")
+cat("Saved: figures/fig_patchiness_predictability.png\n")
 
 # =============================================================================
 # 9. Print model summaries

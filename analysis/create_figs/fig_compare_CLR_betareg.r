@@ -132,12 +132,14 @@ caption <- paste0(
   "Temperature and soil moisture include driver uncertainty propagated from repeated measurements. ",
   "EM tree cover = relative basal area of ectomycorrhizal-associated tree species; ",
   "LAI = leaf area index. ",
-  "Colors and shapes are redundantly encoded for colorblind accessibility."
+  "Colors and shapes are redundantly encoded for colorblind accessibility. ",
+  "Note: Dirichlet model results are preliminary (median Rhat = 1.18 at 10k iterations; ",
+  "target < 1.1). Wider credible intervals partly reflect incomplete convergence."
 )
 cat("\n--- FIGURE CAPTION ---\n", caption, "\n\n")
 
 # ---- Save ----
 
-outpath <- here("data/figures/fig_compare_CLR_betareg.png")
+outpath <- here("figures/fig_compare_CLR_betareg.png")
 ggsave(outpath, fig, width = 7, height = 5.5, dpi = 300)
 cat("Saved:", outpath, "\n")

@@ -152,14 +152,14 @@ fig_skill <- panel_a / (panel_b | panel_c) +
   ) +
   plot_layout(heights = c(1.8, 1))
 
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig_skillscore.pdf"), fig_skill,
        width = 12, height = 14)
 ggsave(file.path(out_dir, "fig_skillscore.png"), fig_skill,
        width = 12, height = 14, dpi = 200)
-cat("Saved: data/figures/fig_skillscore.pdf / .png\n")
+cat("Saved: figures/fig_skillscore.pdf / .png\n")
 
 # ── Summary statistics ────────────────────────────────────────────────────────
 cat("\n=== Skill score summary (env_cycl) ===\n")
