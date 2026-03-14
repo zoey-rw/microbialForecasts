@@ -1,7 +1,7 @@
 # Calculate scoring metrics for CLR hindcasts
 library(here)
 source(here("source.R"))
-source(here("microbialForecast/R/statsFunctions.r"))
+# statsFunctions.r functions (add_scoring_metrics, etc.) loaded via microbialForecast package
 source(here("analysis/model_analysis/robust_add_scoring_metrics.R"))
 library(data.table)
 

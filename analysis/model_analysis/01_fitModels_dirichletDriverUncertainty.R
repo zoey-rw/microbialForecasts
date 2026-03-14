@@ -1672,16 +1672,18 @@ run_scenarios_fixed <- function(j, chain_no) {
             convergence_check_interval <- 1  # Check every loop in testing
             info("  🧪 LOCAL TESTING MODE: Using reduced iteration values")
         } else {
-            # PRODUCTION: Optimized values for driver uncertainty models
-            burnin <- 2000
-            iter_per_chunk <- 2000  # Larger chunks for efficiency (reduces overhead)
-            init_iter <- 2000
+            # PRODUCTION: Values for driver uncertainty models
+            # Dirichlet models need ~100k iterations for convergence (based on
+            # env_cycl_all_taxa reaching median Rhat 1.18 at 10k iterations)
+            burnin <- 5000
+            iter_per_chunk <- 5000  # Larger chunks for efficiency (reduces overhead)
+            init_iter <- 5000
             min_eff_size_perchain <- 100  # Target ESS for reliable estimates
-            max_loops <- 10  # Limit loops to prevent excessive runtime
-            min_total_iterations <- 10000  # Minimum iterations for reliable estimates
-            max_total_iterations <- 50000  # Hard limit to prevent runaway jobs
+            max_loops <- 40  # Allow enough loops to reach 200k total
+            min_total_iterations <- 50000  # Minimum iterations for reliable estimates
+            max_total_iterations <- 200000  # Hard limit to prevent runaway jobs
             convergence_check_interval <- 2  # Check convergence every N loops to reduce overhead
-            info("  🏭 PRODUCTION MODE: Using optimized iteration values")
+            info("  PRODUCTION MODE: Using iteration values for Dirichlet convergence")
         }
         max_iter_env <- suppressWarnings(as.integer(Sys.getenv("MAX_ITER", NA)))
         if (!is.na(max_iter_env) && max_iter_env > 0) {

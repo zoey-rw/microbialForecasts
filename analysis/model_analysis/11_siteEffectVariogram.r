@@ -1,13 +1,12 @@
-# Check for spatial autocorrelation in random effects estimated from Bayesian hierarchical models
+# Check for spatial autocorrelation in site effects vs PLSR cross-validated residuals
+# Uses observed sites only (unobserved sites have predicted effects, no true residuals)
 
 library(here)
 source(here("source.R"))
 
-df_predictors <- readRDS(here("data/clean/site_effect_predictors.rds"))
-
 site_eff_dredged_in <- readRDS(here("data/summary/site_effects_dredged.rds"))
-unobs_sites <- readRDS(here("data/summary/site_effects_unobserved.rds"))
-converged_strict <- readRDS(here("data/summary/converged_taxa_list.rds"))
+scores_list <- readRDS(here("data/summary/scoring_metrics_plsr2.rds"))
+converged_strict <- scores_list$converged_strict_list
 
 library(gstat)
 library(sp)
@@ -15,81 +14,75 @@ library(variosig)
 library(foreach)
 library(doParallel)
 
-
-## Get site climate data from NEON
-fieldsites_raw <- read.csv("https://www.neonscience.org/sites/default/files/NEON_Field_Site_Metadata_20220412.csv")
-fieldsites_loc <- fieldsites_raw %>% filter(!grepl("Aquatic", field_site_type)) %>%
-	select(latitude = field_latitude,
-				 longitude = field_longitude,
-				 siteID = field_site_id)
-
-# Create pred_sites data frame by combining dredged and unobserved site effects
-# Use only a subset to avoid memory issues
-pred_sites <- bind_rows(
-  site_eff_dredged_in[[2]] %>% 
-    select(model_id, siteID, rank_only, taxon, model_name, pred, TargetVar) %>%
-    mutate(Median = TargetVar),  # Use TargetVar as the site effect estimate
-  unobs_sites[[1]] %>% 
-    select(model_id, siteID, rank_only, taxon, model_name, pred = fit) %>%
-    left_join(unobs_sites[[2]] %>% 
-                select(model_id, siteID, Median, LCI, UCI), 
-              by = c("model_id", "siteID"), 
-              relationship = "many-to-many") %>%  # Explicitly allow many-to-many
-    sample_n(min(1000, nrow(.)))  # Limit to 1000 rows to avoid memory issues
-)
-
-out_plots = list()
-out_sig = list()
-
-model_id_list = pred_sites %>% filter(!grepl("other", taxon)) %>%
-	distinct(model_id) %>% unlist()
-
-pacman::p_load(doParallel)
-cl <- makeCluster(4, type="FORK", outfile="")  # Reduced from 27 to 4 cores to avoid memory issues
-registerDoParallel(cl)
-
-
-#Run for multiple groups, in parallel (via PSOCK)
-sig_results_list = foreach(model_id=model_id_list, .errorhandling = 'remove') %dopar% {
-
-site_effect_estimate = pred_sites %>%
-	select(model_id, siteID, rank_only, taxon, model_name, site_effect = Median, pred_effect = pred) %>%
-	mutate(resid = pred_effect - site_effect) %>%
-	filter(model_id == !!model_id)
-rank = unique(site_effect_estimate$rank_only)
-taxon = unique(site_effect_estimate$taxon)
-model_name = unique(site_effect_estimate$model_name)
-
-points.df=merge(fieldsites_loc, site_effect_estimate)
-TheData=points.df
-coordinates(TheData)= ~ longitude+latitude
-
-plot.new()
-par(mfrow=c(2,1))
-par(mar = c(4, 2, 3, 2))
-TheVariogram=variogram(site_effect~1, data=TheData)
-TheResidualVariogram=variogram(resid~1, data=TheData)
-
-eff_envelope = envelope(TheVariogram, data=TheData, formula = site_effect~1)
-envplot(eff_envelope, main = paste0("Site effects for: ", model_id), xlab = "Spatial distance bin")
-eff_signif <- envsig(eff_envelope, method="eb")
-mtext(text = paste0("P = ", round(eff_signif$p.overall, 4)),  outer = F, side=3)
-
-resid_envelope = envelope(TheResidualVariogram, data=TheData, formula = resid~1)
-envplot(resid_envelope, main = paste0("Residuals of site effect model for: ", model_id), xlab = "Spatial distance bin")
-resid_signif <- envsig(resid_envelope, method="eb")
-mtext(text = paste0("P = ", round(resid_signif$p.overall, 4)),  outer = F, side=3)
-
-#out_plots[[taxon]] = recordPlot()
-outplot = recordPlot()
-out_sig = list(cbind(taxon, rank, model_id, model_name, eff_signif$p.overall, resid_signif$p.overall), outplot)
-return(out_sig)
+## Get site location data from NEON (cached locally if available)
+cache_path <- here("data/clean/neon_fieldsites_loc.rds")
+if (file.exists(cache_path)) {
+  fieldsites_loc <- readRDS(cache_path)
+} else {
+  fieldsites_raw <- read.csv("https://www.neonscience.org/sites/default/files/NEON_Field_Site_Metadata_20220412.csv")
+  fieldsites_loc <- fieldsites_raw %>%
+    filter(!grepl("Aquatic", field_site_type)) %>%
+    select(latitude = field_latitude, longitude = field_longitude, siteID = field_site_id)
+  saveRDS(fieldsites_loc, cache_path)
 }
 
-sig_results = lapply(sig_results_list, "[[", 1) %>% do.call(rbind, .) %>% as.data.frame()
-plot_list =  lapply(sig_results_list, "[[", 2)
+# Observed sites: d[[3]] has TargetVar (raw site effect) and PLSR_CV_Residuals
+obs_sites <- site_eff_dredged_in[[3]] %>%
+  select(model_id, siteID, taxon, model_name,
+         site_effect = TargetVar,
+         resid = PLSR_CV_Residuals) %>%
+  filter(!is.na(site_effect), !is.na(resid))
 
-colnames(sig_results) = c("taxon", "rank","model_id","model_name","site effect", "site effect residuals")
+model_id_list <- obs_sites %>%
+  filter(!grepl("other", taxon)) %>%
+  distinct(model_id) %>%
+  pull(model_id)
 
-saveRDS(list(sig_results, plot_list), here("data/summary/site_effect_variograms.rds"))
+cat("Running variograms for", length(model_id_list), "models\n")
 
+cl <- makeCluster(4, type = "FORK", outfile = "")
+registerDoParallel(cl)
+
+# 99 permutations is sufficient for detecting p < 0.05
+N_PERM <- 99
+
+sig_results_list <- foreach(mid = model_id_list, .errorhandling = "remove") %dopar% {
+  dat <- obs_sites %>% filter(model_id == mid)
+  points.df <- merge(fieldsites_loc, dat)
+  if (nrow(points.df) < 5) return(NULL)
+
+  TheData <- points.df
+  coordinates(TheData) <- ~ longitude + latitude
+
+  TheVariogram <- variogram(site_effect ~ 1, data = TheData)
+  TheResidualVariogram <- variogram(resid ~ 1, data = TheData)
+
+  eff_envelope <- envelope(TheVariogram, data = TheData, formula = site_effect ~ 1, nsim = N_PERM)
+  eff_signif <- envsig(eff_envelope, method = "eb")
+
+  resid_envelope <- envelope(TheResidualVariogram, data = TheData, formula = resid ~ 1, nsim = N_PERM)
+  resid_signif <- envsig(resid_envelope, method = "eb")
+
+  taxon_val <- unique(dat$taxon)
+  model_name_val <- unique(dat$model_name)
+
+  data.frame(
+    taxon = taxon_val, rank = NA_character_, model_id = mid,
+    model_name = model_name_val,
+    site_effect_p = eff_signif$p.overall,
+    residual_p = resid_signif$p.overall,
+    stringsAsFactors = FALSE
+  )
+}
+
+stopCluster(cl)
+
+sig_results_list <- sig_results_list[!sapply(sig_results_list, is.null)]
+sig_results <- do.call(rbind, sig_results_list)
+colnames(sig_results) <- c("taxon", "rank", "model_id", "model_name",
+                           "site effect", "site effect residuals")
+
+# Save without plot objects (saves space, plots rarely used)
+saveRDS(list(sig_results, list()), here("data/summary/site_effect_variograms.rds"))
+
+cat("Saved variogram results for", nrow(sig_results), "models\n")

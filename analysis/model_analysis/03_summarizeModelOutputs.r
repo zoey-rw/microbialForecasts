@@ -11,27 +11,68 @@
 #
 # This script preserves ALL crucial output files while streamlining the process
 
+# Parse command line arguments or use defaults
+args <- commandArgs(trailingOnly = TRUE)
+
+# Process ALL model types (env_cycl, cycl_only, env_cov) and combine into one file
+model_types <- c("env_cycl", "cycl_only", "env_cov")
+
+# Check if running as script vs sourced interactively
+if (length(args) == 0) {
+  # Try to detect if we're being sourced interactively
+  if (interactive()) {
+    # Interactive use - use defaults
+    cat("No command line arguments provided. Processing all model types.\n")
+    base_path <- "data/model_outputs/cloglog_beta_driver_uncertainty/"
+    cat("Using default base_path:", base_path, "\n")
+  } else {
+    # Non-interactive use without args - allow optional base_path
+    base_path <- "data/model_outputs/cloglog_beta_driver_uncertainty/"
+    cat("Processing all model types: env_cycl, cycl_only, env_cov\n")
+    cat("Using default base_path:", base_path, "\n")
+  }
+} else {
+  # Command line argument provided (optional base_path)
+  base_path <- if (length(args) > 0) args[1] else "data/model_outputs/cloglog_beta_driver_uncertainty/"
+  cat("Processing all model types: env_cycl, cycl_only, env_cov\n")
+}
+
+# Ensure variables exist
+if (!exists("base_path") || is.null(base_path) || base_path == "") {
+  base_path <- "data/model_outputs/cloglog_beta_driver_uncertainty/"
+}
+
+cat("Base path:", base_path, "\n")
+cat("Model types to process:", paste(model_types, collapse = ", "), "\n")
+
 source("source.R")
 library(dplyr)
 library(coda)
 library(purrr)
 library(data.table)
-library(arrow)
+# Arrow package for parquet file support (optional)
+if (!require(arrow, quietly = TRUE)) {
+  tryCatch({
+    install.packages("arrow", repos = "https://cran.rstudio.com/", dependencies = FALSE, quiet = TRUE)
+    library(arrow)
+  }, error = function(e) {
+    cat("Warning: arrow package not available. Parquet file support will be limited.\n")
+  })
+}
 
-# Source the calculate_plot_summary_from_samples function
-source("microbialForecast/R/summarizeBetaRegModels.r")
+# summarize_beta_model and calculate_plot_summary_from_samples loaded via microbialForecast package
 
 # =============================================================================
 # CONFIGURATION FLAGS
 # =============================================================================
 
 # Set to FALSE to skip plot estimate processing (saves memory)
-PROCESS_PLOT_ESTIMATES <- FALSE
+PROCESS_PLOT_ESTIMATES <- TRUE
 
 cat("Configuration: PROCESS_PLOT_ESTIMATES =", PROCESS_PLOT_ESTIMATES, "\n")
 
 # =============================================================================
-# OPTIMIZED PLOT ESTIMATE PROCESSING FUNCTION
+# PLOT ESTIMATE PROCESSING FUNCTION
 # =============================================================================
 
 process_plot_estimates_optimized <- function(summary_files) {
@@ -161,7 +202,17 @@ cat("Processing model outputs with comprehensive validation and summarization\n\
 
 # Check if we can skip processing steps
 skip_processing <- FALSE
-if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds")) && 
+# IMPORTANT: For cloglog_beta_driver_uncertainty models, use sub-scripts for efficiency
+# The sub-scripts (03b, 03c, 03d, 03e) break the work into manageable chunks
+# Note: base_path is set earlier in the script
+# DISABLE SUB-SCRIPTS: We want to regenerate summaries, not just combine existing ones
+USE_SUB_SCRIPTS <- FALSE  # Force to FALSE to skip sub-scripts and go directly to STEP 2
+
+if (USE_SUB_SCRIPTS) {
+  cat("📋 Cloglog driver uncertainty models detected - using sub-scripts for efficient processing\n")
+  cat("   Will use: 03b_combine_summaries.r, 03c_extract_plot_summaries.r, etc.\n")
+  skip_processing <- FALSE
+} else if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds")) && 
     (file.exists(here("data/summary/plot_estimates.rds")) || 
      file.exists(here("data/summary/plot_estimates.parquet")))) {
   cat("✅ Found existing summary files - checking if processing can be skipped...\n")
@@ -187,14 +238,15 @@ if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds")) &&
         plot_est_time <- as.POSIXct("1900-01-01")  # Very old date to force reprocessing
       }
       
-      # Find the newest input model files
+      # Find the newest input model files from ALL model types
+      # Always check all three model types (env_cycl, cycl_only, env_cov)
       model_files <- c(
-        list.files("data/model_outputs/reconstructed_from_checkpoints/env_cov", 
-                  pattern = "samples_.*\\.rds$", recursive = FALSE, full.names = TRUE),
-        list.files("data/model_outputs/reconstructed_from_checkpoints/env_cycl", 
-                  pattern = "samples_.*\\.rds$", recursive = FALSE, full.names = TRUE),
-        list.files("data/model_outputs/reconstructed_from_checkpoints/cycl_only", 
-                  pattern = "samples_.*\\.rds$", recursive = FALSE, full.names = TRUE)
+        list.files(file.path(base_path, "env_cov"), 
+                  pattern = "samples_", recursive = TRUE, full.names = TRUE),
+        list.files(file.path(base_path, "env_cycl"), 
+                  pattern = "samples_", recursive = TRUE, full.names = TRUE),
+        list.files(file.path(base_path, "cycl_only"), 
+                  pattern = "samples_", recursive = TRUE, full.names = TRUE)
       )
       model_files <- model_files[!grepl("_chain[0-9]", model_files)]
       
@@ -238,16 +290,22 @@ cat("Memory limit set to 4GB\n")
 library(parallel)
 
 # Function to filter files to only include those with both 'with_legacy_covariate' and 'beta_regression'
+# or driver uncertainty files
 filter_standard_files <- function(file_list) {
   if (length(file_list) == 0) return(file_list)
   
-  # Filter to only include files with both required suffixes
-  standard_files <- file_list[grepl('with_legacy_covariate', basename(file_list)) & 
-                              grepl('beta_regression', basename(file_list))]
+  # Filter to include either:
+  # 1. Files with both 'with_legacy_covariate' and 'beta_regression' (old format)
+  # 2. Files from driver uncertainty directory (new format)
+  standard_files <- file_list[
+    (grepl('with_legacy_covariate', basename(file_list)) & 
+     grepl('beta_regression', basename(file_list))) |
+    grepl('cloglog_beta_driver_uncertainty', file_list)
+  ]
   
   cat('File filtering applied:\n')
   cat('  Original files:', length(file_list), '\n')
-  cat('  Standard files (with both suffixes):', length(standard_files), '\n')
+  cat('  Standard files (with required suffixes or driver uncertainty):', length(standard_files), '\n')
   cat('  Filtered out:', length(file_list) - length(standard_files), '\n\n')
   
   return(standard_files)
@@ -267,10 +325,10 @@ cat("Parallel processing limited to", max_cores, "cores\n\n")
 # - Weak: Point est. < 1.2
 
 # Check if CLR models exist and process them
-if (dir.exists(here("data/model_outputs/CLR_regression"))) {
-  cat("Processing CLR models...\n")
-  source("03_summarizeModelOutputs_CLR.r")
-}
+# if (dir.exists(here("data/model_outputs/CLR_regression"))) {
+#   cat("Processing CLR models...\n")
+#   source("03_summarizeModelOutputs_CLR.r")
+# }
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -359,7 +417,7 @@ validate_file <- function(file_path) {
         }
       }
       
-      # Check for samples2 (plot estimates)
+      # Check for samples2 (plot estimates) or plot_summary
       if ("samples2" %in% names(data)) {
         result$has_samples2 <- TRUE
         if (is.list(data$samples2)) {
@@ -377,20 +435,39 @@ validate_file <- function(file_path) {
             result$samples2_dim <- paste(result$samples2_dim, "(no plot_mu)")
           }
         }
+      } else if ("plot_summary" %in% names(data)) {
+        # Combined files have plot_summary instead of samples2
+        result$has_samples2 <- TRUE
+        if (is.list(data$plot_summary)) {
+          result$samples2_dim <- paste(length(data$plot_summary), "elements")
+        } else if (is.data.frame(data$plot_summary)) {
+          result$samples2_dim <- paste(dim(data$plot_summary), collapse = "x")
+        } else {
+          result$samples2_dim <- "unknown"
+        }
       }
       
-      # Check for param_summary
+      # Check for param_summary (handle nested structure)
       if ("param_summary" %in% names(data)) {
         result$has_param_summary <- TRUE
         if (is.list(data$param_summary)) {
           result$param_summary_names <- paste(names(data$param_summary), collapse = ", ")
           has_means <- "means" %in% names(data$param_summary)
           has_quantiles <- "quantiles" %in% names(data$param_summary)
+          
+          # If not found at top level, check nested param_summary
+          if (!has_means || !has_quantiles) {
+            if ("param_summary" %in% names(data$param_summary) && is.list(data$param_summary$param_summary)) {
+              has_means <- "means" %in% names(data$param_summary$param_summary)
+              has_quantiles <- "quantiles" %in% names(data$param_summary$param_summary)
+            }
+          }
+          
           if (has_means && has_quantiles) {
             result$param_summary_valid <- TRUE
           } else {
             result$param_summary_valid <- FALSE
-            result$param_summary_issue <- "Missing means or quantiles elements"
+            result$param_summary_issue <- "Missing means or quantiles elements (checked nested structure)"
           }
         } else {
           result$param_summary_valid <- FALSE
@@ -480,40 +557,41 @@ generate_plot_summary_for_model <- function(model_file_path) {
 # STEP 1: COMPREHENSIVE MODEL VALIDATION
 # =============================================================================
 
-if (!skip_processing) {
+# SKIP VALIDATION: Go directly to summarization
+SKIP_VALIDATION <- TRUE
+
+if (!skip_processing && !SKIP_VALIDATION) {
 cat("=== STEP 1: COMPREHENSIVE MODEL VALIDATION ===\n")
 
-# Find all model files with memory-efficient approach
-model_dirs <- c(
-  "data/model_outputs/reconstructed_from_checkpoints/env_cycl",
-  "data/model_outputs/reconstructed_from_checkpoints/cycl_only"
-)
+# Find all model files from ALL model types with memory-efficient approach
+# Process all three model types (env_cycl, cycl_only, env_cov)
+model_dirs <- file.path(base_path, model_types)
 
 # Process directories one at a time to avoid memory issues
 all_files <- c()
 for (dir in model_dirs) {
   if (dir.exists(dir)) {
     cat("Scanning directory:", dir, "\n")
-    files <- list.files(dir, pattern = "samples_.*\\.rds$", 
-                       full.names = TRUE, recursive = FALSE)
+    files <- list.files(dir, pattern = "samples_", 
+                       full.names = TRUE, recursive = TRUE)
+    cat("  Raw files found:", length(files), "\n")
     
-    # Filter to max depth 2 and exclude individual chain files
-    files <- files[sapply(strsplit(files, "/"), function(x) {
-      recon_idx <- which(x == "reconstructed_from_checkpoints")
-      if(length(recon_idx) > 0) {
-        depth <- length(x) - recon_idx - 1
-        return(depth <= 2)
-      }
-      return(FALSE)
-    })]
+    # Exclude individual chain files; allow recursive group subfolders
+    if (length(files) == 0) {
+      files <- character(0)
+    }
     
     files <- files[!grepl("_chain[0-9]", files)]
+    cat("  Files after chain filtering:", length(files), "\n")
+    # Filter out files with double samples_samples_ prefix (should not exist)
+    files <- files[!grepl("^.*samples_samples_", basename(files))]
+    cat("  Files after removing double samples_ prefix:", length(files), "\n")
     all_files <- c(all_files, files)
     cat("  Found", length(files), "files in", basename(dir), "\n")
   }
 }
 
-cat("Total model files found:", length(all_files), "\n")
+cat("Total model files found across all model types:", length(all_files), "\n")
 
 # Apply filtering to only process standard files
 all_files <- filter_standard_files(all_files)
@@ -633,10 +711,11 @@ for(i in seq_along(validation_results)) {
 cat("Validation complete\n")
 
 # Identify files ready for summary script
+# For driver uncertainty models, we need to process raw samples to create summaries
+# So we only need to check for basic file structure, not pre-existing summaries
 ready_for_summary <- results[
   results$file_type == "combined" & 
   results$has_samples & 
-  results$has_samples2 & 
   results$has_metadata & 
   results$has_model_data, 
 ]
@@ -648,6 +727,7 @@ write.csv(results, "comprehensive_model_validation_results.csv", row.names = FAL
 write.csv(ready_for_summary, "files_ready_for_summary.csv", row.names = FALSE)
 
 cat("Validation results saved\n")
+}  # End of STEP 1 validation block
 
 # =============================================================================
 # STEP 2: PROCESS MODEL FILES AND CREATE SUMMARIES (INCLUDING PLOT SUMMARIES)
@@ -655,8 +735,29 @@ cat("Validation results saved\n")
 
 cat("\n=== STEP 2: PROCESS MODEL FILES AND CREATE SUMMARIES ===\n")
 
-# Get ready files for processing
-ready_file_paths <- ready_for_summary$full_path
+# If validation was skipped, find files directly
+if (exists("SKIP_VALIDATION") && SKIP_VALIDATION) {
+  cat("Skipping validation - finding sample files directly...\n")
+  # Find all sample files from all model types
+  env_cycl_files <- list.files(file.path(base_path, "env_cycl"), 
+                               pattern = "samples_.*_beta_regression\\.rds$", 
+                               recursive = TRUE, full.names = TRUE)
+  cycl_only_files <- list.files(file.path(base_path, "cycl_only"), 
+                               pattern = "samples_.*_beta_regression\\.rds$", 
+                               recursive = TRUE, full.names = TRUE)
+  env_cov_files <- list.files(file.path(base_path, "env_cov"), 
+                             pattern = "samples_.*_beta_regression\\.rds$", 
+                             recursive = TRUE, full.names = TRUE)
+  
+  # Filter out chain files
+  all_files <- c(env_cycl_files, cycl_only_files, env_cov_files)
+  ready_file_paths <- all_files[!grepl("_chain[0-9]", all_files)]
+  cat("Found", length(ready_file_paths), "sample files to process\n")
+} else {
+  # Get ready files from validation step
+  ready_file_paths <- ready_for_summary$full_path
+}
+
 n_ready_files <- length(ready_file_paths)
 
 # Pre-allocate file_summaries list
@@ -665,23 +766,30 @@ file_summaries <- vector("list", n_ready_files)
 # Plot summary generation is now handled by the summarize_beta_model function
 
 # Use parallel processing for model summarization
-cl <- makeCluster(max_cores)
+# Add progress tracking option - use sequential if only a few files or if requested
+use_sequential <- length(ready_file_paths) <= 10 || identical(tolower(Sys.getenv("USE_SEQUENTIAL", "false")), "true")
 
-# Set up cluster environment
-clusterEvalQ(cl, {
-  library(dplyr)
-  library(here)
-  library(microbialForecast)
-})
-
-# Process files in parallel with error handling
-summarization_results <- tryCatch({
-  parLapply(cl, ready_file_paths, function(f) {
-    # Check if summary already exists and is up-to-date
+if (use_sequential) {
+  cat("Using sequential processing (", length(ready_file_paths), " files)\n", sep="")
+  
+  # Process files sequentially with progress tracking
+  summarization_results <- lapply(seq_along(ready_file_paths), function(i) {
+    f <- ready_file_paths[i]
+    
+    if (i %% 10 == 0 || i == 1) {
+      cat("Processing file", i, "of", length(ready_file_paths), ":", basename(f), "\n")
+    }
+    
+    # FORCE REGENERATION for env_cov models - always regenerate
+    # For other model types, check if summary is up-to-date
     summary_file <- gsub("samples_", "summary_", f)
     should_summarize <- TRUE
     
-    if (file.exists(summary_file)) {
+    # Force regeneration for env_cov models
+    if (grepl("env_cov", f)) {
+      should_summarize <- TRUE  # Always regenerate env_cov
+    } else if (file.exists(summary_file)) {
+      # For other model types, check if up-to-date
       file_time <- file.mtime(f)
       summary_time <- file.mtime(summary_file)
       if (summary_time > file_time) {
@@ -699,11 +807,11 @@ summarization_results <- tryCatch({
         # Process the file with error handling for truth.plot.long issues
         # The summarize_beta_model function now handles plot_summary validation and regeneration
         out <- tryCatch({
-          microbialForecast::summarize_beta_model(f, save_summary=T, drop_other = T, overwrite = NULL)
+          microbialForecast::summarize_beta_model(f, save_summary=T, drop_other = T, overwrite = TRUE)
         }, error = function(e) {
           if (grepl("truth.plot.long", e$message)) {
             # Try with drop_other = FALSE to avoid plot reconstruction
-            microbialForecast::summarize_beta_model(f, save_summary=T, drop_other = FALSE, overwrite = NULL)
+            microbialForecast::summarize_beta_model(f, save_summary=T, drop_other = FALSE, overwrite = TRUE)
           } else {
             stop(e)
           }
@@ -720,55 +828,170 @@ summarization_results <- tryCatch({
       })
     }
   })
-}, error = function(e) {
-  cat("Error in parallel summarization:", e$message, "\n")
-  # Fallback to sequential processing
-  lapply(ready_file_paths, function(f) {
-    # Check if summary already exists and is up-to-date
-    summary_file <- gsub("samples_", "summary_", f)
-    should_summarize <- TRUE
+  
+  cl <- NULL  # No cluster to stop
+} else {
+  cat("Using parallel processing with", max_cores, "cores\n")
+  cl <- makeCluster(max_cores)
+  
+  # Set up cluster environment - load updated source code
+  clusterEvalQ(cl, {
+    library(dplyr)
+    library(here)
+    library(microbialForecast)
+  })
+  
+  # Export necessary variables and functions
+  clusterExport(cl, c("ready_file_paths"), envir = environment())
+  # Export the summarize_beta_model function to workers (they sourced it, but export to be safe)
+  clusterExport(cl, "summarize_beta_model", envir = environment())
+  
+  # Process files in parallel with error handling and progress tracking
+  cat("Processing", length(ready_file_paths), "files in parallel...\n")
+  summarization_results <- tryCatch({
+    # Use parLapply with progress tracking via intermediate results
+    result_list <- vector("list", length(ready_file_paths))
     
-    if (file.exists(summary_file)) {
-      file_time <- file.mtime(f)
-      summary_time <- file.mtime(summary_file)
-      if (summary_time > file_time) {
-        return(list(result = TRUE, message = "Summary file is up-to-date, skipping"))
-      } else {
-        should_summarize <- TRUE
+    # Process in batches to show progress
+    batch_size <- max(1, floor(length(ready_file_paths) / 10))
+    n_batches <- ceiling(length(ready_file_paths) / batch_size)
+    
+    for (batch in 1:n_batches) {
+      start_idx <- (batch - 1) * batch_size + 1
+      end_idx <- min(batch * batch_size, length(ready_file_paths))
+      batch_files <- ready_file_paths[start_idx:end_idx]
+      
+      cat("Processing batch", batch, "of", n_batches, "(", length(batch_files), "files)\n")
+      
+      batch_results <- parLapply(cl, batch_files, function(f) {
+        # FORCE REGENERATION for env_cov models - always regenerate
+        # For other model types, check if summary is up-to-date
+        summary_file <- gsub("samples_", "summary_", f)
+        
+        # Force regeneration for env_cov models - skip the up-to-date check entirely
+        if (grepl("env_cov", f)) {
+          should_summarize <- TRUE  # Always regenerate env_cov, no checks
+        } else {
+          # For other model types, check if summary is up-to-date
+          if (file.exists(summary_file)) {
+            file_time <- file.mtime(f)
+            summary_time <- file.mtime(summary_file)
+            if (summary_time > file_time) {
+              return(list(result = TRUE, message = "Summary file is up-to-date, skipping"))
+            }
+          }
+          should_summarize <- TRUE
+        }
+        
+        if (should_summarize) {
+          tryCatch({
+            # Determine file source
+            file_source <- if (grepl("reconstructed_from_checkpoints", f)) "reconstructed" else "old_converged"
+            
+            # Process the file with error handling for truth.plot.long issues
+            # The summarize_beta_model function now handles plot_summary validation and regeneration
+            out <- tryCatch({
+              # Use the sourced function directly (not package namespace) since workers sourced it
+              summarize_beta_model(f, save_summary=T, drop_other = T, overwrite = TRUE)
+            }, error = function(e) {
+              if (grepl("truth.plot.long", e$message)) {
+                # Try with drop_other = FALSE to avoid plot reconstruction
+                microbialForecast::summarize_beta_model(f, save_summary=T, drop_other = FALSE, overwrite = TRUE)
+              } else {
+                stop(e)
+              }
+            })
+            
+            # Add source information to the summary
+            if (is.list(out) && "metadata" %in% names(out)) {
+              out$metadata$file_source <- file_source
+            }
+            
+            return(list(result = out, message = "Successfully processed"))
+          }, error = function(e) {
+            return(list(result = NULL, message = paste("Error processing:", e$message)))
+          })
+        } else {
+          return(list(result = NULL, message = "Skipped (should_summarize = FALSE)"))
+        }
+      })
+      
+      # Store batch results and log progress
+      result_list[start_idx:end_idx] <- batch_results
+      
+      # Count successes and failures in this batch
+      batch_success <- sum(sapply(batch_results, function(x) !is.null(x$result)))
+      batch_skipped <- sum(sapply(batch_results, function(x) !is.null(x$message) && grepl("up-to-date|Skipped", x$message)))
+      batch_errors <- sum(sapply(batch_results, function(x) is.null(x$result) && !is.null(x$message) && grepl("Error", x$message)))
+      
+      cat("Completed batch", batch, "of", n_batches, "- Success:", batch_success, "Skipped:", batch_skipped, "Errors:", batch_errors, "\n")
+    }
+    
+    return(result_list)
+  }, error = function(e) {
+    cat("Error in parallel summarization:", e$message, "\n")
+    cat("Falling back to sequential processing...\n")
+    # Fallback to sequential processing
+    lapply(ready_file_paths, function(f) {
+      # FORCE REGENERATION for env_cov models - always regenerate
+      # For other model types, check if summary is up-to-date
+      summary_file <- gsub("samples_", "summary_", f)
+      should_summarize <- TRUE
+      
+      # Force regeneration for env_cov models
+      if (grepl("env_cov", f)) {
+        should_summarize <- TRUE  # Always regenerate env_cov
+      } else if (file.exists(summary_file)) {
+        # For other model types, check if up-to-date
+        file_time <- file.mtime(f)
+        summary_time <- file.mtime(summary_file)
+        if (summary_time > file_time) {
+          return(list(result = TRUE, message = "Summary file is up-to-date, skipping"))
+        } else {
+          should_summarize <- TRUE
+        }
       }
-    }
-    
-    if (should_summarize) {
-      tryCatch({
-        # Determine file source
-        file_source <- if (grepl("reconstructed_from_checkpoints", f)) "reconstructed" else "old_converged"
-        
-        # Process the file with error handling for truth.plot.long issues
-        out <- tryCatch({
-          microbialForecast::summarize_beta_model(f, save_summary=T, drop_other = T, overwrite = NULL)
-        }, error = function(e) {
-          if (grepl("truth.plot.long", e$message)) {
-            # Try with drop_other = FALSE to avoid plot reconstruction
-            microbialForecast::summarize_beta_model(f, save_summary=T, drop_other = FALSE, overwrite = NULL)
-          } else {
-            stop(e)
+      
+      if (should_summarize) {
+        tryCatch({
+          # Determine file source
+          file_source <- if (grepl("reconstructed_from_checkpoints", f)) "reconstructed" else "old_converged"
+          
+          # Process the file with error handling for truth.plot.long issues
+          out <- tryCatch({
+            # Use the sourced function directly
+            summarize_beta_model(f, save_summary=T, drop_other = T, overwrite = TRUE)
+          }, error = function(e) {
+            if (grepl("truth.plot.long", e$message)) {
+              # Try with drop_other = FALSE to avoid plot reconstruction
+              microbialForecast::summarize_beta_model(f, save_summary=T, drop_other = FALSE, overwrite = TRUE)
+            } else {
+              stop(e)
+            }
+          })
+          
+          # Add source information to the summary
+          if (is.list(out) && "metadata" %in% names(out)) {
+            out$metadata$file_source <- file_source
           }
+          
+          return(list(result = out, message = "Successfully processed"))
+        }, error = function(e) {
+          return(list(result = NULL, message = paste("Error processing:", e$message)))
         })
-        
-        # Add source information to the summary
-        if (is.list(out) && "metadata" %in% names(out)) {
-          out$metadata$file_source <- file_source
-        }
-        
-        return(list(result = out, message = "Successfully processed"))
-      }, error = function(e) {
-        return(list(result = NULL, message = paste("Error processing:", e$message)))
-      })
-    }
+      }
+    })
   })
-})
+}
 
-stopCluster(cl)
+# Stop cluster if it was created
+if (!is.null(cl)) {
+  tryCatch({
+    stopCluster(cl)
+  }, error = function(e) {
+    cat("Warning: Error stopping cluster:", e$message, "\n")
+  })
+}
 
 # Extract results
 for(i in seq_along(summarization_results)) {
@@ -778,9 +1001,31 @@ for(i in seq_along(summarization_results)) {
   }
 }
 
-# Remove NULL entries
-file_summaries <- file_summaries[!sapply(file_summaries, is.null)]
-cat("Model processing complete. Results:", length(file_summaries), "\n")
+# Remove NULL entries and track failures
+failed_files <- character(0)
+failed_messages <- character(0)
+valid_summaries <- list()
+
+for(i in seq_along(summarization_results)) {
+  if(is.null(summarization_results[[i]]$result)) {
+    failed_files <- c(failed_files, basename(ready_file_paths[i]))
+    failed_messages <- c(failed_messages, summarization_results[[i]]$message)
+  } else {
+    valid_summaries[[length(valid_summaries) + 1]] <- summarization_results[[i]]$result
+  }
+}
+
+file_summaries <- valid_summaries
+cat("Model processing complete. Results:", length(file_summaries), "out of", n_ready_files, "files\n")
+if(length(failed_files) > 0) {
+  cat("  ⚠️ Failed to process", length(failed_files), "files:\n")
+  for(i in seq_len(min(10, length(failed_files)))) {
+    cat("    -", failed_files[i], ":", failed_messages[i], "\n")
+  }
+  if(length(failed_files) > 10) {
+    cat("    ... and", length(failed_files) - 10, "more failures\n")
+  }
+}
 
 # =============================================================================
 # STEP 3: COLLECT AND COMBINE SUMMARY FILES
@@ -788,15 +1033,52 @@ cat("Model processing complete. Results:", length(file_summaries), "\n")
 
 cat("\n=== STEP 3: COLLECT AND COMBINE SUMMARY FILES ===\n")
 
-# Search for summary files - only main model files, not chain files
-# Use system commands to be more explicit about what we're getting
-env_cycl_files <- system("find data/model_outputs/reconstructed_from_checkpoints/env_cycl -maxdepth 1 -name 'summary_*.rds' | grep -v chain", intern = TRUE)
-cycl_only_files <- system("find data/model_outputs/reconstructed_from_checkpoints/cycl_only -maxdepth 1 -name 'summary_*.rds' | grep -v chain", intern = TRUE)
+# Search for summary files from ALL model types - only main model files, not chain files
+# Use R's list.files instead of system find for better portability
+# Process all three model types (env_cycl, cycl_only, env_cov)
+summary_file_list <- character(0)
+for (mt in model_types) {
+  mt_dir <- file.path(base_path, mt)
+  if (dir.exists(mt_dir)) {
+    # Use list.files with recursive=TRUE to find all summary files
+    mt_files <- list.files(mt_dir, pattern = "^summary_.*\\.rds$", 
+                          full.names = TRUE, recursive = TRUE)
+    # Filter out chain files
+    mt_files <- mt_files[!grepl("_chain[0-9]", basename(mt_files))]
+    if (length(mt_files) > 0) {
+      summary_file_list <- c(summary_file_list, mt_files)
+      cat("Found", length(mt_files), "summary files for", mt, "\n")
+    } else {
+      cat("No summary files found for", mt, "in", mt_dir, "\n")
+    }
+  } else {
+    cat("Directory does not exist:", mt_dir, "\n")
+  }
+}
 
-summary_file_list <- c(env_cycl_files, cycl_only_files)
+cat("Found", length(summary_file_list), "summary files from all processed models (combined from all model types)\n")
 
-
-cat("Found", length(summary_file_list), "summary files from processed models\n")
+# Check which model files don't have corresponding summary files
+if(exists("ready_file_paths")) {
+  model_files_without_summaries <- character(0)
+  for(f in ready_file_paths) {
+    expected_summary <- gsub("samples_", "summary_", f)
+    if(!file.exists(expected_summary)) {
+      model_files_without_summaries <- c(model_files_without_summaries, basename(f))
+    }
+  }
+  if(length(model_files_without_summaries) > 0) {
+    cat("  ⚠️", length(model_files_without_summaries), "model files are missing summary files:\n")
+    for(i in seq_len(min(10, length(model_files_without_summaries)))) {
+      cat("    -", model_files_without_summaries[i], "\n")
+    }
+    if(length(model_files_without_summaries) > 10) {
+      cat("    ... and", length(model_files_without_summaries) - 10, "more\n")
+    }
+  } else {
+    cat("  ✅ All model files have corresponding summary files\n")
+  }
+}
 
 # Filter out empty summary files
 valid_summary_files <- c()
@@ -816,8 +1098,66 @@ for (file in summary_file_list) {
 summary_file_list <- valid_summary_files
 cat("Valid summary files:", length(summary_file_list), "\n")
 
+# For cloglog_beta_driver_uncertainty models with many files, use sub-scripts
+# This avoids memory issues and provides better progress tracking
+if (USE_SUB_SCRIPTS && length(summary_file_list) > 500) {
+  cat("\n⚠️  Large number of summary files detected (", length(summary_file_list), ")\n", sep="")
+  cat("   Delegating to sub-scripts for efficient processing:\n")
+  cat("   1. Running 03b_combine_summaries.r to combine summaries...\n")
+  
+  # Run 03b_combine_summaries.r
+  tryCatch({
+    source("analysis/model_analysis/03b_combine_summaries.r")
+    cat("   ✅ 03b_combine_summaries.r completed\n")
+  }, error = function(e) {
+    cat("   ❌ Error running 03b_combine_summaries.r:", e$message, "\n")
+    cat("   Falling back to main script processing...\n")
+    USE_SUB_SCRIPTS <- FALSE
+  })
+  
+  # Load the combined summary if it was created
+  if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds"))) {
+    cat("   Loading combined summary from 03b...\n")
+    main_summary <- readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
+    summary_df <- main_summary$summary_df
+    gelman_list <- main_summary$gelman.summary
+    convergence_results <- list(
+      keep_list = main_summary$keep_list,
+      keep_list_weak = main_summary$keep_list_weak,
+      keep_list_stricter = main_summary$keep_list_stricter,
+      rerun_list = main_summary$rerun_list
+    )
+    
+    # Ensure convergence lists are saved (03b should have done this, but ensure they're saved)
+    cat("   Ensuring convergence lists are saved...\n")
+    if (!dir.exists(here("data/summary"))) {
+      dir.create(here("data/summary"), recursive = TRUE)
+    }
+    tryCatch({
+      saveRDS(convergence_results$keep_list, here("data/summary/converged_taxa_list.rds"))
+      saveRDS(convergence_results$keep_list_stricter, here("data/summary/stricter_converged_taxa_list.rds"))
+      saveRDS(convergence_results$keep_list_weak, here("data/summary/weak_converged_taxa_list.rds"))
+      saveRDS(convergence_results$rerun_list, here("data/summary/unconverged_taxa_list.rds"))
+      cat("   ✅ Convergence lists saved\n")
+    }, error = function(e) {
+      cat("   ⚠️  Warning: Could not save convergence lists:", e$message, "\n")
+      cat("   (They should have been saved by 03b_combine_summaries.r)\n")
+    })
+    
+    # Skip to convergence analysis section
+    cat("   ✅ Using combined summaries from sub-script\n")
+    cat("   Skipping main script's file reading/combining step\n")
+    skip_file_combining <- TRUE
+  } else {
+    cat("   ⚠️  Combined summary not found, falling back to main script\n")
+    skip_file_combining <- FALSE
+  }
+} else {
+  skip_file_combining <- FALSE
+}
+
 # Process summary files in chunks to avoid memory issues
-if(length(summary_file_list) > 0) {
+if(!skip_file_combining && length(summary_file_list) > 0) {
   cat("Processing", length(summary_file_list), "summary files using chunked approach...\n")
   
   chunk_size <- 50
@@ -880,33 +1220,99 @@ if(length(summary_file_list) > 0) {
         return(x)
       })
       
-      summary_df <- map_df(all_summaries, 1)
+      # Extract summary_df from all summaries (element 1)
+      cat("Extracting summary_df from", length(all_summaries), "summary files...\n")
+      summary_dfs_list <- lapply(all_summaries, function(x) {
+        if (length(x) >= 1 && is.data.frame(x[[1]]) && nrow(x[[1]]) > 0) {
+          return(x[[1]])
+        } else {
+          return(data.frame())
+        }
+      })
+      
+      # Remove empty data frames
+      summary_dfs_list <- summary_dfs_list[sapply(summary_dfs_list, nrow) > 0]
+      
+      if (length(summary_dfs_list) > 0) {
+        cat("  Found", length(summary_dfs_list), "non-empty summary data frames\n")
+        summary_df <- map_df(summary_dfs_list, identity)
+        cat("  ✅ Combined summary_df:", nrow(summary_df), "rows,", ncol(summary_df), "columns\n")
+      } else {
+        cat("  ⚠️ WARNING: No valid summary_df data found in any summary file!\n")
+        summary_df <- data.frame()
+      }
       
       # Process plot estimates only if flag is enabled
       if (PROCESS_PLOT_ESTIMATES) {
         cat("Processing plot estimates (PROCESS_PLOT_ESTIMATES = TRUE)\n")
         
-        # Check if plot estimates already exist from previous processing
-        plot_est_parquet <- here("data/summary/plot_estimates.parquet")
-        
-        if (file.exists(plot_est_parquet)) {
-          cat("Loading existing plot estimates from", plot_est_parquet, "\n")
+        # For large datasets, use sub-script 03c for plot estimates
+        if (USE_SUB_SCRIPTS && length(summary_file_list) > 500) {
+          cat("   Large dataset detected - using 03c_extract_plot_summaries.r\n")
+          cat("   Running 03c_extract_plot_summaries.r...\n")
+          
           tryCatch({
-            if (require(arrow, quietly = TRUE)) {
-              plot_est <- read_parquet(plot_est_parquet)
-              cat("Loaded", nrow(plot_est), "plot estimate rows\n")
+            source("analysis/model_analysis/03c_extract_plot_summaries.r")
+            cat("   ✅ 03c_extract_plot_summaries.r completed\n")
+            
+            # Try to load the plot estimates
+            plot_est_parquet <- here("data/summary/plot_estimates.parquet")
+            if (file.exists(plot_est_parquet)) {
+              if (require(arrow, quietly = TRUE)) {
+                plot_est <- read_parquet(plot_est_parquet)
+                cat("   Loaded", nrow(plot_est), "plot estimate rows from sub-script\n")
+              } else {
+                cat("   Arrow package not available, trying RDS...\n")
+                plot_est_rds <- here("data/summary/plot_estimates.rds")
+                if (file.exists(plot_est_rds)) {
+                  plot_est <- readRDS(plot_est_rds)
+                  cat("   Loaded", nrow(plot_est), "plot estimate rows from RDS\n")
+                } else {
+                  plot_est <- data.frame()
+                }
+              }
             } else {
-              cat("Arrow package not available, falling back to processing from summary files...\n")
-              plot_est <- process_plot_estimates_optimized(summary_file_list)
+              cat("   ⚠️  Plot estimates file not found after sub-script\n")
+              plot_est <- data.frame()
             }
           }, error = function(e) {
-            cat("Error loading existing plot estimates:", e$message, "\n")
-            cat("Falling back to processing from summary files...\n")
-            plot_est <- process_plot_estimates_optimized(summary_file_list)
+            cat("   ❌ Error running 03c_extract_plot_summaries.r:", e$message, "\n")
+            cat("   Falling back to main script processing...\n")
+            # Check if plot estimates already exist from previous processing
+            plot_est_parquet <- here("data/summary/plot_estimates.parquet")
+            if (file.exists(plot_est_parquet)) {
+              if (require(arrow, quietly = TRUE)) {
+                plot_est <- read_parquet(plot_est_parquet)
+              } else {
+                plot_est <- process_plot_estimates_optimized(summary_file_list)
+              }
+            } else {
+              plot_est <- process_plot_estimates_optimized(summary_file_list)
+            }
           })
         } else {
-          cat("No existing plot estimates found, processing from summary files...\n")
-          plot_est <- process_plot_estimates_optimized(summary_file_list)
+          # Check if plot estimates already exist from previous processing
+          plot_est_parquet <- here("data/summary/plot_estimates.parquet")
+          
+          if (file.exists(plot_est_parquet)) {
+            cat("Loading existing plot estimates from", plot_est_parquet, "\n")
+            tryCatch({
+              if (require(arrow, quietly = TRUE)) {
+                plot_est <- read_parquet(plot_est_parquet)
+                cat("Loaded", nrow(plot_est), "plot estimate rows\n")
+              } else {
+                cat("Arrow package not available, falling back to processing from summary files...\n")
+                plot_est <- process_plot_estimates_optimized(summary_file_list)
+              }
+            }, error = function(e) {
+              cat("Error loading existing plot estimates:", e$message, "\n")
+              cat("Falling back to processing from summary files...\n")
+              plot_est <- process_plot_estimates_optimized(summary_file_list)
+            })
+          } else {
+            cat("No existing plot estimates found, processing from summary files...\n")
+            plot_est <- process_plot_estimates_optimized(summary_file_list)
+          }
         }
         
         if (nrow(plot_est) > 0) {
@@ -922,9 +1328,44 @@ if(length(summary_file_list) > 0) {
       }
       
       # Use Element 4 for parameter-level Gelman diagnostics (not Element 3 which is plot-level)
-      gelman_list <- map_df(all_summaries, 4)
+      cat("Extracting gelman_list from summary files...\n")
+      cat("  Total summaries to process:", length(all_summaries), "\n")
+      
+      gelman_dfs_list <- lapply(seq_along(all_summaries), function(i) {
+        x <- all_summaries[[i]]
+        if (length(x) >= 4 && is.data.frame(x[[4]]) && nrow(x[[4]]) > 0) {
+          return(x[[4]])
+        } else {
+          if (i <= 5 || i %% 50 == 0) {
+            cat("  Summary", i, ": element 4 missing or empty (length:", length(x), ")\n")
+          }
+          return(data.frame())
+        }
+      })
+      
+      # Remove empty data frames
+      gelman_dfs_list <- gelman_dfs_list[sapply(gelman_dfs_list, nrow) > 0]
+      cat("  Summaries with valid gelman data:", length(gelman_dfs_list), "out of", length(all_summaries), "\n")
+      
+      if (length(gelman_dfs_list) > 0) {
+        gelman_list <- map_df(gelman_dfs_list, identity)
+        cat("  ✅ Combined gelman_list:", nrow(gelman_list), "rows,", ncol(gelman_list), "columns\n")
+        if ("model_id" %in% colnames(gelman_list)) {
+          unique_models <- unique(gelman_list$model_id)
+          cat("  Unique model_ids in gelman_list:", length(unique_models), "\n")
+        } else {
+          cat("  ⚠️ WARNING: 'model_id' column not found in gelman_list!\n")
+          cat("  Available columns:", paste(colnames(gelman_list), collapse = ", "), "\n")
+        }
+      } else {
+        cat("  ⚠️ WARNING: No valid gelman_list data found in any summary file!\n")
+        gelman_list <- data.frame()
+      }
       
       cat("Successfully combined", length(all_summaries), "summaries\n")
+      cat("FINAL SUMMARY:\n")
+      cat("  - summary_df:", nrow(summary_df), "rows\n")
+      cat("  - gelman_list:", nrow(gelman_list), "rows\n")
     } else {
       stop("No valid summaries found after combining chunks")
     }
@@ -944,8 +1385,8 @@ if(length(summary_file_list) > 0) {
 # STEP 4: CONVERGENCE ANALYSIS
 # =============================================================================
 
-# Load existing data if processing was skipped
-if (skip_processing) {
+# Load existing data if processing was skipped OR if we used sub-scripts
+if (skip_processing || (exists("skip_file_combining") && skip_file_combining)) {
   cat("Loading existing summary data...\n")
   main_summary <- readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
   
@@ -984,6 +1425,21 @@ if (skip_processing) {
   cat("  Summary_df rows:", nrow(summary_df), "\n")
   cat("  Plot_est rows:", nrow(plot_est), "\n")
   cat("  Keep_list length:", length(keep_list), "\n")
+  
+  # Ensure convergence_results exists for later saving
+  if (!exists("convergence_results")) {
+    convergence_results <- list(
+      keep_list = keep_list,
+      keep_list_weak = keep_list_weak,
+      keep_list_stricter = keep_list_stricter,
+      rerun_list = rerun_list
+    )
+  }
+  
+  # Also ensure gelman_list exists (needed for later steps)
+  if (!exists("gelman_list")) {
+    gelman_list <- gelman.summary
+  }
 } else {
   cat("\n=== STEP 4: CONVERGENCE ANALYSIS ===\n")
 
@@ -1030,41 +1486,62 @@ if (nrow(gelman_list) == 0) {
     stop("Failed to process Gelman data")
   })
   
-  # Apply simple convergence criteria using data.table
-  tryCatch({
-    # Function to ensure model_ids have _beta_regression suffix to match filenames
-    fix_model_id <- function(model_id) {
-      if (grepl("with_legacy_covariate$", model_id) && !grepl("_beta_regression$", model_id)) {
-        return(paste0(model_id, "_beta_regression"))
+    # Apply simple convergence criteria using data.table
+    tryCatch({
+      # Function to ensure model_ids have _beta_regression suffix to match filenames
+      fix_model_id <- function(model_id) {
+        if (grepl("with_legacy_covariate$", model_id) && !grepl("_beta_regression$", model_id)) {
+          return(paste0(model_id, "_beta_regression"))
+        }
+        return(model_id)
       }
-      return(model_id)
-    }
-    
-    # Get unique model IDs that meet criteria
-    keep_models <- unique(gelman_dt[is_major_param == TRUE & `Point est.` < 1.1]$model_id)
-    keep_models_weak <- unique(gelman_dt[is_major_param == TRUE & `Point est.` < 1.2]$model_id)
-    keep_models_stricter <- unique(gelman_dt[is_major_param == TRUE & `Point est.` < 1.05]$model_id)
-    
-    # Fix model_ids to include _beta_regression suffix
-    keep_models <- sapply(keep_models, fix_model_id)
-    keep_models_weak <- sapply(keep_models_weak, fix_model_id)
-    keep_models_stricter <- sapply(keep_models_stricter, fix_model_id)
-    
-    # Get models that need rerun (don't meet basic criteria)
-    all_models <- unique(gelman_dt$model_id)
-    all_models <- sapply(all_models, fix_model_id)
-    rerun_models <- setdiff(all_models, keep_models)
+      
+      # Calculate maximum Point est. per model for major parameters
+      # A model is converged if the MAX Point est. of its major parameters meets the threshold
+      model_max_gelman <- gelman_dt[
+        is_major_param == TRUE,
+        .(max_point_est = max(`Point est.`, na.rm = TRUE),
+          mean_point_est = mean(`Point est.`, na.rm = TRUE),
+          n_params = .N),
+        by = model_id
+      ]
+      
+      # Get models where MAX major parameter Point est. meets criteria
+      keep_models <- unique(model_max_gelman[max_point_est < 1.1]$model_id)
+      keep_models_weak <- unique(model_max_gelman[max_point_est < 1.2]$model_id)
+      keep_models_stricter <- unique(model_max_gelman[max_point_est < 1.05]$model_id)
+      
+      # Fix model_ids to include _beta_regression suffix
+      keep_models <- sapply(keep_models, fix_model_id)
+      keep_models_weak <- sapply(keep_models_weak, fix_model_id)
+      keep_models_stricter <- sapply(keep_models_stricter, fix_model_id)
+      
+      # Get models that need rerun (don't meet basic criteria)
+      all_models <- unique(gelman_dt$model_id)
+      all_models <- sapply(all_models, fix_model_id)
+      rerun_models <- setdiff(all_models, keep_models)
     
     keep_list <- keep_models
     keep_list_weak <- keep_models_weak
     keep_list_stricter <- keep_models_stricter
     rerun_list <- rerun_models
     
-    cat("  Total models:", length(all_models), "\n")
-    cat("  Converged (strict):", length(keep_list_stricter), "\n")
-    cat("  Converged (standard):", length(keep_list), "\n")
-    cat("  Converged (weak):", length(keep_list_weak), "\n")
-    cat("  Need rerun:", length(rerun_list), "\n")
+    cat("\n  === CONVERGENCE STATISTICS ===\n")
+    cat("  Total models in analysis:", length(all_models), "\n")
+    cat("  Converged (strict < 1.05):", length(keep_list_stricter), "\n")
+    cat("  Converged (standard < 1.1):", length(keep_list), "\n")
+    cat("  Converged (weak < 1.2):", length(keep_list_weak), "\n")
+    cat("  Need rerun (> 1.1):", length(rerun_list), "\n")
+    
+    # Breakdown by model type
+    if("model_id" %in% colnames(gelman_dt)) {
+      cat("\n  Breakdown by model type:\n")
+      for(mt in model_types) {
+        models_of_type <- unique(gelman_dt[grepl(paste0("^", mt), model_id)]$model_id)
+        converged_of_type <- sum(grepl(paste0("^", mt), keep_models))
+        cat("    ", mt, ": ", length(models_of_type), " models, ", converged_of_type, " converged\n", sep="")
+      }
+    }
     
   }, error = function(e) {
     cat("  Error in convergence criteria application:", e$message, "\n")
@@ -1241,9 +1718,51 @@ if (!dir.exists(here("data/summary"))) {
 }
 
 # First, ensure all critical variables exist with proper defaults
+# BUT: If we just processed summary files, these should already exist
+# Only create empty if truly missing (e.g., if skip_processing was TRUE but data wasn't found)
 if (!exists("summary_df")) {
-  cat("  ⚠️ summary_df missing, creating empty data frame\n")
+  cat("  ⚠️ summary_df missing!\n")
+  cat("  This should not happen if processing completed successfully.\n")
+  cat("  Attempting to load from individual summary files as fallback...\n")
+  
+  # Fallback: try to load from individual summary files
+  base_path <- if(exists("base_path")) base_path else "data/model_outputs/cloglog_beta_driver_uncertainty"
+  if (dir.exists(base_path)) {
+    summary_files <- c(
+      list.files(file.path(base_path, "env_cycl"), pattern = "summary_.*_beta_regression\\.rds$", full.names = TRUE, recursive = TRUE),
+      list.files(file.path(base_path, "cycl_only"), pattern = "summary_.*_beta_regression\\.rds$", full.names = TRUE, recursive = TRUE),
+      list.files(file.path(base_path, "env_cov"), pattern = "summary_.*_beta_regression\\.rds$", full.names = TRUE, recursive = TRUE)
+    )
+    if (length(summary_files) > 0) {
+      cat("  Found", length(summary_files), "summary files, attempting to combine...\n")
+      all_summaries <- lapply(summary_files, function(f) {
+        tryCatch(readRDS(f), error = function(e) NULL)
+      })
+      all_summaries <- all_summaries[!sapply(all_summaries, is.null)]
+      if (length(all_summaries) > 0) {
+        summary_dfs <- lapply(all_summaries, function(x) {
+          if (length(x) >= 1 && is.data.frame(x[[1]]) && nrow(x[[1]]) > 0) return(x[[1]]) else return(data.frame())
+        })
+        summary_dfs <- summary_dfs[sapply(summary_dfs, nrow) > 0]
+        if (length(summary_dfs) > 0) {
+          summary_df <- map_df(summary_dfs, identity)
+          cat("  ✅ Successfully loaded", nrow(summary_df), "rows from individual files\n")
+        } else {
+          cat("  ❌ No valid data found in summary files\n")
   summary_df <- data.frame()
+        }
+      } else {
+        cat("  ❌ Could not read any summary files\n")
+        summary_df <- data.frame()
+      }
+    } else {
+      cat("  ❌ No summary files found\n")
+      summary_df <- data.frame()
+    }
+  } else {
+    cat("  ❌ Base path not found\n")
+    summary_df <- data.frame()
+  }
 }
 
 if (!exists("plot_est")) {
@@ -1278,20 +1797,112 @@ if (!exists("missing_chain_results")) {
   )
 }
 
-# Save convergence lists individually
-saveRDS(convergence_results$keep_list, here("data/summary/converged_taxa_list.rds"))
-saveRDS(convergence_results$keep_list_stricter, here("data/summary/stricter_converged_taxa_list.rds"))
-saveRDS(convergence_results$keep_list_weak, here("data/summary/weak_converged_taxa_list.rds"))
+# Filter convergence lists to only include driver uncertainty models
+# Driver uncertainty models are identified by:
+# 1. Having "with_legacy_covariate" and "beta_regression" in model_id
+# 2. Being from cloglog_beta_driver_uncertainty directory (model_id starts with cycl_only, env_cov, or env_cycl)
+filter_driver_uncertainty_only <- function(model_list) {
+  if (length(model_list) == 0) return(character(0))
+  
+  # Driver uncertainty models have: model_name_species_20130601_20180101_with_legacy_covariate_beta_regression
+  # And model_name is one of: cycl_only, env_cov, env_cycl
+  driver_pattern <- "^((cycl_only|env_cov|env_cycl)_.*_20130601_20180101_with_legacy_covariate_beta_regression)$"
+  filtered <- model_list[grepl(driver_pattern, model_list)]
+  return(filtered)
+}
 
-# Create and save unconverged list
+# Ensure convergence_results exists before filtering and saving
+if (!exists("convergence_results")) {
+  cat("⚠️  convergence_results not found, creating from main_summary if available\n")
+  if (exists("main_summary") && is.list(main_summary)) {
+    convergence_results <- list(
+      keep_list = if("keep_list" %in% names(main_summary)) main_summary$keep_list else character(0),
+      keep_list_weak = if("keep_list_weak" %in% names(main_summary)) main_summary$keep_list_weak else character(0),
+      keep_list_stricter = if("keep_list_stricter" %in% names(main_summary)) main_summary$keep_list_stricter else character(0),
+      rerun_list = if("rerun_list" %in% names(main_summary)) main_summary$rerun_list else character(0)
+    )
+  } else {
+    cat("⚠️  main_summary not available, creating empty convergence_results\n")
+    convergence_results <- list(
+      keep_list = character(0),
+      keep_list_weak = character(0),
+      keep_list_stricter = character(0),
+      rerun_list = character(0)
+    )
+  }
+}
+
+# Filter all convergence lists to driver uncertainty only
+convergence_results$keep_list <- filter_driver_uncertainty_only(convergence_results$keep_list)
+convergence_results$keep_list_weak <- filter_driver_uncertainty_only(convergence_results$keep_list_weak)
+convergence_results$keep_list_stricter <- filter_driver_uncertainty_only(convergence_results$keep_list_stricter)
+convergence_results$rerun_list <- filter_driver_uncertainty_only(convergence_results$rerun_list)
+
+cat("  Filtered convergence lists to driver uncertainty models only:\n")
+cat("    keep_list:", length(convergence_results$keep_list), "models\n")
+cat("    keep_list_weak:", length(convergence_results$keep_list_weak), "models\n")
+cat("    keep_list_stricter:", length(convergence_results$keep_list_stricter), "models\n")
+cat("    rerun_list:", length(convergence_results$rerun_list), "models\n")
+
+# Save convergence lists individually with error handling
+cat("\n  Saving convergence lists...\n")
+tryCatch({
+  saveRDS(convergence_results$keep_list, here("data/summary/converged_taxa_list.rds"))
+  cat("    ✅ Saved converged_taxa_list.rds (", length(convergence_results$keep_list), " models)\n", sep="")
+}, error = function(e) {
+  cat("    ❌ Error saving converged_taxa_list.rds:", e$message, "\n")
+})
+
+tryCatch({
+  saveRDS(convergence_results$keep_list_stricter, here("data/summary/stricter_converged_taxa_list.rds"))
+  cat("    ✅ Saved stricter_converged_taxa_list.rds (", length(convergence_results$keep_list_stricter), " models)\n", sep="")
+}, error = function(e) {
+  cat("    ❌ Error saving stricter_converged_taxa_list.rds:", e$message, "\n")
+})
+
+tryCatch({
+  saveRDS(convergence_results$keep_list_weak, here("data/summary/weak_converged_taxa_list.rds"))
+  cat("    ✅ Saved weak_converged_taxa_list.rds (", length(convergence_results$keep_list_weak), " models)\n", sep="")
+}, error = function(e) {
+  cat("    ❌ Error saving weak_converged_taxa_list.rds:", e$message, "\n")
+})
+
+# Filter missing chain results to driver uncertainty only
+if (exists("missing_chain_results")) {
+  missing_chain_results$priority_rerun_list <- filter_driver_uncertainty_only(missing_chain_results$priority_rerun_list)
+  missing_chain_results$all_missing_rerun_list <- filter_driver_uncertainty_only(missing_chain_results$all_missing_rerun_list)
+  if (nrow(missing_chain_results$missing_chains) > 0) {
+    # Filter missing_chains data.frame if it has model_id column
+    if ("model_id" %in% colnames(missing_chain_results$missing_chains)) {
+      missing_chain_results$missing_chains <- missing_chain_results$missing_chains[
+        grepl("^((cycl_only|env_cov|env_cycl)_.*_20130601_20180101_with_legacy_covariate_beta_regression)$", 
+              missing_chain_results$missing_chains$model_id), 
+        , drop = FALSE
+      ]
+    }
+  }
+  cat("  Filtered missing chain results to driver uncertainty only\n")
+}
+
+# Save unconverged list based on convergence analysis (filtered to driver uncertainty)
+# This matches the rerun_list in the main summary
+tryCatch({
+  saveRDS(convergence_results$rerun_list, here("data/summary/unconverged_taxa_list.rds"))
+  cat("    ✅ Saved unconverged_taxa_list.rds (", length(convergence_results$rerun_list), " models)\n", sep="")
+}, error = function(e) {
+  cat("    ❌ Error saving unconverged_taxa_list.rds:", e$message, "\n")
+})
+
+# Create and save prioritized rerun list (combines convergence failures and missing chains)
 rerun_list_prioritized <- c(
   missing_chain_results$priority_rerun_list, 
   setdiff(missing_chain_results$all_missing_rerun_list, 
-          missing_chain_results$priority_rerun_list)
+          missing_chain_results$priority_rerun_list),
+  convergence_results$rerun_list
 )
-saveRDS(rerun_list_prioritized, here("data/summary/unconverged_taxa_list.rds"))
+rerun_list_prioritized <- unique(filter_driver_uncertainty_only(rerun_list_prioritized))
 
-# Save priority rerun list
+# Save priority rerun list (filtered to driver uncertainty)
 saveRDS(missing_chain_results$priority_rerun_list, here("data/summary/priority_rerun_list.rds"))
 
 # Save missing chains analysis
@@ -1373,7 +1984,39 @@ cat("    - keep_list_stricter:", length(main_summary$keep_list_stricter), "model
 cat("    - rerun_list:", length(main_summary$rerun_list), "models\n")
 cat("    - plot_est: saved separately in plot_estimates.parquet/rds/csv.gz\n")
 
-# Save main summary - NO FALLBACK TO MINIMAL VERSION
+# Save main summary - verify data exists before saving
+# CRITICAL: summary_df MUST have data before saving
+cat("\n=== VERIFYING DATA BEFORE SAVE ===\n")
+cat("  summary_df rows:", nrow(main_summary$summary_df), "\n")
+cat("  summary_df columns:", ncol(main_summary$summary_df), "\n")
+cat("  gelman_list rows:", nrow(main_summary$gelman.summary), "\n")
+
+if (nrow(main_summary$summary_df) == 0) {
+  cat("\n  ❌ ERROR: summary_df is empty! Cannot save main summary file.\n")
+  cat("  This indicates a serious problem with model summarization.\n")
+  cat("  Debugging information:\n")
+  
+  # Debug: Check if summary_df should have been populated
+  if (exists("summary_file_list")) {
+    cat("  - Summary files found:", length(summary_file_list), "\n")
+  }
+  if (exists("all_summaries")) {
+    cat("  - All summaries loaded:", length(all_summaries), "\n")
+  }
+  
+  cat("\n  Individual summary files in cloglog_beta_driver_uncertainty should still be valid.\n")
+  cat("  Consider running 03b_combine_summaries.r to rebuild the combined file.\n")
+  cat("  NOT SAVING EMPTY FILE - removing if it exists...\n")
+  
+  # Remove any existing empty file
+  if (file.exists(here("data/summary/logit_beta_fixed_priors_summaries.rds"))) {
+    file.remove(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
+    cat("  Removed existing empty summary file\n")
+  }
+  
+} else {
+  cat("\n  ✅ Data verification passed - summary_df has", nrow(main_summary$summary_df), "rows\n")
+  
 tryCatch({
   saveRDS(main_summary, here("data/summary/logit_beta_fixed_priors_summaries.rds"))
   cat("\n  ✅ Saved main summary file successfully\n")
@@ -1381,42 +2024,26 @@ tryCatch({
   # Verify it saved correctly
   test_read <- readRDS(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
   if (!is.null(test_read$summary_df) && nrow(test_read$summary_df) > 0) {
-    cat("  ✅ Verified: main summary file saved successfully\n")
+      cat("  ✅ Verified: main summary file contains", nrow(test_read$summary_df), "rows\n")
+      cat("  ✅ File size:", format(file.info(here("data/summary/logit_beta_fixed_priors_summaries.rds"))$size, units="MB"), "\n")
   } else {
-    cat("  ⚠️ Warning: main summary file may be empty\n")
+      cat("  ❌ CRITICAL: main summary file is empty after save!\n")
+      cat("  This indicates a save/read problem. Removing file...\n")
+      # Remove empty file
+      file.remove(here("data/summary/logit_beta_fixed_priors_summaries.rds"))
+      cat("  Removed corrupted empty summary file\n")
+      stop("Failed to save summary file correctly - file was empty after save")
   }
   
 }, error = function(e) {
-  cat("\n  ❌ CRITICAL ERROR saving main summary file:\n")
+    cat("\n  ❌ ERROR saving main summary file:\n")
   cat("    ", e$message, "\n")
-  cat("\n  Attempting to diagnose the problem...\n")
-  
-  # Check object sizes
-  cat("  Object sizes:\n")
-  cat("    - summary_df:", format(object.size(main_summary$summary_df), units = "MB"), "\n")
-  cat("    - gelman.summary:", format(object.size(main_summary$gelman.summary), units = "MB"), "\n")
-  cat("    - Total:", format(object.size(main_summary), units = "MB"), "\n")
-  
-  # Save components individually as backup
-  cat("\n  Saving components individually as backup...\n")
-  tryCatch({
-    saveRDS(main_summary$summary_df, here("data/summary/backup_summary_df.rds"))
-    cat("    ✅ Saved backup_summary_df.rds\n")
-  }, error = function(e2) {
-    cat("    ❌ Failed to save summary_df:", e2$message, "\n")
+    cat("  Individual summary files remain valid and can be loaded directly.\n")
+    cat("  The combined summary file can be regenerated using 03b_combine_summaries.r\n")
+    # Don't create backup files - individual files are the source of truth
+    stop(e)  # Re-throw to prevent continuing with invalid state
   })
-  
-  # plot_est is saved separately, no need to backup here
-  
-  tryCatch({
-    saveRDS(main_summary$gelman.summary, here("data/summary/backup_gelman.rds"))
-    cat("    ✅ Saved backup_gelman.rds\n")
-  }, error = function(e2) {
-    cat("    ❌ Failed to save gelman.summary:", e2$message, "\n")
-  })
-  
-  stop("Failed to save main summary file. Check backup files in data/summary/")
-})
+}
 
 # Save additional outputs
 if (exists("results") && !is.null(results)) {
@@ -1551,4 +2178,3 @@ test_consolidated_summary()
 
 cat("\n✅ Consolidated summary pipeline complete!\n")
 cat("All crucial output files have been preserved and generated.\n")
-}
