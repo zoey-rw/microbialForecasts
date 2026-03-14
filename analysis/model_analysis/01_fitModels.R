@@ -15,17 +15,17 @@ source(here("analysis/model_analysis/60_logging.R"))
 log_setup(logfile = here("logs", paste0("model_fitting_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".log")))
 
 # Set project root
-here::i_am("analysis/model_analysis/01_fitModels_driverUncertainty.R")
+here::i_am("analysis/model_analysis/01_fitModels.R")
 project_root <- here()
 
 # Validate that the script path matches the expected location
-if (!file.exists(here::here("analysis/model_analysis/01_fitModels_driverUncertainty.R"))) {
-    stop("Script path validation failed: analysis/model_analysis/01_fitModels_driverUncertainty.R not found at here() root")
+if (!file.exists(here::here("analysis/model_analysis/01_fitModels.R"))) {
+    stop("Script path validation failed: analysis/model_analysis/01_fitModels.R not found at here() root")
 }
 
 info("here() starts at %s", project_root)
 info("Project root set to: %s", getwd())
-info("Script path validated: analysis/model_analysis/01_fitModels_driverUncertainty.R exists")
+info("Script path validated: analysis/model_analysis/01_fitModels.R exists")
 
 # Load the microbialForecast package to access helper functions
 library(microbialForecast)
