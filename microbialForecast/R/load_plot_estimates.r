@@ -12,6 +12,15 @@
 #' @export
 load_plot_estimates <- function(model_type, subset_cols = NULL, filter_expr = NULL, max_chunks = NULL) {
   
+  # Check for parquet package (prefer nanoparquet, fallback to arrow)
+  use_nanoparquet <- requireNamespace("nanoparquet", quietly = TRUE)
+  use_arrow <- requireNamespace("arrow", quietly = TRUE)
+  
+  if (!use_nanoparquet && !use_arrow) {
+    stop("Neither 'nanoparquet' nor 'arrow' package is available.\n",
+         "Please install one with: install.packages('nanoparquet') or install.packages('arrow')")
+  }
+  
   # Find chunk directory
   chunk_dir <- file.path(here::here("data/summary"), paste0("plot_estimates_", model_type))
   
@@ -33,6 +42,11 @@ load_plot_estimates <- function(model_type, subset_cols = NULL, filter_expr = NU
   }
   
   cat("Loading plot estimates for", model_type, "from", length(chunk_files), "chunks...\n")
+  if (use_nanoparquet) {
+    cat("Using nanoparquet for parquet support\n")
+  } else {
+    cat("Using arrow for parquet support\n")
+  }
   
   # Load chunks one by one and combine
   all_data <- list()
@@ -43,7 +57,13 @@ load_plot_estimates <- function(model_type, subset_cols = NULL, filter_expr = NU
     }
     
     # Load chunk
-    chunk_data <- arrow::read_parquet(chunk_files[[i]])
+    if (use_nanoparquet) {
+      chunk_data <- nanoparquet::read_parquet(chunk_files[[i]])
+      chunk_data <- data.table::as.data.table(chunk_data)
+    } else {
+      chunk_data <- arrow::read_parquet(chunk_files[[i]])
+      chunk_data <- data.table::as.data.table(chunk_data)
+    }
     
     # Subset columns if requested
     if (!is.null(subset_cols)) {
@@ -152,6 +172,12 @@ get_plot_estimates_summary <- function(model_type) {
     return(list(error = "No chunk files found"))
   }
   
+  # Check if arrow is available
+  if (!requireNamespace("arrow", quietly = TRUE)) {
+    stop("The 'arrow' package is required to load plot estimates from Parquet files.\n",
+         "Please install it with: install.packages('arrow')")
+  }
+  
   # Load first chunk to get structure
   first_chunk <- arrow::read_parquet(chunk_files[1])
   
@@ -224,8 +250,9 @@ load_plot_estimates_for_scoring <- function(model_type = "env_cycl") {
 load_plot_estimates_for_phenology <- function(model_type = "env_cycl") {
   cat("Loading plot estimates for phenology analysis...\n")
   
-  # Load columns needed for phenology
-  phenology_cols <- c("siteID", "plotID", "timepoint", "Mean", "date_num", "species", "taxon", "model_name", "model_id", "dates", "fcast_type", "time_period", "pretty_group", "rank_only")
+  # Load columns needed for phenology - include quantiles in case Mean is missing
+  phenology_cols <- c("siteID", "plotID", "timepoint", "Mean", "date_num", "species", "taxon", "model_name", "model_id", "dates", "fcast_type", "time_period", "pretty_group", "rank_only",
+                      "50%", "X50.", "med", "mean", "2.5%", "25%", "75%", "97.5%", "X2.5.", "X25.", "X75.", "X97.5.")
   
   plot_data <- load_plot_estimates(
     model_type = model_type,

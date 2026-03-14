@@ -44,16 +44,19 @@ prepDirichletData <- function(rank.df,
 	# For Dirichlet models, we need at least 3 taxa (composition requires multiple components)
 	metadata_cols <- c("siteID", "plotID", "dateID", "sampleID", "dates", "plot_date")
 	taxa_cols <- setdiff(colnames(dat), metadata_cols)
-	taxa_prevalence <- sapply(taxa_cols, function(taxa) sum(dat[[taxa]] > 0, na.rm = TRUE))
+
+	# Exclude pre-existing "other" column from prevalence ranking — it's not a real taxon
+	real_taxa_cols <- setdiff(taxa_cols, "other")
+	taxa_prevalence <- sapply(real_taxa_cols, function(taxa) sum(dat[[taxa]] > 0, na.rm = TRUE))
 	taxa_prevalence <- taxa_prevalence[order(taxa_prevalence, decreasing = TRUE)]
 
 	if (length(taxa_prevalence) < 3) {
 		stop("Dirichlet model requires at least 3 taxa; this rank has ", length(taxa_prevalence), ".")
 	}
 
-	# Keep top 3 taxa; optionally sum the rest into "other"
+	# Keep top 3 real taxa; sum everything else (including pre-existing "other") into "other"
 	top_taxa <- names(taxa_prevalence)[1:3]
-	other_taxa <- if (length(taxa_prevalence) > 3) names(taxa_prevalence)[4:length(taxa_prevalence)] else character(0)
+	other_taxa <- setdiff(taxa_cols, top_taxa)  # includes remaining real taxa + pre-existing "other"
 	if (length(other_taxa) > 0) {
 		dat$other <- rowSums(dat[, other_taxa, drop = FALSE], na.rm = TRUE)
 		keep_taxa <- c(top_taxa, "other")
@@ -65,7 +68,7 @@ prepDirichletData <- function(rank.df,
 	if (length(remove_taxa) > 0) {
 		dat <- dat[, !colnames(dat) %in% remove_taxa]
 	}
-	cat("Keeping", length(keep_taxa), "taxa (top 3 + other) for Dirichlet modeling\n")
+	cat("Keeping", length(keep_taxa), "taxa for Dirichlet modeling:", paste(keep_taxa, collapse=", "), "\n")
 
 	# Note: y matrix will be created after all NA filtering is complete
 

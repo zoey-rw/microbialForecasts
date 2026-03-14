@@ -206,3 +206,76 @@ getMaxMin <- function(sin, cos, T = 12, max_only = T) {
 #'
 #' @export
 invlogit = function(x) exp(x)/(1+exp(x))
+
+
+#' @title sin_cos_to_seasonality
+#' @description Convert sin and cos effect sizes to seasonal amplitude parameter
+#' @export
+sin_cos_to_seasonality <- function(sin, cos){
+	if (sin==0 & cos==0|is.na(sin)|is.na(cos)) {return(cbind.data.frame(max=NA,
+																								amplitude_orig=NA,
+																								amplitude = NA))}
+	min_max <- getMaxMin(sin, cos, max_only = F)
+	amplitude <- sqrt(sin^2 + cos^2)
+
+	t=seq(0,12,0.1)
+	monthly_vals = sin*sin(2*pi*t/12)+cos*cos(2*pi*t/12)
+	max_val = max(monthly_vals)
+	avg_val <- mean(min_max[[1]], min_max[[2]])
+	out <- cbind.data.frame(max=min_max[[1]],
+													amplitude_orig=amplitude,
+													amplitude = max_val)
+	return(out)
+}
+
+
+#' @title predictive_loss
+#' @description Calculate predictive loss decomposed into predictive variance and residual variance
+#' @export
+predictive_loss = function(observed, predicted, predicted_sd){
+	npred = length(predicted)
+	predictive_variance = predicted_sd^2
+	residual_variance = (predicted - observed)^2
+	P = sum(predictive_variance, na.rm=T)/npred
+	G = sum(residual_variance, na.rm=T)/npred
+	total_PL = P+G
+	data.frame(total_PL = total_PL, predictive_variance=P, residual_variance=G)
+}
+
+
+#' @title pivot_metrics
+#' @description Pivot scoring metrics from wide to long format
+#' @export
+pivot_metrics = function(df) {
+	result <- df %>% pivot_longer(cols = c(RMSE, BIAS, MAE, CRPS, CRPS_truncated, RSQ, RSQ.1,
+															 RMSE.norm, residual_variance, predictive_variance, total_PL),
+											names_to = "metric", values_to = "score")
+	preserve_cols <- c("model_id", "fcast_type", "pretty_group", "model_name", "pretty_name", "rank_name", "taxon", "site_prediction", "mean_crps_sample")
+	existing_preserve_cols <- preserve_cols[preserve_cols %in% colnames(df)]
+	if(length(existing_preserve_cols) > 0) {
+		result <- result %>% left_join(
+			df %>% select(all_of(existing_preserve_cols)),
+			by = existing_preserve_cols
+		)
+	}
+	return(result)
+}
+
+
+#' @title calc_cv
+#' @description Calculate coefficient of variation (as percentage)
+#' @export
+calc_cv <- function(x) sd(x, na.rm = T) / mean(x, na.rm = T) * 100
+
+
+#' @title tag_facet
+#' @description Add letter tags to ggplot facet panels
+#' @export
+tag_facet <- function(p, open = "(", close = ")", tag_pool = letters, x = -Inf, y = Inf,
+											hjust = -0.5, vjust = 1.5, fontface = 2, family = "", ...) {
+	gb <- ggplot_build(p)
+	lay <- gb$layout$layout
+	tags <- cbind(lay, label = paste0(open, tag_pool[lay$PANEL], close), x = x, y = y)
+	p + geom_text(data = tags, aes_string(x = "x", y = "y", label = "label"), ..., hjust = hjust,
+								vjust = vjust, fontface = fontface, family = family, inherit.aes = FALSE)
+}
