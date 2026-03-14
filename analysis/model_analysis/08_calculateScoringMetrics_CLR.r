@@ -2,7 +2,7 @@
 library(here)
 source(here("source.R"))
 # statsFunctions.r functions (add_scoring_metrics, etc.) loaded via microbialForecast package
-source(here("analysis/model_analysis/robust_add_scoring_metrics.R"))
+# robust version now merged into microbialForecast::add_scoring_metrics
 library(data.table)
 
 cat("Loading CLR hindcast data...\n")
@@ -59,7 +59,7 @@ scoring_metrics <- as.data.table(hindcast_only) %>%
            predictive_variance = NA_real_, total_PL = NA_real_)
     } else {
       tryCatch({
-        result <- robust_add_scoring_metrics(
+        result <- add_scoring_metrics(
           observed = truth,
           mean_predicted = mean,
           median_predicted = med,
@@ -94,7 +94,7 @@ calibration_metrics <- as.data.table(calibration_only_not_first) %>%
            predictive_variance = NA_real_, total_PL = NA_real_)
     } else {
       tryCatch({
-        result <- robust_add_scoring_metrics(
+        result <- add_scoring_metrics(
           observed = truth,
           median_predicted = med,
           mean_predicted = mean,
@@ -124,7 +124,7 @@ calibration_metrics_site <- as.data.table(calibration_only_not_first) %>%
            predictive_variance = NA_real_, total_PL = NA_real_)
     } else {
       tryCatch({
-        result <- robust_add_scoring_metrics(
+        result <- add_scoring_metrics(
           observed = truth,
           median_predicted = med,
           mean_predicted = mean,
@@ -155,7 +155,7 @@ scoring_metrics_site <- as.data.table(hindcast_only) %>%
            predictive_variance = NA_real_, total_PL = NA_real_)
     } else {
       tryCatch({
-        result <- robust_add_scoring_metrics(
+        result <- add_scoring_metrics(
           observed = truth,
           mean_predicted = mean,
           median_predicted = med,
