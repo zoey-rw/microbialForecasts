@@ -679,7 +679,7 @@ create_covariate_samples_fixed <- function(model.inputs, plotID = NULL, siteID,
   }
   
   # CRITICAL FIX: Covariate order MUST match the fitted model structure
-  # Model order (from 01_fitModels_driverUncertainty.R):
+  # Model order (from 01_fitModels.R):
   #   env_cycl: beta[1]=sin_mo, beta[2]=cos_mo, beta[3]=temp, beta[4]=mois, beta[5]=pH, beta[6]=pC, beta[7]=relEM, beta[8]=LAI
   #   env_cov:  beta[1]=temp, beta[2]=mois, beta[3]=pH, beta[4]=pC, beta[5]=relEM, beta[6]=LAI
   #   cycl_only: beta[1]=sin_mo, beta[2]=cos_mo
