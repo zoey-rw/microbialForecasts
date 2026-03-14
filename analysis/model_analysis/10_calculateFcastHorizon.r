@@ -440,22 +440,51 @@ setkey(fcast_n_obs, model_id, months_since_obs)
 fcast_horizon_model_mean <- fcast_n_obs[fcast_horizon_model_mean, on = c("model_id", "months_since_obs")] 
 
 
-# Calculate the historical mean abundances (within and across sites), to be the "null"
-# Also tried this with historical site median abundances, but site median predictions were worse
-cat("Calculating historical means...\n")
+# Calculate null baselines from calibration data
+# Three null types: site_mean, persistence, climatological
+cat("Calculating null baselines (site mean, persistence, climatological)...\n")
 hindcast_cal_data <- hindcast_data[fcast_period != "hindcast" & !is.na(truth)]
 if (nrow(hindcast_cal_data) > 0) {
-  # Use calibration data if available
+  # NULL 1: Site mean (existing) - mean truth per site across all calibration
   site_mean <- hindcast_cal_data[, .(site_mean = mean(truth, na.rm = TRUE),
                                       site_sd = sd(truth, na.rm = TRUE)),
                                   by = .(species, model_id, model_name, siteID)]
   overall_mean <- hindcast_cal_data[, .(overall_mean = mean(truth, na.rm = TRUE),
                                         overall_sd = sd(truth, na.rm = TRUE)),
                                     by = .(species, model_id)]
+
+  # NULL 2: Persistence - last observed calibration truth per plot
+  # For each plot, take the truth value at the last calibration timepoint
+  if ("dateID" %in% names(hindcast_cal_data)) {
+    hindcast_cal_data[, dateID_int := as.integer(dateID)]
+    persistence_null <- hindcast_cal_data[!is.na(truth), .SD[which.max(dateID_int)],
+                                          by = .(model_id, plotID)][, .(model_id, plotID, persistence_val = truth)]
+    cat("  Persistence null: computed for", nrow(persistence_null), "model-plot combinations\n")
+  } else {
+    persistence_null <- data.table(model_id = character(), plotID = character(), persistence_val = numeric())
+    cat("  Warning: No dateID column - persistence null unavailable\n")
+  }
+
+  # NULL 3: Climatological mean - mean truth per site per month-of-year
+  if ("dateID" %in% names(hindcast_cal_data)) {
+    hindcast_cal_data[, month_of_year := as.integer(dateID) %% 100]
+    climatology_null <- hindcast_cal_data[!is.na(truth), .(clim_mean = mean(truth, na.rm = TRUE),
+                                                            clim_sd = sd(truth, na.rm = TRUE),
+                                                            clim_n = .N),
+                                           by = .(model_id, siteID, month_of_year)]
+    # Fallback: use site_sd when per-month sample is too small
+    climatology_null[clim_n < 3, clim_sd := NA_real_]
+    cat("  Climatological null: computed for", nrow(climatology_null), "model-site-month combinations\n")
+  } else {
+    climatology_null <- data.table(model_id = character(), siteID = character(),
+                                   month_of_year = integer(), clim_mean = numeric(),
+                                   clim_sd = numeric(), clim_n = integer())
+    cat("  Warning: No dateID column - climatological null unavailable\n")
+  }
+
   rm(hindcast_cal_data); gc(verbose = FALSE)
 } else {
-  # If no calibration data, use hindcast data itself to calculate site means
-  cat("Warning: No calibration data found. Using hindcast data to calculate site means for null baseline.\n")
+  cat("Warning: No calibration data found. Using hindcast data for site means.\n")
   hindcast_for_mean <- hindcast_data[fcast_period == "hindcast" & !is.na(truth)]
   if (nrow(hindcast_for_mean) > 0) {
     site_mean <- hindcast_for_mean[, .(site_mean = mean(truth, na.rm = TRUE),
@@ -466,14 +495,18 @@ if (nrow(hindcast_cal_data) > 0) {
                                       by = .(species, model_id)]
     rm(hindcast_for_mean); gc(verbose = FALSE)
   } else {
-    # Fallback: create empty data.tables
-    site_mean <- data.table(species = character(), model_id = character(), model_name = character(), 
+    site_mean <- data.table(species = character(), model_id = character(), model_name = character(),
                            siteID = character(), site_mean = numeric(), site_sd = numeric())
-    overall_mean <- data.table(species = character(), model_id = character(), 
+    overall_mean <- data.table(species = character(), model_id = character(),
                               overall_mean = numeric(), overall_sd = numeric())
   }
+  persistence_null <- data.table(model_id = character(), plotID = character(), persistence_val = numeric())
+  climatology_null <- data.table(model_id = character(), siteID = character(),
+                                 month_of_year = integer(), clim_mean = numeric(),
+                                 clim_sd = numeric(), clim_n = integer())
   rm(hindcast_cal_data); gc(verbose = FALSE)
 }
+cat("  Null baselines computed\n")
 
 setkey(site_mean, species, model_id)
 setkey(overall_mean, species, model_id)
@@ -576,7 +609,113 @@ fcast_horizon_null_site <- fcast_horizon_df2[site_sd != 0, {
 fcast_horizon_null_site[, null_RSQ.1 := ifelse(null_RSQ.1 < 0, 0, null_RSQ.1)]
 fcast_horizon_null_site[, null_RSQ := ifelse(null_RSQ < 0, 0, null_RSQ)]
 fcast_horizon_null_site[, months_since_obs := Inf]
-cat("Completed null site scores calculation\n")
+fcast_horizon_null_site[, null_type := "site_mean"]
+cat("Completed site mean null scores\n")
+
+# ── Persistence null scores ──────────────────────────────────────────────────
+# Null prediction = last calibration truth per plot, applied to all future timepoints
+cat("Calculating persistence null scores...\n")
+if (nrow(persistence_null) > 0 && nrow(fcast_horizon_df2) > 0) {
+  # Join persistence predictions into the hindcast data
+  fcast_horizon_df2_persist <- merge(fcast_horizon_df2, persistence_null, by = c("model_id", "plotID"), all.x = TRUE)
+
+  # Compute persistence null per (model_id, siteID) — aggregate across plots and timepoints
+  persist_null_site <- fcast_horizon_df2_persist[!is.na(persistence_val) & !is.na(truth), {
+    valid <- !is.na(truth) & !is.na(persistence_val)
+    if (sum(valid) < 2) return(NULL)
+
+    p_rmse <- rmse(actual = truth[valid], predicted = persistence_val[valid])
+    p_rsq1 <- if (!is.na(p_rmse)) {
+      var_val <- var(truth[valid], na.rm = TRUE)
+      if (!is.na(var_val) && var_val > 0) max(0, 1 - (p_rmse^2) / var_val) else NA_real_
+    } else NA_real_
+
+    # Use site_sd for CRPS uncertainty (persistence has no natural uncertainty estimate)
+    p_crps <- if (!is.na(site_sd[1]) && site_sd[1] > 0) {
+      tryCatch(mean(crps(truth[valid], family = "tnorm",
+                         location = persistence_val[valid],
+                         scale = site_sd[valid],
+                         lower = 0, upper = 1), na.rm = TRUE),
+               error = function(e) NA_real_)
+    } else NA_real_
+
+    abund <- mean(truth, na.rm = TRUE)
+    abund_denom <- max(abund, 0.005)
+
+    list(null_CRPS = NA_real_, null_CRPS_truncated = p_crps, null_mean_crps = p_crps,
+         null_RMSE = p_rmse, null_RSQ.1 = p_rsq1, null_MAPE = NA_real_,
+         null_RSQ = p_rsq1, abundance = abund, RMSE.norm = p_rmse / abund_denom)
+  }, by = null_grouping_cols]
+
+  if (nrow(persist_null_site) > 0) {
+    persist_null_site[, null_RSQ.1 := ifelse(null_RSQ.1 < 0, 0, null_RSQ.1)]
+    persist_null_site[, null_RSQ := ifelse(null_RSQ < 0, 0, null_RSQ)]
+    persist_null_site[, months_since_obs := Inf]
+    persist_null_site[, null_type := "persistence"]
+    cat("  Persistence null scores:", nrow(persist_null_site), "site-model combinations\n")
+  }
+  rm(fcast_horizon_df2_persist)
+} else {
+  persist_null_site <- data.table()
+  cat("  Persistence null: skipped (no data)\n")
+}
+
+# ── Climatological null scores ───────────────────────────────────────────────
+# Null prediction = site-month mean from calibration, matched to hindcast month
+cat("Calculating climatological null scores...\n")
+if (nrow(climatology_null) > 0 && nrow(fcast_horizon_df2) > 0 && "dateID" %in% names(fcast_horizon_df2)) {
+  fcast_horizon_df2[, month_of_year := as.integer(dateID) %% 100]
+  fcast_horizon_df2_clim <- merge(fcast_horizon_df2, climatology_null,
+                                   by = c("model_id", "siteID", "month_of_year"), all.x = TRUE)
+  # Fallback clim_sd to site_sd when per-month estimate unavailable
+  fcast_horizon_df2_clim[is.na(clim_sd), clim_sd := site_sd]
+
+  clim_null_site <- fcast_horizon_df2_clim[!is.na(clim_mean) & !is.na(truth), {
+    valid <- !is.na(truth) & !is.na(clim_mean)
+    if (sum(valid) < 2) return(NULL)
+
+    c_rmse <- rmse(actual = truth[valid], predicted = clim_mean[valid])
+    c_rsq1 <- if (!is.na(c_rmse)) {
+      var_val <- var(truth[valid], na.rm = TRUE)
+      if (!is.na(var_val) && var_val > 0) max(0, 1 - (c_rmse^2) / var_val) else NA_real_
+    } else NA_real_
+
+    c_crps <- if (any(!is.na(clim_sd) & clim_sd > 0)) {
+      valid_sd <- valid & !is.na(clim_sd) & clim_sd > 0
+      if (sum(valid_sd) > 0) {
+        tryCatch(mean(crps(truth[valid_sd], family = "tnorm",
+                           location = clim_mean[valid_sd],
+                           scale = clim_sd[valid_sd],
+                           lower = 0, upper = 1), na.rm = TRUE),
+                 error = function(e) NA_real_)
+      } else NA_real_
+    } else NA_real_
+
+    abund <- mean(truth, na.rm = TRUE)
+    abund_denom <- max(abund, 0.005)
+
+    list(null_CRPS = NA_real_, null_CRPS_truncated = c_crps, null_mean_crps = c_crps,
+         null_RMSE = c_rmse, null_RSQ.1 = c_rsq1, null_MAPE = NA_real_,
+         null_RSQ = c_rsq1, abundance = abund, RMSE.norm = c_rmse / abund_denom)
+  }, by = null_grouping_cols]
+
+  if (nrow(clim_null_site) > 0) {
+    clim_null_site[, null_RSQ.1 := ifelse(null_RSQ.1 < 0, 0, null_RSQ.1)]
+    clim_null_site[, null_RSQ := ifelse(null_RSQ < 0, 0, null_RSQ)]
+    clim_null_site[, months_since_obs := Inf]
+    clim_null_site[, null_type := "climatological"]
+    cat("  Climatological null scores:", nrow(clim_null_site), "site-model combinations\n")
+  }
+  rm(fcast_horizon_df2_clim)
+} else {
+  clim_null_site <- data.table()
+  cat("  Climatological null: skipped (no data)\n")
+}
+
+# Combine all null types into a single table
+fcast_horizon_null_all <- rbindlist(list(fcast_horizon_null_site, persist_null_site, clim_null_site), fill = TRUE)
+cat("Total null scores:", nrow(fcast_horizon_null_all), "across",
+    length(unique(fcast_horizon_null_all$null_type)), "null types\n")
 
 
 # Calculate last observation scores
@@ -743,16 +882,18 @@ cat("Completed last observation scores calculation\n")
 
 # Combine for plotting! - use data.table
 cat("Combining data for plotting...\n")
-setDT(fcast_horizon_null_site)
+setDT(fcast_horizon_null_all)
 setDT(last_obs_score)
 setDT(fcast_horizon_model_mean)
 
-# Rename columns by removing "null_" prefix
-null_cols <- grep("^null_", names(fcast_horizon_null_site), value = TRUE)
+# Rename columns by removing "null_" prefix (for backward compat, use site_mean null in to_plot)
+fcast_horizon_null_site_compat <- fcast_horizon_null_all[null_type == "site_mean"]
+null_cols <- grep("^null_", names(fcast_horizon_null_site_compat), value = TRUE)
 new_names <- gsub("^null_", "", null_cols)
-setnames(fcast_horizon_null_site, null_cols, new_names)
+setnames(fcast_horizon_null_site_compat, null_cols, new_names)
 
-comparison_scores <- rbindlist(list(fcast_horizon_null_site, last_obs_score), fill = TRUE)
+comparison_scores <- rbindlist(list(fcast_horizon_null_site_compat, last_obs_score), fill = TRUE)
+rm(fcast_horizon_null_site_compat)
 
 # Merge n_obs from fcast_n_obs into fcast_horizon_model_mean if not already present
 if (!"n_obs" %in% names(fcast_horizon_model_mean)) {
@@ -844,24 +985,36 @@ if (nrow(last_obs_score) > 0) {
   }
 }
 
-to_plot_null <- fcast_horizon_null_site[model_id %in% unique(to_plot$model_id)]
+to_plot_null <- copy(fcast_horizon_null_all[null_type == "site_mean" & model_id %in% unique(to_plot$model_id)])
+# Strip null_ prefix for backward compat with downstream code
+tp_null_save_cols <- grep("^null_", names(to_plot_null), value = TRUE)
+if (length(tp_null_save_cols) > 0) setnames(to_plot_null, tp_null_save_cols, gsub("^null_", "", tp_null_save_cols))
 cat("Completed data combination\n")
 
 
-saveRDS(list(to_plot, to_plot_null, fcast_horizon_null_site, fcast_horizon_model_mean),
+saveRDS(list(to_plot, to_plot_null, fcast_horizon_null_all, fcast_horizon_model_mean),
 				here("data/summary/fcast_horizon_input.rds"))
 
 # Clean up large objects before loading back
 # Keep fcast_horizon_df for site-level aggregation in horizon calculation
 rm(fcast_horizon_df2, comparison_scores, historical_mean)
+suppressWarnings(rm(persist_null_site, clim_null_site, persistence_null, climatology_null))
 gc(verbose = FALSE, full = TRUE)
 
 in_list <- readRDS(here("data/summary/fcast_horizon_input.rds"))
 to_plot <- as.data.table(in_list[[1]])
 to_plot_null <- as.data.table(in_list[[2]])
-fcast_horizon_null_site <- as.data.table(in_list[[3]])
+# Strip null_ prefix from to_plot_null for backward compatibility with plot code
+tp_null_cols <- grep("^null_", names(to_plot_null), value = TRUE)
+if (length(tp_null_cols) > 0) setnames(to_plot_null, tp_null_cols, gsub("^null_", "", tp_null_cols))
+fcast_horizon_null_all <- as.data.table(in_list[[3]])
 fcast_horizon_model_mean <- as.data.table(in_list[[4]])
 rm(in_list); gc(verbose = FALSE)
+
+# For backward compat, fcast_horizon_null_site has null_ prefix stripped (used in per-model loop)
+fcast_horizon_null_site <- copy(fcast_horizon_null_all[null_type == "site_mean"])
+null_cols_to_rename <- grep("^null_", names(fcast_horizon_null_site), value = TRUE)
+setnames(fcast_horizon_null_site, null_cols_to_rename, gsub("^null_", "", null_cols_to_rename))
 
 model_id_list <- unique(to_plot$model_id)
 
@@ -869,6 +1022,9 @@ model_id_list <- unique(to_plot$model_id)
 # Options: "loess" (default), "exponential" (GLM with log link), "gam" (GAM with mgcv), or "all" (test all methods)
 FCAST_HORIZON_METHOD <- "all"  # Options: "loess", "exponential", "gam", "all"
 USE_EXPONENTIAL_DECAY <- TRUE  # Enable exponential decay as an option (used when METHOD includes it)
+
+# Horizon pooling: "pooled" (pool across sites, default), "per_site" (per-site then median), "both"
+HORIZON_POOLING <- "pooled"
 
 # Test mode: Only process a few models for testing (set FALSE for full runs with both kingdoms)
 TEST_MODE <- FALSE
@@ -1395,6 +1551,117 @@ rmse_null_line <- if (!is.na(single_tax_null_collapse$RMSE.norm[1]) && is.finite
   }
 }
 
+# ── POOLED HORIZON COMPUTATION ───────────────────────────────────────────────
+# Pool all sites for this model, fit single loess/GAM on pooled data
+if (HORIZON_POOLING %in% c("pooled", "both")) {
+
+  # Get null lines for each null type (median across sites)
+  get_null_lines <- function(null_type_str) {
+    nt <- fcast_horizon_null_all[null_type == null_type_str & model_id == current_model_id]
+    if (nrow(nt) == 0) return(list(rsq = NA_real_, crps = NA_real_, rmse = NA_real_))
+    # Handle both null_-prefixed and plain column names
+    get_col <- function(dt, candidates) {
+      for (c in candidates) {
+        if (c %in% names(dt)) return(median(dt[[c]], na.rm = TRUE))
+      }
+      NA_real_
+    }
+    list(
+      rsq = get_col(nt, c("null_RSQ", "RSQ")),
+      crps = get_col(nt, c("null_mean_crps", "null_CRPS_truncated", "mean_crps")),
+      rmse = get_col(nt, c("RMSE.norm"))
+    )
+  }
+
+  null_sm <- get_null_lines("site_mean")
+  null_persist <- get_null_lines("persistence")
+  null_clim <- get_null_lines("climatological")
+
+  # Use fcast_horizon_model_mean which has per-site-per-timepoint aggregated metrics
+  pooled_data <- fcast_horizon_model_mean[model_id == current_model_id &
+                                           is.finite(months_since_obs) &
+                                           months_since_obs >= 0 & months_since_obs <= 20]
+
+  # Add month 0 from last_obs if not present
+  if (exists("last_obs_values_site_precalc") && nrow(last_obs_values_site_precalc) > 0) {
+    m0 <- last_obs_values_site_precalc[model_id == current_model_id]
+    if (nrow(m0) > 0 && nrow(pooled_data[months_since_obs == 0]) == 0) {
+      pooled_data <- rbind(pooled_data, m0[, .(siteID, RSQ, mean_crps, RMSE.norm, months_since_obs)], fill = TRUE)
+    }
+  }
+
+  pooled_loess_horizon <- function(metric_vals, time_vals, null_val, direction) {
+    ok <- is.finite(metric_vals) & is.finite(time_vals)
+    if (sum(ok) < 4 || is.na(null_val) || !is.finite(null_val)) return(NA_real_)
+    fit <- tryCatch(loess(metric_vals[ok] ~ time_vals[ok], span = 0.75,
+                          control = loess.control(surface = "direct")),
+                    error = function(e) NULL)
+    if (is.null(fit)) {
+      # Discrete crossing fallback
+      if (direction == "below") {
+        cr <- which(metric_vals[ok] < null_val & time_vals[ok] > 0)
+      } else {
+        cr <- which(metric_vals[ok] > null_val & time_vals[ok] > 0)
+      }
+      return(if (length(cr) > 0) time_vals[ok][min(cr)] else max(time_vals[ok]))
+    }
+    xg <- seq(min(time_vals[ok]), max(time_vals[ok]), by = 0.5)
+    pred <- predict(fit, xg)
+    if (direction == "below") {
+      cr <- which(pred < null_val & xg > 0)
+    } else {
+      cr <- which(pred > null_val & xg > 0)
+    }
+    if (length(cr) > 0) xg[min(cr)] else max(xg)
+  }
+
+  if (nrow(pooled_data) >= 4) {
+    # Compute pooled horizons for each null type
+    compute_pooled_for_null <- function(nl) {
+      list(
+        rsq  = pooled_loess_horizon(pooled_data$RSQ, pooled_data$months_since_obs, nl$rsq, "below"),
+        crps = pooled_loess_horizon(pooled_data$mean_crps, pooled_data$months_since_obs, nl$crps, "above"),
+        rmse = pooled_loess_horizon(pooled_data$RMSE.norm, pooled_data$months_since_obs, nl$rmse, "above")
+      )
+    }
+
+    ph_sm <- compute_pooled_for_null(null_sm)
+    ph_persist <- compute_pooled_for_null(null_persist)
+    ph_clim <- compute_pooled_for_null(null_clim)
+  } else {
+    ph_sm <- ph_persist <- ph_clim <- list(rsq = 1, crps = 1, rmse = 1)
+  }
+}
+
+# If pooled-only, set the main horizon variables and skip per-site loop
+if (HORIZON_POOLING == "pooled") {
+  # Primary horizons use site_mean null (backward compatible)
+  rsq_fcast_horizon <- min(ph_sm$rsq, 20, na.rm = TRUE)
+  crps_fcast_horizon <- min(ph_sm$crps, 20, na.rm = TRUE)
+  rmse_fcast_horizon <- min(ph_sm$rmse, 20, na.rm = TRUE)
+
+  # GAM/LM columns: use persistence and climatological null horizons
+  rsq_fcast_horizon_gam <- min(ph_persist$rsq, 20, na.rm = TRUE)
+  crps_fcast_horizon_gam <- min(ph_persist$crps, 20, na.rm = TRUE)
+  rmse_fcast_horizon_gam <- min(ph_persist$rmse, 20, na.rm = TRUE)
+  rsq_fcast_horizon_lm <- min(ph_clim$rsq, 20, na.rm = TRUE)
+  crps_fcast_horizon_lm <- min(ph_clim$crps, 20, na.rm = TRUE)
+  rmse_fcast_horizon_lm <- min(ph_clim$rmse, 20, na.rm = TRUE)
+
+  # Store null lines (site_mean for primary)
+  rsq_null_line <- null_sm$rsq
+  crps_null_line <- null_sm$crps
+  rmse_null_line <- null_sm$rmse
+
+  # Skip straight to output assembly
+  goto_output <- TRUE
+} else {
+  goto_output <- FALSE
+}
+
+if (!goto_output) {
+# ── PER-SITE HORIZON COMPUTATION (original approach) ────────────────────────
+
 # crossing helper: first x where y crosses thresh (dir: below = y < thresh, above = y > thresh).
 # min_x: only consider crossings at x > min_x (avoids horizon 0; use 0 to require first month after last obs).
 first_crossing <- function(x, y, thresh, dir = c("below","above"), min_x = 0) {
@@ -1775,7 +2042,17 @@ for (site in unique_sites) {
     cat("ERROR: Missing RMSE.norm column in site_model_data for", current_model_id, "site", site, "- skipping\n")
     next
   }
-  
+
+  # Skip sites where ALL metric values are NA — no valid scoring data exists.
+  # Without this check, loess/discrete fallbacks silently assign max_months,
+  # producing bogus horizons (e.g. 9 or 12 months) for taxa that were never scored.
+  n_valid_rsq  <- sum(is.finite(site_model_data$RSQ) & site_model_data$months_since_obs > 0, na.rm = TRUE)
+  n_valid_crps <- sum(is.finite(site_model_data$mean_crps) & site_model_data$months_since_obs > 0, na.rm = TRUE)
+  n_valid_rmse <- sum(is.finite(site_model_data$RMSE.norm) & site_model_data$months_since_obs > 0, na.rm = TRUE)
+  if (n_valid_rsq == 0 && n_valid_crps == 0 && n_valid_rmse == 0) {
+    next
+  }
+
   for (method in methods_to_try) {
     if (method == "loess") {
       # Method 1: Fit loess/lm and find crossing on a fine grid (continuous horizon)
@@ -2277,6 +2554,13 @@ fig_rmse <- ggplot(single_tax_for_fit,
 
 # Horizon capping now done above with headless computation
 
+} # end if (!goto_output) — per-site computation
+
+# For pooled mode, skip plots
+if (HORIZON_POOLING == "pooled") {
+  out_figure_list[[current_model_id]] <- NULL
+}
+
 out_df = cbind.data.frame(single_tax[1,1:5],
 													rsq_fcast_horizon = rsq_fcast_horizon,
 													rsq_fcast_horizon_gam = rsq_fcast_horizon_gam,
@@ -2289,7 +2573,14 @@ out_df = cbind.data.frame(single_tax[1,1:5],
 													crps_fcast_horizon = crps_fcast_horizon,
 													crps_fcast_horizon_gam = crps_fcast_horizon_gam,
 													crps_fcast_horizon_lm = crps_fcast_horizon_lm,
-													crps_null_line = crps_null_line)
+													crps_null_line = crps_null_line,
+													# Pooled horizons with alternative null baselines
+													rsq_horizon_persist = if (exists("ph_persist")) min(ph_persist$rsq, 20, na.rm=TRUE) else NA_real_,
+													crps_horizon_persist = if (exists("ph_persist")) min(ph_persist$crps, 20, na.rm=TRUE) else NA_real_,
+													rmse_horizon_persist = if (exists("ph_persist")) min(ph_persist$rmse, 20, na.rm=TRUE) else NA_real_,
+													rsq_horizon_clim = if (exists("ph_clim")) min(ph_clim$rsq, 20, na.rm=TRUE) else NA_real_,
+													crps_horizon_clim = if (exists("ph_clim")) min(ph_clim$crps, 20, na.rm=TRUE) else NA_real_,
+													rmse_horizon_clim = if (exists("ph_clim")) min(ph_clim$rmse, 20, na.rm=TRUE) else NA_real_)
 out_df_list[[current_model_id]] = out_df
 
 cat("Completed processing for:", current_model_id, "\n")
@@ -2299,11 +2590,14 @@ cat("  - CRPS horizon:", crps_fcast_horizon, "months\n")
     out_parallel_list[[current_model_id]] <- list(out_df, out_figure_list[[current_model_id]])
 
     # Clean up memory between models
-    rm(single_tax, single_tax_null, single_tax_null_collapse, single_tax_for_fit, single_tax_plot_level)
+    suppressWarnings(rm(single_tax, single_tax_null, single_tax_null_collapse,
+                        single_tax_for_fit, single_tax_plot_level, pooled_data,
+                        ph_sm, ph_persist, ph_clim, null_sm, null_persist, null_clim,
+                        goto_output))
     if (MAKE_PLOTS) {
-      rm(fig_rsq, fig_crps, fig_rmse)
+      suppressWarnings(rm(fig_rsq, fig_crps, fig_rmse))
     }
-    rm(rsq_fcast_horizon, crps_fcast_horizon, rmse_fcast_horizon)
+    suppressWarnings(rm(rsq_fcast_horizon, crps_fcast_horizon, rmse_fcast_horizon))
     suppressWarnings(rm(fit_rsq, fit_crps, fit_rmse, yhat_rsq, yhat_crps, yhat_rmse,
                         rsq_fcast_horizon_gam, rsq_fcast_horizon_lm,
                         crps_fcast_horizon_gam, crps_fcast_horizon_lm,
@@ -2343,15 +2637,31 @@ cat("Debug: fcast_horizon_results rows:", nrow(fcast_horizon_results), "\n")
 
 # Summary of horizon results
 cat("\n=== FORECAST HORIZON SUMMARY ===\n")
-cat("RSQ horizons - Min:", min(fcast_horizon_results$rsq_fcast_horizon, na.rm=T), 
-    "Max:", max(fcast_horizon_results$rsq_fcast_horizon, na.rm=T), 
-    "Mean:", round(mean(fcast_horizon_results$rsq_fcast_horizon, na.rm=T), 2), "\n")
-cat("RMSE horizons - Min:", min(fcast_horizon_results$rmse_fcast_horizon, na.rm=T), 
-    "Max:", max(fcast_horizon_results$rmse_fcast_horizon, na.rm=T), 
-    "Mean:", round(mean(fcast_horizon_results$rmse_fcast_horizon, na.rm=T), 2), "\n")
-cat("CRPS horizons - Min:", min(fcast_horizon_results$crps_fcast_horizon, na.rm=T), 
-    "Max:", max(fcast_horizon_results$crps_fcast_horizon, na.rm=T), 
-    "Mean:", round(mean(fcast_horizon_results$crps_fcast_horizon, na.rm=T), 2), "\n")
+cat("Site mean null (primary):\n")
+cat("  RSQ  - Mean:", round(mean(fcast_horizon_results$rsq_fcast_horizon, na.rm=T), 2),
+    " Median:", median(fcast_horizon_results$rsq_fcast_horizon, na.rm=T), "\n")
+cat("  RMSE - Mean:", round(mean(fcast_horizon_results$rmse_fcast_horizon, na.rm=T), 2),
+    " Median:", median(fcast_horizon_results$rmse_fcast_horizon, na.rm=T), "\n")
+cat("  CRPS - Mean:", round(mean(fcast_horizon_results$crps_fcast_horizon, na.rm=T), 2),
+    " Median:", median(fcast_horizon_results$crps_fcast_horizon, na.rm=T), "\n")
+if ("crps_horizon_persist" %in% names(fcast_horizon_results)) {
+  cat("Persistence null:\n")
+  cat("  RSQ  - Mean:", round(mean(fcast_horizon_results$rsq_horizon_persist, na.rm=T), 2),
+      " Median:", median(fcast_horizon_results$rsq_horizon_persist, na.rm=T), "\n")
+  cat("  RMSE - Mean:", round(mean(fcast_horizon_results$rmse_horizon_persist, na.rm=T), 2),
+      " Median:", median(fcast_horizon_results$rmse_horizon_persist, na.rm=T), "\n")
+  cat("  CRPS - Mean:", round(mean(fcast_horizon_results$crps_horizon_persist, na.rm=T), 2),
+      " Median:", median(fcast_horizon_results$crps_horizon_persist, na.rm=T), "\n")
+}
+if ("crps_horizon_clim" %in% names(fcast_horizon_results)) {
+  cat("Climatological null:\n")
+  cat("  RSQ  - Mean:", round(mean(fcast_horizon_results$rsq_horizon_clim, na.rm=T), 2),
+      " Median:", median(fcast_horizon_results$rsq_horizon_clim, na.rm=T), "\n")
+  cat("  RMSE - Mean:", round(mean(fcast_horizon_results$rmse_horizon_clim, na.rm=T), 2),
+      " Median:", median(fcast_horizon_results$rmse_horizon_clim, na.rm=T), "\n")
+  cat("  CRPS - Mean:", round(mean(fcast_horizon_results$crps_horizon_clim, na.rm=T), 2),
+      " Median:", median(fcast_horizon_results$crps_horizon_clim, na.rm=T), "\n")
+}
 cat("================================\n\n")
 
 
@@ -2359,7 +2669,9 @@ cat("================================\n\n")
 # Use data.table melt instead of pivot_longer for memory efficiency
 setDT(fcast_horizon_results)
 measure_vars <- c("rsq_fcast_horizon", "rmse_fcast_horizon", "crps_fcast_horizon",
-                  "rsq_null_line", "rmse_null_line", "crps_null_line")
+                  "rsq_null_line", "rmse_null_line", "crps_null_line",
+                  "rsq_horizon_persist", "crps_horizon_persist", "rmse_horizon_persist",
+                  "rsq_horizon_clim", "crps_horizon_clim", "rmse_horizon_clim")
 measure_vars <- intersect(measure_vars, names(fcast_horizon_results))
 if (length(measure_vars) == 0) {
   stop("fcast_horizon_results has none of the expected horizon columns: ",
