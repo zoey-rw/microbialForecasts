@@ -51,13 +51,9 @@ if(file.exists(plot_estimates_file)) {
     cat("Found chunk directories, using chunk-based loading...\n")
     use_chunk_loading <- TRUE
   
-  # Source the loading functions if not already available
+  # load_plot_estimates() is provided by the microbialForecast package
   if(!exists("load_plot_estimates", mode="function")) {
-    if(file.exists(here("microbialForecast/R/load_plot_estimates.r"))) {
-      source(here("microbialForecast/R/load_plot_estimates.r"))
-    } else if(file.exists(here("analysis/model_analysis/03e_load_plot_estimates.r"))) {
-      source(here("analysis/model_analysis/03e_load_plot_estimates.r"))
-    }
+    stop("load_plot_estimates() not found. Ensure microbialForecast package is loaded via source.R")
   }
   
   # Load from all available model types
