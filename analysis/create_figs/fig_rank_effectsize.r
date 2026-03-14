@@ -1,287 +1,106 @@
+# Effect sizes by taxonomic rank
+# Shows how environmental predictor effect sizes vary across taxonomic ranks
+# (phylum, class, order, family, functional group) for fungi and bacteria.
+# Uses Tukey HSD to annotate significant rank differences.
+
 source("source.R")
-pacman::p_load(stringr, forestplot, gridExtra, ggpubr, rstatix)
-#remotes::install_github('rpkgs/gg.layers')
+pacman::p_load(ggplot2, dplyr, tidyr, ggpubr, rstatix, agricolae)
 
-
+# ── Data loading ─────────────────────────────────────────────────────────────
 sum.all <- readRDS(here("data", "summary/predictor_effects.rds"))
-seasonal_amplitude_in = readRDS(here("data/summary/seasonal_amplitude.rds"))
-cycl_vals_scores = seasonal_amplitude_in[[6]]
-cycl_vals_y = seasonal_amplitude_in[[1]]
-#pass_filter <- readRDS(here("data/summary/tax_filter_pass.rds"))
-
-
+seasonal_amplitude_in <- readRDS(here("data/summary/seasonal_amplitude.rds"))
 converged <- readRDS(here("data/summary/weak_converged_taxa_list.rds"))
-converged_strict <- readRDS(here("data/summary/converged_taxa_list.rds"))
 
 beta_names <- c("Ectomycorrhizal\ntrees", "LAI", "pC",
-								"pH", "Temperature", "Moisture"#,"residual\nseasonal\namplitude"
-								)
+                "pH", "Temperature", "Moisture")
 
-df_cal <- sum.all %>%
-	filter(beta %in% beta_names & #(workaround since the model names aren't all saving)
-				 	model_name %in% c("env_cov","env_cycl") &
-				 	!grepl("other", taxon) &
-				 	time_period == "20130601_20180101" &
-				 	!time_period %in% c("20130601_20200101"))
-# df_cal$beta <- droplevels(df_cal$beta)  # Not needed since beta is now character
+# ── Prepare plotting data ───────────────────────────────────────────────────
+plotting_df <- sum.all %>%
+  filter(beta %in% beta_names,
+         model_name == "env_cycl",
+         !grepl("other", taxon),
+         time_period == "20130601_20180101")
 
-df_cal_fg_tax <- df_cal
-# df_cal_fg_tax <-  rbindlist(list(df_cal,cycl_vals_scores), fill=T) %>%
-# 	filter(model_id %in% converged)
-
-df_cyclical <- merge(cycl_vals_y, df_cal) %>%
-	filter(model_id %in% converged)
-
-plotting_df = df_cal_fg_tax %>%
-	filter(!beta %in% c("sin","cos") & model_name %in% c("env_cycl")) %>%
-	filter(time_period == "20130601_20180101")
-	# mutate(exp_Mean = exp(Mean),
-	# 			 beta = "residual\nseasonal\namplitude", effSize= amplitude)
-
+# ── Tukey HSD tests per group x predictor ───────────────────────────────────
 tukey_list <- list()
 
+for (pg in c("Bacteria", "Fungi")) {
+  group_df <- plotting_df %>% filter(pretty_group == !!pg)
+  tukey_group_list <- list()
 
-for (pretty_group in c("Bacteria","Fungi")){
-	#group_df <- sum.all %>% filter(group == !!group)
-	tukey_group_list = list()
-	group_df = plotting_df %>% filter(pretty_group==!!pretty_group)
-for(b in beta_names) {
-	x = "rank_only"
-	y = "effSize"
-	df <- group_df[which(group_df$beta == b),]
-	
-	new.df <- cbind.data.frame(x = df$rank_only, y = df$effSize)
-	new.df <- new.df[!is.na(new.df$y), ]
-	abs_max <- max(new.df[,"y"], na.rm = T)
-	maxs <- new.df %>% group_by(x) %>%
-		summarise(tot=max(y, na.rm=T)+ 0.2 * abs_max)
-	# Check if there are enough groups and observations for ANOVA
-	unique_groups <- unique(new.df$x)
-	group_counts <- table(new.df$x)
-	
-	if(length(unique_groups) < 2 || any(group_counts < 2)) {
-		# Not enough data for ANOVA, create default result
-		Tukey_test <- maxs %>%
-			mutate(Letters_Tukey = "a") %>%
-			rename("rank_only"="x")
-	} else {
-		# Try ANOVA and Tukey HSD test
-		tryCatch({
-			Tukey_test <- aov(y ~ x, data=new.df) %>%
-				agricolae::HSD.test("x", group=TRUE) %>%
-				.$groups %>%
-				as_tibble(rownames="x") %>%
-				rename("Letters_Tukey"="groups") %>%
-				dplyr::select(-y) %>%
-				left_join(maxs, by="x") %>%
-				rename("rank_only"="x")
-		}, error = function(e) {
-			# If ANOVA fails, create default result
-			Tukey_test <<- maxs %>%
-				mutate(Letters_Tukey = "a") %>%
-				rename("rank_only"="x")
-		})
-	}
-	Tukey_test$beta <- b
-	Tukey_test$pretty_group <- pretty_group
-	tukey_group_list[[b]] <- Tukey_test
-}
-	tukey_list[[pretty_group]] = data.table::rbindlist(tukey_group_list)
+  for (b in beta_names) {
+    df <- group_df %>% filter(beta == b)
+    new.df <- data.frame(x = df$rank_only, y = df$effSize) %>%
+      filter(!is.na(y))
+    abs_max <- max(new.df$y, na.rm = TRUE)
+    maxs <- new.df %>%
+      group_by(x) %>%
+      summarise(tot = max(y, na.rm = TRUE) + 0.2 * abs_max, .groups = "drop")
+
+    unique_groups <- unique(new.df$x)
+    if (length(unique_groups) < 2 || any(table(new.df$x) < 2)) {
+      Tukey_test <- maxs %>%
+        mutate(Letters_Tukey = "a") %>%
+        rename("rank_only" = "x")
+    } else {
+      Tukey_test <- tryCatch({
+        aov(y ~ x, data = new.df) %>%
+          agricolae::HSD.test("x", group = TRUE) %>%
+          .$groups %>%
+          as_tibble(rownames = "x") %>%
+          rename("Letters_Tukey" = "groups") %>%
+          select(-y) %>%
+          left_join(maxs, by = "x") %>%
+          rename("rank_only" = "x")
+      }, error = function(e) {
+        maxs %>%
+          mutate(Letters_Tukey = "a") %>%
+          rename("rank_only" = "x")
+      })
+    }
+    Tukey_test$beta <- b
+    Tukey_test$pretty_group <- pg
+    tukey_group_list[[b]] <- Tukey_test
+  }
+  tukey_list[[pg]] <- data.table::rbindlist(tukey_group_list)
 }
 
-tukey_list_tax_fg <- data.table::rbindlist(tukey_list)
+tukey_df <- data.table::rbindlist(tukey_list)
 
-# Initialize test result variables
+# ── Colorblind-friendly palette ─────────────────────────────────────────────
+kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
 
+# ── Main figure: effect sizes by rank, faceted by predictor x kingdom ────────
+p <- ggplot(plotting_df, aes(x = rank_only, y = effSize, color = pretty_group)) +
+  geom_jitter(aes(shape = as.factor(significant)),
+              width = 0.1, height = 0, size = 2, alpha = 0.2, show.legend = FALSE) +
+  geom_violin(draw_quantiles = 0.5, show.legend = FALSE) +
+  geom_text(data = tukey_df,
+            aes(x = rank_only, y = tot, label = Letters_Tukey),
+            show.legend = FALSE, color = "black", size = 3.5) +
+  stat_compare_means(aes(label = paste0("p = ", after_stat(p.format))),
+                     method = "anova", size = 3.5, label.y.npc = 0.5) +
+  facet_grid(cols = vars(beta), rows = vars(pretty_group),
+             drop = TRUE, scales = "free", space = "free") +
+  scale_color_manual(values = kingdom_colors) +
+  scale_shape_manual(values = c("0" = 1, "1" = 16),
+                     labels = c("Not significant", "Significant")) +
+  labs(x = "Taxonomic rank", y = "Absolute effect size") +
+  theme_bw(base_size = 13) +
+  theme(
+    axis.text.x = element_text(angle = 320, vjust = 1, hjust = -0.05),
+    strip.background = element_rect(fill = "grey92", color = NA),
+    strip.text = element_text(face = "bold"),
+    strip.text.y = element_text(size = 11),
+    panel.grid.minor = element_blank()
+  ) +
+  guides(color = "none")
 
-###### # Plot with Tukey, effect sizes across ranks ----
-ranks_beta_plot <- ggplot(plotting_df, aes(x = rank_only,y = effSize,
-																					 color = pretty_group)) +
-	geom_jitter(aes(shape=as.factor(significant)),
-							width=.1, height = 0, size=3, alpha = .2, show.legend = F) +
-	geom_violin(draw_quantiles = c(.5), show.legend = F) +
-	labs(title = "Absolute effect size") +
-	theme_minimal(base_size = 18) +
-	xlab("Rank")+
-	ylab(NULL) +
-	facet_grid(cols = vars(beta),
-						 rows = vars(pretty_group),
-						 drop = T,
-						 scales = "free", space = "free") +
-	theme(axis.text.x=element_text(
-		angle = 320, vjust=1, hjust = -0.05),
-		axis.title=element_text(size=22),
-		strip.text.y = element_text(size=12)) +
-	scale_shape_manual(values = c(21, 16), name = NULL,																																						 labels = c("Not significant","Significant")) + guides(color="none")
+# ── Save ────────────────────────────────────────────────────────────────────
+out_dir <- here("figures")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
+ggsave(file.path(out_dir, "fig_rank_effectsize.png"), p,
+       width = 14, height = 8, dpi = 200)
 
-ranks_beta_plot <- ranks_beta_plot  +
-	stat_compare_means(data = plotting_df, aes(label = paste0("p = ", ..p.format..)),
-										 method = "anova", size=5, label.y.npc = .5) +
-	geom_text(data = tukey_list_tax_fg,
-																							 aes(x = rank_only, y = tot, color =pretty_group,
-																							 		label = Letters_Tukey), show.legend = F, color = 1, size =4)
-ranks_beta_plot
-
-
-
-
-
-
-ggplot(plotting_df,
-			 aes(x = rank_only,y = effSize,
-			 																	 color = pretty_group)) +
-	geom_jitter(width=.3, height = 0, size=4, alpha = .5, show.legend = F) +
-	labs(title = "Absolute effect size") +
-	theme_minimal(base_size = 18) +
-	facet_grid(rows = vars(beta),
-						 cols = vars(pretty_group), drop = T,
-						 scales = "free", space = "free_x") +
-	stat_compare_means(aes(label = paste0("p = ", ..p.format..))) +
-	geom_text(data = tukey_list_tax_fg,
-						aes(x = rank_only, y = tot,
-								label = Letters_Tukey), show.legend = F, color = 2, size =6)
-
-# Try ANOVA test with error handling
-tryCatch({
-	anova_fit <- plotting_df %>%
-		group_by(pretty_group, beta) %>%
-		anova_test(effSize ~ rank_only) %>%
-		add_significance()
-}, error = function(e) {
-	# If ANOVA fails, create a dummy result
-	anova_fit <<- data.frame(
-		pretty_group = character(0),
-		beta = character(0),
-		Effect = character(0),
-		DFn = numeric(0),
-		DFd = numeric(0),
-		F = numeric(0),
-		p = numeric(0),
-		p.signif = character(0)
-	)
-})
-
-#### Run Tukey ###
-tryCatch({
-	tukey <- plotting_df %>%
-		group_by(pretty_group, beta) %>%
-		tukey_hsd(effSize ~ rank_only) %>%
-		add_significance() %>%
-		add_xy_position()
-}, error = function(e) {
-	# If Tukey HSD fails, create a dummy result
-	tukey <<- data.frame(
-		pretty_group = character(0),
-		beta = character(0),
-		group1 = character(0),
-		group2 = character(0),
-		n1 = numeric(0),
-		n2 = numeric(0),
-		p.adj = numeric(0),
-		p.adj.signif = character(0),
-		x = numeric(0),
-		y = numeric(0)
-	)
-})
-
-# Check if data exists before plotting
-if (nrow(plotting_df) > 0 && length(unique(plotting_df$pretty_group)) > 0 && length(unique(plotting_df$beta)) > 0) {
-  ggplot(plotting_df, aes(x = rank_only,y = effSize,
-  												color = pretty_group)) +
-  	geom_jitter(width=.3, height = 0, size=4, alpha = .5, show.legend = F) +
-  	geom_violin(draw_quantiles = c(.5), show.legend = F) +
-  	stat_compare_means(aes(label = paste0("p = ", ..p.format..))) +
-  	geom_text(data = tukey_list_tax_fg,
-  						aes(x = rank_only, y = tot,
-  								label = Letters_Tukey), show.legend = F, color = 2, size =6) +
-  	labs(title = "Absolute effect size") +
-  	theme_minimal(base_size = 18) +
-  	facet_grid(rows = vars(beta),
-  						 cols = vars(pretty_group), drop = T,
-  						 scales = "free", space = "free_x") +
-  	stat_pvalue_manual(tukey, hide.ns = T) +
-  	labs(subtitle = tryCatch({
-  		get_test_label(anova_fit, detailed = TRUE)
-  	}, error = function(e) {
-  		"Statistical test failed"
-  	}),
-  			 caption = tryCatch({
-  		get_pwc_label(tukey)
-  	}, error = function(e) {
-  		"Pairwise comparison failed"
-  	}))
-} else {
-  cat("No data available for plotting - skipping main plot\n")
-  cat("Data dimensions:", nrow(plotting_df), "\n")
-  cat("Unique pretty_group:", length(unique(plotting_df$pretty_group)), "\n")
-  cat("Unique beta:", length(unique(plotting_df$beta)), "\n")
-}
-
-
-
-## RESIDUAL SEASONALITY ONLY
-
-# Check if residual seasonality data exists
-residual_data <- plotting_df %>% filter(beta=="residual\nseasonal\namplitude")
-if (nrow(residual_data) > 0 && length(unique(residual_data$pretty_group)) > 0) {
-  ggplot(residual_data,
-  			 aes(x = only_rank,y = effSize,
-  			 		color = pretty_group)) +
-  	geom_jitter(width=.3, height = 0, size=4, alpha = .5, show.legend = F)  +
-  	geom_violin(draw_quantiles = c(.5), show.legend = F) +
-  	labs(title = "Absolute effect size") +
-  	theme_minimal(base_size = 18) +
-  	facet_grid(rows = vars(pretty_group), drop = T,
-  						 scales = "free", space = "free_x") +
-  	stat_compare_means(aes(label = paste0("p = ", ..p.format..)))
-} else {
-  cat("No residual seasonality data available for plotting\n")
-}
-
-
-
-# Check if residual seasonality data exists for model comparison
-if (nrow(residual_data) > 0 && length(unique(residual_data$pretty_group)) > 0 && length(unique(residual_data$model_name)) > 0) {
-  ggplot(residual_data,
-  			 aes(x = only_rank,y = effSize,
-  			 		color = pretty_group)) +
-  	geom_jitter(width=.3, height = 0, size=4, alpha = .5, show.legend = F)  +
-  	geom_violin(draw_quantiles = c(.5), show.legend = F) +
-  	labs(title = "Absolute effect size") +
-  	theme_minimal(base_size = 18) +
-  	facet_grid(rows = vars(pretty_group),
-  						 cols = vars(model_name),
-  						 drop = T,
-  						 scales = "free", space = "free_x") +
-  	stat_compare_means(aes(label = paste0("p = ", ..p.format..)))
-} else {
-  cat("No residual seasonality data available for model comparison plotting\n")
-}
-
-# Check if cyclical data exists
-cyclical_data <- df_cyclical %>%
-	filter(fcast_type != "Diversity" & time_period == "2015-11_2018-01")
-
-if (nrow(cyclical_data) > 0 && length(unique(cyclical_data$pretty_group)) > 0) {
-  ggplot(cyclical_data,
-  			 aes(x = only_rank,y = effSize,
-  												color = pretty_group)) +
-
-  	geom_violin(draw_quantiles = c(.5), show.legend = F) +
-  	geom_jitter(
-  		width=.3, height = 0, size=4, alpha = .5, show.legend = F) +
-  	labs(title = "Seasonal amplitude") +
-  	theme_minimal(base_size = 18) +
-  	xlab("Rank")+
-  	ylab(NULL) +
-  	facet_grid(
-  						 rows = vars(pretty_group), drop = T,
-  						 scales = "free", space = "free") +
-  	theme(axis.text.x=element_text(
-  		angle = 320, vjust=1, hjust = -0.05),
-  		axis.title=element_text(size=22,face="bold"),
-  		strip.text.y = element_text(size=12,face="bold"))
-} else {
-  cat("No cyclical data available for plotting\n")
-}
+cat("Saved: figures/fig_rank_effectsize.png\n")

@@ -3,7 +3,7 @@
 # Single script: one table + one figure.
 # Requires phyloseq objects in data/clean (or paths set via options).
 
-source("../../source.R")
+source("source.R")
 
 library(dplyr)
 library(tidyr)

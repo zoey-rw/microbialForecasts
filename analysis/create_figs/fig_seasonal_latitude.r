@@ -166,9 +166,9 @@ fig_lat_grad <- panel_a / (panel_b | panel_c) +
   ) +
   plot_layout(heights = c(0.8, 1))
 
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig_seasonal_latitude.png"), fig_lat_grad,
        width = 13, height = 9, dpi = 200)
-cat("Saved: data/figures/fig_seasonal_latitude.png\n")
+cat("Saved: figures/fig_seasonal_latitude.png\n")

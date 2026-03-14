@@ -1,12 +1,12 @@
 #!/usr/bin/env Rscript
 # Example hindcast figure: map + ribbon panels for cellulolytic and saprotroph
-# at CPER (Central Plains) and BART (Bartlett Experimental Forest)
+# at BART (Bartlett Forest, NH), CPER (Central Plains, CO), and WOOD (Woodworth, ND)
 #
-# To regenerate hindcasts for CPER, HARV, WOOD, BART and selected functional groups
-# with diagnostic figures: from project root run
-#   Rscript 06_hindcast_observed.r --taxon="cellulolytic|oligotroph|plant_pathogen|saprotroph|ectomycorrhizal|denitrification" --mname=env_cycl --sites=CPER,HARV,WOOD,BART --figs=true [--force=true]
-# Then inspect figures/hindcast_diagnostics/observed_sites/driver_uncertainty/ and
-# update best_plots / species / siteID filters below to match the chosen plot.
+# To regenerate hindcasts from project root:
+#   Rscript 06_hindcast_observed.r --sequential=true --force=true --figs=true \
+#     --taxon=cellulolytic --sites=BART,CPER,WOOD
+#   Rscript 06_hindcast_observed.r --sequential=true --force=true --figs=true \
+#     --taxon=saprotroph --sites=BART,CPER,WOOD
 
 source("source.R")
 library(ggplot2)
@@ -15,21 +15,18 @@ library(cowplot)
 library(maps)
 
 # ── 1. Load and filter data ─────────────────────────────────────────────────
-cat("Loading hindcast data from per-site files (with fallback)...\n")
+cat("Loading hindcast data from per-site files...\n")
 hindcast_dir <- here("data/hindcasts/driver_uncertainty")
-best_plots <- c("CPER_004", "BART_042")
+best_plots <- c("BART_042", "CPER_004", "WOOD_001")
 needed_taxa <- c("cellulolytic", "saprotroph")
+site_ids <- c("BART", "CPER", "WOOD")
 
-# Try per-site hindcast files first
-taxa_sites <- list(
-  c("cellulolytic", "CPER"), c("cellulolytic", "BART"),
-  c("saprotroph",   "CPER"), c("saprotroph",   "BART")
-)
+taxa_sites <- expand.grid(taxon = needed_taxa, site = site_ids, stringsAsFactors = FALSE)
 hind_list <- list()
-for (ts in taxa_sites) {
+for (i in seq_len(nrow(taxa_sites))) {
   fname <- file.path(hindcast_dir,
-    paste0("hindcasts_env_cycl_", ts[1],
-           "_20130601_20180101_with_legacy_covariate_", ts[2], "_observed.rds"))
+    paste0("hindcasts_env_cycl_", taxa_sites$taxon[i],
+           "_20130601_20180101_with_legacy_covariate_", taxa_sites$site[i], "_observed.rds"))
   if (file.exists(fname)) {
     hind_list[[length(hind_list) + 1]] <- readRDS(fname)
     cat("  Loaded", basename(fname), "\n")
@@ -38,40 +35,14 @@ for (ts in taxa_sites) {
   }
 }
 hindcast <- bind_rows(hind_list)
-
-# Check if any needed plots are missing and fall back to summary file
-found_combos <- hindcast %>%
-  filter(plotID %in% best_plots) %>%
-  distinct(species, plotID)
-needed_combos <- expand.grid(species = needed_taxa, plotID = best_plots,
-                             stringsAsFactors = FALSE)
-missing <- anti_join(needed_combos, found_combos, by = c("species", "plotID"))
-
-if (nrow(missing) > 0) {
-  cat("  Missing from per-site files:", paste(missing$species, missing$plotID, collapse = ", "), "\n")
-  cat("  Falling back to all_hindcasts_plsr2.rds for missing combos...\n")
-  fallback <- readRDS(here("data/summary/all_hindcasts_plsr2.rds")) %>%
-    filter(model_name == "env_cycl") %>%
-    inner_join(missing, by = c("species", "plotID"))
-  cat("  Got", nrow(fallback), "rows from fallback\n")
-  hindcast <- bind_rows(hindcast, fallback)
-  rm(fallback); gc()
-}
-
-# Fill any NA pretty_group values
-hindcast <- hindcast %>%
-  mutate(pretty_group = case_when(
-    species == "cellulolytic" ~ "Bacteria",
-    species == "saprotroph"  ~ "Fungi",
-    TRUE ~ pretty_group
-  ))
-
 cat("Loaded", nrow(hindcast), "rows\n")
 
-# ── 2. Use pre-selected well-calibrated plots ───────────────────────────────
-# CPER_004: cellulolytic 75%/100% cal coverage, saprotroph 39%/83%
-# BART_042: cellulolytic 100%/100%, saprotroph 67%/100% cal coverage
-cat("Selected plots:", paste(best_plots, collapse = ", "), "\n")
+# ── 2. Prepare plot data ────────────────────────────────────────────────────
+# Ensure fcast_period is set
+if (!"fcast_period" %in% names(hindcast)) {
+  hindcast$fcast_period <- ifelse(!is.na(hindcast$dateID) & hindcast$dateID > 201801,
+                                  "hindcast", "calibration")
+}
 
 # Trim predictions to start no earlier than first observation per panel
 first_obs <- hindcast %>%
@@ -85,10 +56,11 @@ plot_data <- hindcast %>%
   filter(dates >= first_date) %>%
   select(-first_date) %>%
   mutate(
-    site_label = case_when(
+    site_label = factor(case_when(
+      siteID == "BART" ~ "Bartlett Forest, NH",
       siteID == "CPER" ~ "Central Plains, CO",
-      siteID == "BART" ~ "Bartlett Forest, NH"
-    ),
+      siteID == "WOOD" ~ "Woodworth, ND"
+    ), levels = c("Bartlett Forest, NH", "Central Plains, CO", "Woodworth, ND")),
     taxon_label = case_when(
       species == "cellulolytic" ~ "Bacteria (cellulolytic)",
       species == "saprotroph"  ~ "Fungi (saprotroph)"
@@ -98,6 +70,9 @@ plot_data <- hindcast %>%
       species == "saprotroph"  ~ "Fungi"
     )
   )
+
+cat("Selected plots:", paste(best_plots, collapse = ", "), "\n")
+cat("Plot data:", nrow(plot_data), "rows\n")
 
 # ── 3. Panel A: NEON site map ───────────────────────────────────────────────
 us_map <- map_data("state")
@@ -128,92 +103,102 @@ neon_sites <- data.frame(
 neon_conus <- neon_sites %>%
   filter(lon > -130, lon < -60, lat > 24, lat < 50)
 
-# Calibration vs validation (held-out) sites
+# Calibration vs held-out sites
 validation_sites <- c("ABBY","BARR","BONA","DEJU","HEAL","KONA","LAJA",
                        "LENO","MLBS","RMNP","SOAP","TOOL","WREF","YELL")
 neon_conus <- neon_conus %>%
   mutate(site_type = ifelse(siteID %in% validation_sites, "Held-out", "Calibration"))
 
-highlight <- neon_conus %>% filter(siteID %in% c("CPER", "BART"))
+highlight <- neon_conus %>% filter(siteID %in% site_ids)
+
+# Label positions: offset from site points to avoid overlap
+label_pos <- data.frame(
+  siteID = c("BART", "CPER", "WOOD"),
+  label  = c("Bartlett Forest\n(BART)", "Central Plains\n(CPER)", "Woodworth\n(WOOD)"),
+  nudge_x = c(3, 5, -6),
+  nudge_y = c(3, -4, 2),
+  stringsAsFactors = FALSE
+) %>% left_join(highlight, by = "siteID")
 
 panel_map <- ggplot() +
   geom_polygon(data = us_map, aes(x = long, y = lat, group = group),
                fill = "gray95", color = "gray70", linewidth = 0.2) +
   geom_point(data = neon_conus %>% filter(site_type == "Calibration"),
-             aes(x = lon, y = lat), shape = 16, color = "gray40", size = 1.8) +
+             aes(x = lon, y = lat, shape = site_type), color = "gray40", size = 1.8) +
   geom_point(data = neon_conus %>% filter(site_type == "Held-out"),
-             aes(x = lon, y = lat), shape = 17, color = "gray40", size = 1.8) +
+             aes(x = lon, y = lat, shape = site_type), color = "gray40", size = 1.8) +
   geom_point(data = highlight, aes(x = lon, y = lat),
              shape = 16, color = "red", size = 3.5) +
-  annotate("segment", x = highlight$lon[highlight$siteID == "CPER"] + 3,
-           y = highlight$lat[highlight$siteID == "CPER"] - 2,
-           xend = highlight$lon[highlight$siteID == "CPER"] + 0.3,
-           yend = highlight$lat[highlight$siteID == "CPER"] - 0.3,
-           arrow = arrow(length = unit(0.15, "cm")), color = "black") +
-  annotate("text", x = highlight$lon[highlight$siteID == "CPER"] + 3,
-           y = highlight$lat[highlight$siteID == "CPER"] - 2.5,
-           label = "Central Plains\n(CPER)", size = 3, fontface = "bold") +
-  annotate("segment", x = highlight$lon[highlight$siteID == "BART"] - 5,
-           y = highlight$lat[highlight$siteID == "BART"] - 1,
-           xend = highlight$lon[highlight$siteID == "BART"] - 0.3,
-           yend = highlight$lat[highlight$siteID == "BART"] - 0.3,
-           arrow = arrow(length = unit(0.15, "cm")), color = "black") +
-  annotate("text", x = highlight$lon[highlight$siteID == "BART"] - 5,
-           y = highlight$lat[highlight$siteID == "BART"] - 1.5,
-           label = "Bartlett Forest\n(BART)", size = 3, fontface = "bold") +
-  # Legend for site types
-  annotate("point", x = -124, y = 27, shape = 16, color = "gray40", size = 1.8) +
-  annotate("text", x = -122.5, y = 27, label = "Calibration (n=30)",
-           size = 2.5, hjust = 0) +
-  annotate("point", x = -124, y = 25.5, shape = 17, color = "gray40", size = 1.8) +
-  annotate("text", x = -122.5, y = 25.5, label = "Held-out (n=14)",
-           size = 2.5, hjust = 0) +
+  geom_segment(data = label_pos,
+               aes(x = lon + nudge_x + sign(nudge_x) * -0.5,
+                   y = lat + nudge_y + sign(nudge_y) * -0.5,
+                   xend = lon + sign(nudge_x) * 0.3,
+                   yend = lat + sign(nudge_y) * 0.3),
+               arrow = arrow(length = unit(0.12, "cm")), color = "black") +
+  geom_label(data = label_pos,
+             aes(x = lon + nudge_x, y = lat + nudge_y, label = label),
+             size = 2.8, fontface = "bold", label.size = 0,
+             fill = "white", alpha = 0.85, label.padding = unit(0.2, "lines")) +
+  scale_shape_manual(values = c("Calibration" = 16, "Held-out" = 17),
+                     name = NULL) +
   coord_fixed(1.3, xlim = c(-125, -66), ylim = c(25, 50)) +
   theme_void() +
-  theme(plot.margin = margin(5, 5, 5, 5))
+  theme(plot.background = element_rect(fill = "white", color = NA),
+        panel.background = element_rect(fill = "white", color = NA),
+        plot.margin = margin(5, 5, 5, 5),
+        legend.position = c(0.15, 0.15),
+        legend.background = element_rect(fill = "white", color = NA),
+        legend.text = element_text(size = 8),
+        legend.key.size = unit(0.4, "cm"))
 
-# ── 4. Panels B-E: Hindcast ribbons ─────────────────────────────────────────
+# ── 4. Hindcast ribbon panels ──────────────────────────────────────────────
 taxon_colors <- c("Bacteria" = "#4DAF4A", "Fungi" = "#FF7F00")
 
-# Build separate layers for calibration vs hindcast with different alphas
+# Calibration boundary date for vertical line
+cal_boundary <- as.Date("2018-01-01")
+
 panel_hindcasts <- ggplot(plot_data, aes(x = dates)) +
-  # 95% ribbon - calibration
+  # 95% CI ribbon - calibration (darker)
   geom_ribbon(data = ~ filter(.x, fcast_period == "calibration"),
-              aes(ymin = lo, ymax = hi, fill = taxon_color), alpha = 0.3) +
-  # 50% ribbon - calibration
+              aes(ymin = lo, ymax = hi, fill = taxon_color), alpha = 0.25) +
+  # 50% CI ribbon - calibration
   geom_ribbon(data = ~ filter(.x, fcast_period == "calibration"),
-              aes(ymin = lo_25, ymax = hi_75, fill = taxon_color), alpha = 0.4) +
-  # 95% ribbon - hindcast
+              aes(ymin = lo_25, ymax = hi_75, fill = taxon_color), alpha = 0.35) +
+  # 95% CI ribbon - hindcast (lighter)
   geom_ribbon(data = ~ filter(.x, fcast_period == "hindcast"),
-              aes(ymin = lo, ymax = hi, fill = taxon_color), alpha = 0.15) +
-  # 50% ribbon - hindcast
+              aes(ymin = lo, ymax = hi, fill = taxon_color), alpha = 0.12) +
+  # 50% CI ribbon - hindcast
   geom_ribbon(data = ~ filter(.x, fcast_period == "hindcast"),
-              aes(ymin = lo_25, ymax = hi_75, fill = taxon_color), alpha = 0.25) +
+              aes(ymin = lo_25, ymax = hi_75, fill = taxon_color), alpha = 0.20) +
   # Median line - calibration
   geom_line(data = ~ filter(.x, fcast_period == "calibration"),
-            aes(y = med, color = taxon_color), linewidth = 0.7) +
-  # Median line - hindcast (lighter)
+            aes(y = med, color = taxon_color), linewidth = 0.6) +
+  # Median line - hindcast
   geom_line(data = ~ filter(.x, fcast_period == "hindcast"),
             aes(y = med, color = taxon_color), linewidth = 0.5, alpha = 0.6) +
+  # Calibration/hindcast boundary
+  geom_vline(xintercept = cal_boundary, linetype = "dashed", color = "grey40", linewidth = 0.3) +
   # Observed points
   geom_point(aes(y = truth), color = "black", size = 1.2, alpha = 0.8) +
-  # plotID label inside each panel (top-right, with background)
+  # plotID label inside each panel
   geom_label(data = plot_data %>%
                group_by(taxon_label, site_label, plotID) %>%
                slice(1),
              aes(x = -Inf, y = Inf, label = plotID),
-             vjust = 1.3, hjust = -0.1, size = 3, color = "gray20",
-             fill = "white", alpha = 0.7, label.size = 0,
+             vjust = 1.3, hjust = -0.1, size = 2.8, color = "gray30",
+             fill = "white", alpha = 0.8, linewidth = 0,
              label.padding = unit(0.15, "lines")) +
   facet_grid(rows = vars(taxon_label), cols = vars(site_label),
              scales = "free") +
   scale_fill_manual(values = taxon_colors) +
   scale_color_manual(values = taxon_colors) +
+  scale_x_date(date_labels = "%Y", date_breaks = "2 years") +
   labs(x = "Date", y = "Relative abundance") +
   theme_bw(base_size = 12) +
   theme(
     legend.position = "none",
-    strip.text = element_text(size = 11, face = "bold"),
+    strip.text = element_text(size = 10, face = "bold"),
+    strip.text.y = element_text(size = 9),
     panel.spacing = unit(0.4, "cm"),
     axis.text.x = element_text(angle = 30, hjust = 1)
   )
@@ -221,24 +206,25 @@ panel_hindcasts <- ggplot(plot_data, aes(x = dates)) +
 # ── 5. Combine panels ───────────────────────────────────────────────────────
 fig <- plot_grid(
   panel_map, panel_hindcasts,
-  ncol = 1, rel_heights = c(0.4, 0.6),
+  ncol = 1, rel_heights = c(0.38, 0.62),
   labels = c("A", ""), label_size = 14
 )
 
-# Add B-E labels to the facets via a second label layer
-# The facet_grid produces 4 panels: top-left=B, top-right=C, bottom-left=D, bottom-right=E
-# We'll use draw_label for manual placement
+# Facet labels: 3 cols x 2 rows = B-G
 fig_labeled <- ggdraw(fig) +
-  draw_label("B", x = 0.02, y = 0.57, fontface = "bold", size = 14) +
-  draw_label("C", x = 0.50, y = 0.57, fontface = "bold", size = 14) +
-  draw_label("D", x = 0.02, y = 0.29, fontface = "bold", size = 14) +
-  draw_label("E", x = 0.50, y = 0.29, fontface = "bold", size = 14)
+  theme(plot.background = element_rect(fill = "white", color = NA)) +
+  draw_label("B", x = 0.02, y = 0.59, fontface = "bold", size = 14) +
+  draw_label("C", x = 0.35, y = 0.59, fontface = "bold", size = 14) +
+  draw_label("D", x = 0.66, y = 0.59, fontface = "bold", size = 14) +
+  draw_label("E", x = 0.02, y = 0.30, fontface = "bold", size = 14) +
+  draw_label("F", x = 0.35, y = 0.30, fontface = "bold", size = 14) +
+  draw_label("G", x = 0.66, y = 0.30, fontface = "bold", size = 14)
 
 # ── 6. Save ─────────────────────────────────────────────────────────────────
 out_dir <- here("data", "figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig_exampleHindcasts.png"), fig_labeled,
-       width = 10, height = 10, dpi = 200)
+       width = 12, height = 10, dpi = 200)
 
 cat("Saved: data/figures/fig_exampleHindcasts.png\n")

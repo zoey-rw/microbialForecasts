@@ -1,5 +1,5 @@
 # Combined figure: Precision parameter (A), Proportion significant predictors (B),
-# Forecast error by functional group source (C).
+# Forecast error by functional group source (C), Fungal guild phenology (D).
 # Source scripts: compare_core_sd_rho.r, fig5_eff_size.r, fig_compareFunctionalCategories.r
 
 source("source.R")
@@ -10,6 +10,7 @@ library(ggh4x)
 library(ggrepel)
 library(patchwork)
 library(data.table)
+library(lubridate)
 
 # ── Shared constants (Okabe-Ito, consistent with fig2/fig3) ──────────────────
 BASE_SIZE <- 12
@@ -140,11 +141,16 @@ df_cal_fg_tax_fixed <- df_cal_fg_tax %>%
     TRUE ~ significant
   ))
 
+# Deduplicate on model_id + beta_pretty to get one row per model per predictor.
+# Use max(significant) so if any duplicate row is significant, the model counts.
 df_cal_fg_tax_sig <- df_cal_fg_tax_fixed %>%
-  filter(pretty_group == "Bacteria") %>%
   filter(model_name == "env_cycl") %>%
-  distinct(fcast_type, model_id, pretty_group, beta_pretty, significant) %>%
-  mutate(fcast_type = factor(fcast_type, levels = c("Functional", "Taxonomic")))
+  group_by(fcast_type, model_id, beta_pretty) %>%
+  summarise(significant = max(significant, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    significant = ifelse(is.infinite(significant), NA_real_, significant),
+    fcast_type = factor(fcast_type, levels = c("Functional", "Taxonomic"))
+  )
 
 sig_summary <- df_cal_fg_tax_sig %>%
   group_by(fcast_type, beta_pretty) %>%
@@ -181,7 +187,7 @@ sig_test_results <- df_cal_fg_tax_sig %>%
   ) %>%
   ungroup()
 
-# Grouped bar chart (no coord_flip, no facets) — predictors on x, grouped by forecast type
+# Grouped bar chart — predictors on x, grouped by forecast type
 pB <- ggplot(sig_summary, aes(x = beta_pretty, y = sig_rate, fill = fcast_type)) +
   geom_col(alpha = 0.7, position = position_dodge(width = 0.8), width = 0.7) +
   geom_text(aes(label = paste0(significant, "/", total), group = fcast_type),
@@ -210,18 +216,20 @@ functional_taxa <- c(
   "dissim_nitrate_reduction", "dissim_nitrite_reduction", "erythromycin_antibiotic",
   "gentamycin_antibiotic", "glucose_simple", "glycerol_simple", "heat_stress", "herbicide_stress",
   "lignolytic", "n_fixation", "oligotroph", "animal_pathogen", "lichenized",
-  "streptomycin_antibiotic", "sucrose_complex", "talaromyces"
+  "streptomycin_antibiotic", "sucrose_complex", "talaromyces",
+  "saprotroph", "ectomycorrhizal", "plant_pathogen", "endophyte"
 )
 
 # Determine the taxon column name
 taxon_col <- intersect(c("taxon", "rank_name", "species"),
                        colnames(scores_list$scoring_metrics_long))[1]
 
-# Filter directly — no merge needed (pretty_group already in scoring_metrics_long)
+# Filter to env_cycl model only to avoid duplicate points per taxon
 fg_source_data <- scores_list$scoring_metrics_long %>%
   filter(.data[[taxon_col]] %in% functional_taxa,
          metric == "RMSE.norm",
-         site_prediction == "New time (observed site)") %>%
+         site_prediction == "New time (observed site)",
+         model_name == "env_cycl") %>%
   mutate(score = pmax(score, 0)) %>%
   distinct()
 
@@ -235,7 +243,7 @@ fg_source_data$fg_source <- ifelse(
   fg_source_data$fg_source
 )
 
-pretty_names <- c(
+local_pretty_names <- c(
   "assim_nitrite_reduction" = "Assim. nitrite red.",
   "dissim_nitrite_reduction" = "Dissim. nitrite red.",
   "assim_nitrate_reduction" = "Assim. nitrate red.",
@@ -259,9 +267,13 @@ pretty_names <- c(
   "herbicide_stress" = "Herbicide stress-tol.",
   "heat_stress" = "Heat stress-tol.",
   "lichenized" = "Lichenized fungi",
-  "animal_pathogen" = "Animal pathogens"
+  "animal_pathogen" = "Animal pathogens",
+  "saprotroph" = "Saprotrophs",
+  "ectomycorrhizal" = "Ectomycorrhizae",
+  "plant_pathogen" = "Plant pathogens",
+  "endophyte" = "Endophytes"
 )
-fg_source_data$pretty_fg <- recode(fg_source_data[[taxon_col]], !!!pretty_names)
+fg_source_data$pretty_fg <- recode(fg_source_data[[taxon_col]], !!!local_pretty_names)
 
 # Shorten source labels for x-axis
 fg_source_data$fg_source <- recode(fg_source_data$fg_source,
@@ -275,30 +287,25 @@ fg_source_data$fg_source <- recode(fg_source_data$fg_source,
 stat_pvalue_fg_source <- fg_source_data %>%
   rstatix::tukey_hsd(score ~ fg_source)
 
-# One label per unique functional group (deduplicate across model_names)
+# One label per unique functional group
 fg_label_data <- fg_source_data %>%
-  group_by(pretty_fg, fg_source, pretty_group) %>%
-  summarise(score = median(as.numeric(score), na.rm = TRUE), .groups = "drop") %>%
-  distinct(pretty_fg, .keep_all = TRUE)
+  distinct(pretty_fg, fg_source, pretty_group, .keep_all = TRUE)
 
 # Identify significant Tukey comparisons
 sig_tukey <- stat_pvalue_fg_source %>% filter(p.adj < 0.05)
 
 # Build manual bracket data for log-scale compatibility
-# Map group names to x-positions
 fg_levels <- levels(factor(fg_source_data$fg_source))
 x_map <- setNames(seq_along(fg_levels), fg_levels)
 max_score <- max(fg_source_data$score, na.rm = TRUE)
 
 bracket_annotations <- list()
 if (nrow(sig_tukey) > 0) {
-  # Only show the most informative comparisons (avoid clutter from 5 brackets)
-  # Keep: Experimental vs FUNGuild (biggest contrast), and each bacterial source vs FUNGuild
   sig_tukey <- sig_tukey %>%
     filter(grepl("Scientific consensus", group1) | grepl("Scientific consensus", group2))
 
   bracket_y_start <- max_score * 1.8
-  step_mult <- 1.5  # multiplicative step on log scale
+  step_mult <- 1.5
 
   for (i in seq_len(nrow(sig_tukey))) {
     g1 <- sig_tukey$group1[i]
@@ -342,15 +349,106 @@ pC <- ggplot(fg_source_data, aes(x = fg_source, y = as.numeric(score),
         legend.key.size = unit(0.4, "cm"))
 
 # =============================================================================
-# Assemble: 2-row layout — [A | B] over [C]
+# Panel D: Fungal guild seasonal phenology aligned to plant phenophase
+# =============================================================================
+converged <- scores_list$converged_list
+
+pheno_data <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))[[4]]
+
+fungal_guilds <- c("saprotroph", "ectomycorrhizal", "plant_pathogen",
+                   "animal_pathogen")
+
+guild_data <- pheno_data %>%
+  filter(taxon %in% fungal_guilds,
+         model_id %in% converged) %>%
+  mutate(pretty_name = recode(taxon, !!!microbialForecast:::pretty_names))
+
+# Aggregate: mean abundance per guild x phenophase, min-max scaled
+guild_pheno <- guild_data %>%
+  group_by(taxon, pretty_name, sampling_season) %>%
+  summarise(mean_abun = mean(mean_modeled_abun, na.rm = TRUE),
+            n = n(), .groups = "drop") %>%
+  group_by(taxon) %>%
+  mutate(scaled = (mean_abun - min(mean_abun)) / (max(mean_abun) - min(mean_abun))) %>%
+  ungroup()
+
+season_labels <- c(dormancy = "Dormancy", greenup = "Green-up",
+                   peak = "Peak", greendown = "Senescence")
+guild_pheno <- guild_pheno %>%
+  mutate(season_label = factor(season_labels[as.character(sampling_season)],
+                               levels = season_labels))
+
+# Colors and linetypes for accessibility (labels placed directly on lines)
+guild_colors <- c(
+  "Saprotrophs"         = "#E69F00",
+  "Ectomycorrhizae"     = "#0072B2",
+  "Plant pathogens"     = "#009E73",
+  "Animal pathogens"    = "#D55E00"
+)
+guild_linetypes <- c(
+  "Saprotrophs"         = "solid",
+  "Ectomycorrhizae"     = "dashed",
+  "Plant pathogens"     = "dotdash",
+  "Animal pathogens"    = "dotted"
+)
+
+# Phenophase background shading
+phenophase_fills <- c(
+  "Dormancy"   = "grey85",
+  "Green-up"   = "#009E73",
+  "Peak"       = "#E69F00",
+  "Senescence" = "#D55E00"
+)
+
+# Labels at right end of each line (Senescence) using ggrepel for auto-separation
+label_data <- guild_pheno %>%
+  filter(season_label == "Senescence")
+
+pD <- ggplot(guild_pheno, aes(x = season_label, y = scaled,
+                               color = pretty_name, linetype = pretty_name,
+                               group = pretty_name)) +
+  # Phenophase background
+  geom_rect(data = data.frame(
+    season_label = factor(season_labels, levels = season_labels),
+    fill_label = names(phenophase_fills)
+  ),
+  aes(xmin = as.numeric(season_label) - 0.5,
+      xmax = as.numeric(season_label) + 0.5,
+      ymin = -Inf, ymax = Inf, fill = fill_label),
+  inherit.aes = FALSE, alpha = 0.12) +
+  scale_fill_manual(values = phenophase_fills, guide = "none") +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 2.5) +
+  # Labels at line endpoints, repelled to avoid overlap
+  geom_text_repel(data = label_data,
+                  aes(label = pretty_name),
+                  size = 3.2, fontface = "bold",
+                  direction = "y", hjust = 0, nudge_x = 0.15,
+                  segment.size = 0.3, segment.color = "grey50",
+                  show.legend = FALSE, seed = 42) +
+  scale_color_manual(values = guild_colors, guide = "none") +
+  scale_linetype_manual(values = guild_linetypes, guide = "none") +
+  scale_x_discrete(expand = expansion(mult = c(0.05, 0.25))) +
+  scale_y_continuous(labels = scales::percent_format(),
+                     breaks = seq(0, 1, 0.25)) +
+  labs(x = "Plant phenophase",
+       y = "Relative seasonal abundance\n(min-max scaled within guild)") +
+  base_theme +
+  theme(axis.text.x = element_text(size = BASE_SIZE))
+
+# =============================================================================
+# Assemble: 2-row layout — [A | B] over [C | D]
 # =============================================================================
 top_row <- pA + pB + plot_layout(widths = c(1, 2))
-combined <- top_row / pC +
+bottom_row <- pC + pD + plot_layout(widths = c(1, 1))
+combined <- top_row / bottom_row +
   plot_layout(heights = c(1, 1)) +
   plot_annotation(tag_levels = "A")
 
+ggsave(here("figures", "combined_precision_significance_fg_source.pdf"), combined,
+       width = 15, height = 10, dpi = 300)
 ggsave(here("figures", "combined_precision_significance_fg_source.png"), combined,
-       width = 13, height = 9, dpi = 300)
+       width = 15, height = 10, dpi = 300)
 
-cat("Saved: figures/combined_precision_significance_fg_source.png\n")
 cat("Saved: figures/combined_precision_significance_fg_source.pdf\n")
+cat("Saved: figures/combined_precision_significance_fg_source.png\n")

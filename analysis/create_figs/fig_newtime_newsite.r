@@ -140,9 +140,9 @@ fig_newsite <- panel_a / panel_b / panel_c +
     theme = theme(plot.tag = element_text(face = "bold", size = 14))
   )
 
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig_newtime_newsite.png"), fig_newsite,
        width = 10, height = 13, dpi = 200)
-cat("Saved: data/figures/fig_newtime_newsite.pdf / .png\n")
+cat("Saved: figures/fig_newtime_newsite.png\n")

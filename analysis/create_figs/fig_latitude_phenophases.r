@@ -286,10 +286,10 @@ fig_lat <- ggarrange(
   nrow = 2, heights = c(1.6, 1)
 )
 
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig_latitude_phenophases.png"),
        fig_lat, width = 15, height = 12, dpi = 200)
 
-cat("Saved: data/figures/fig_latitude_phenophases.png\n")
+cat("Saved: figures/fig_latitude_phenophases.png\n")
