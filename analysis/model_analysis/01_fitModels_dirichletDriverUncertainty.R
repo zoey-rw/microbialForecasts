@@ -492,7 +492,7 @@ if (local_run && nrow(valid_models) > 1L && (nzchar(Sys.getenv("LIMIT_ONE_MODEL"
 
 # env_cycl_all_taxa: 2 chains; all others: global nchains
 valid_models <- valid_models %>%
-  mutate(nchains_model = if_else(model_name == "env_cycl" & species == "all_taxa", 2L, as.integer(nchains)))
+  mutate(nchains_model = as.integer(nchains))
 all_tasks <- bind_rows(lapply(1:nrow(valid_models), function(i) {
   data.frame(model_idx = i, chain_no = 1:valid_models$nchains_model[i])
 }))
@@ -2126,7 +2126,7 @@ if (single_task_mode) {
 
   # Rebuild per-model chain count and task list (same logic as main path)
   valid_models <- valid_models %>%
-    mutate(nchains_model = if_else(model_name == "env_cycl" & species == "all_taxa", 2L, as.integer(nchains)))
+    mutate(nchains_model = as.integer(nchains))
   all_tasks <- bind_rows(lapply(1:nrow(valid_models), function(i) {
     data.frame(model_idx = i, chain_no = 1:valid_models$nchains_model[i])
   }))
