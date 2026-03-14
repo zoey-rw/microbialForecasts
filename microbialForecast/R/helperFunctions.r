@@ -1,15 +1,5 @@
 # Helper functions and global variables for soil microbial forecasts
-
-# Load required packages for restart functionality
-if (!require(coda, quietly = TRUE)) {
-  install.packages("coda")
-  library(coda)
-}
-
-if (!require(here, quietly = TRUE)) {
-  install.packages("here")
-  library(here)
-}
+# Dependencies (coda, here) are declared in DESCRIPTION Imports
 
 
 
@@ -473,7 +463,7 @@ assign_fg_sources <- function (vector) {
 	out[which(grepl("anaerobic", vector))] <- "Experimental enrichment"
 	#	out[which(grepl("nitr|fixa", vector))] <- "Literature review"
 	out[which(grepl("troph", vector))] <- "Literature review"
-	out[which(grepl("sapr|path|arbusc|ecto|endo|lichen", vector))] <- "Scientific consensus (FUNGuild)"
+	out[which(grepl("sapr|path|arbusc|ecto|endo|lichen", vector))] <- "Literature review"
 	out[which(grepl("other", vector))] <- NA
 
 	#

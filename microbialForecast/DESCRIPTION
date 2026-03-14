@@ -30,7 +30,6 @@ Imports:
     tibble,
     doParallel,
     data.table,
-    arrow,
     Rfast,
     moments,
     scoringRules,
@@ -44,7 +43,8 @@ Suggests:
     rmarkdown,
     testthat,
     devtools,
-    rstudioapi
+    rstudioapi,
+    arrow
 Depends:
     R (>= 4.0.0)
 SystemRequirements: NIMBLE requires a C++ compiler

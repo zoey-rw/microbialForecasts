@@ -23,22 +23,33 @@ assign_pheno_category <- function(site_date_df,
 	out_categories[out_categories=="dormancy_interval1"] <- "dormancy_interval"
 	out_categories[out_categories=="dormancy_interval2"] <- "dormancy_interval"
 	out_categories <- gsub("_interval", "", out_categories)
-	# If date is at transition of two categories, keep the latter
-	# Which is more likely to represent the sampling date (which can be anytime throughout the month,
-	# we've just coded it as the first of the month)
-
-	# If 90% of sites are in one interval, return that interval
-	if (length(unique(out_categories)) > 1) {
-		cat_table = table(out_categories)
-		cat_table = cat_table/sum(cat_table)
-		if (any(cat_table > .6)) {
-			out_categories = names(cat_table[cat_table > .7])
-		} else {
-			out_categories = names(cat_table[cat_table > .3])
-			out_categories <- paste(out_categories, collapse = "_")
+	# If date is at transition of two categories, use priority-based selection
+	# Priority: peak > greenup > greendown > dormancy
+	# This prevents dormancy from being incorrectly assigned to summer dates
+	unique_cats <- unique(out_categories)
+	if (length(unique_cats) > 1) {
+		priority_order <- c("peak", "greenup", "greendown", "dormancy")
+		# Find the highest priority category that matches
+		selected_cat <- NULL
+		for(priority_cat in priority_order) {
+			if(priority_cat %in% unique_cats) {
+				selected_cat <- priority_cat
+				break
+			}
 		}
+		# If no priority match, fall back to frequency-based selection
+		if(is.null(selected_cat)) {
+			cat_table = table(out_categories)
+			cat_table = cat_table/sum(cat_table)
+			if (any(cat_table > .6)) {
+				selected_cat = names(cat_table[cat_table > .7])[1]
+			} else {
+				selected_cat = names(cat_table[cat_table > .3])[1]
+			}
+		}
+		out_categories <- selected_cat
 	} else {
-		out_categories <- unique(out_categories)
+		out_categories <- unique_cats[1]
 	}
 	return(out_categories)
 }
@@ -137,18 +148,33 @@ assign_pheno_date_vectorized <- function(dates, pheno_df = pheno_categories_long
         out_categories[out_categories == "dormancy_interval2"] <- "dormancy_interval"
         out_categories <- gsub("_interval", "", out_categories)
         
-        # Handle multiple categories
-        if (length(unique(out_categories)) > 1) {
-          cat_table <- table(out_categories)
-          cat_table <- cat_table / sum(cat_table)
-          if (any(cat_table > 0.6)) {
-            out_categories <- names(cat_table[cat_table > 0.6])
-          } else {
-            out_categories <- names(cat_table[cat_table > 0.3])
-            out_categories <- paste(out_categories, collapse = "_")
+        # Handle multiple categories - use priority-based selection
+        # Priority: peak > greenup > greendown > dormancy
+        # This prevents dormancy from being incorrectly assigned to summer dates
+        unique_cats <- unique(out_categories)
+        if (length(unique_cats) > 1) {
+          priority_order <- c("peak", "greenup", "greendown", "dormancy")
+          # Find the highest priority category that matches
+          selected_cat <- NULL
+          for(priority_cat in priority_order) {
+            if(priority_cat %in% unique_cats) {
+              selected_cat <- priority_cat
+              break
+            }
           }
+          # If no priority match, fall back to frequency-based selection
+          if(is.null(selected_cat)) {
+            cat_table <- table(out_categories)
+            cat_table <- cat_table / sum(cat_table)
+            if (any(cat_table > 0.6)) {
+              selected_cat <- names(cat_table[cat_table > 0.6])[1]
+            } else {
+              selected_cat <- names(cat_table[cat_table > 0.3])[1]
+            }
+          }
+          out_categories <- selected_cat
         } else {
-          out_categories <- unique(out_categories)
+          out_categories <- unique_cats[1]
         }
         
         result[i] <- out_categories
@@ -171,18 +197,33 @@ assign_pheno_date_vectorized <- function(dates, pheno_df = pheno_categories_long
         out_categories[out_categories == "dormancy_interval2"] <- "dormancy_interval"
         out_categories <- gsub("_interval", "", out_categories)
         
-        # Handle multiple categories
-        if (length(unique(out_categories)) > 1) {
-          cat_table <- table(out_categories)
-          cat_table <- cat_table / sum(cat_table)
-          if (any(cat_table > 0.6)) {
-            out_categories <- names(cat_table[cat_table > 0.6])
-          } else {
-            out_categories <- names(cat_table[cat_table > 0.3])
-            out_categories <- paste(out_categories, collapse = "_")
+        # Handle multiple categories - use priority-based selection
+        # Priority: peak > greenup > greendown > dormancy
+        # This prevents dormancy from being incorrectly assigned to summer dates
+        unique_cats <- unique(out_categories)
+        if (length(unique_cats) > 1) {
+          priority_order <- c("peak", "greenup", "greendown", "dormancy")
+          # Find the highest priority category that matches
+          selected_cat <- NULL
+          for(priority_cat in priority_order) {
+            if(priority_cat %in% unique_cats) {
+              selected_cat <- priority_cat
+              break
+            }
           }
+          # If no priority match, fall back to frequency-based selection
+          if(is.null(selected_cat)) {
+            cat_table <- table(out_categories)
+            cat_table <- cat_table / sum(cat_table)
+            if (any(cat_table > 0.6)) {
+              selected_cat <- names(cat_table[cat_table > 0.6])[1]
+            } else {
+              selected_cat <- names(cat_table[cat_table > 0.3])[1]
+            }
+          }
+          out_categories <- selected_cat
         } else {
-          out_categories <- unique(out_categories)
+          out_categories <- unique_cats[1]
         }
         
         result[i] <- out_categories

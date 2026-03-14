@@ -43,6 +43,79 @@ prepBetaRegData <- function(rank.df,
 	rank.df.orig <- rank.df
 	dat <- rank.df.orig
 
+	# CRITICAL FIX: Reconstruct missing dateID values from sampleID or dates
+	if (!"dateID" %in% colnames(dat)) {
+		stop("Required column 'dateID' missing from rank.df input")
+	}
+	
+	# Check for NA dateID and reconstruct if needed
+	if (any(is.na(dat$dateID))) {
+		na_dateid_count <- sum(is.na(dat$dateID))
+		message("Found ", na_dateid_count, " rows with NA dateID - attempting to reconstruct from sampleID")
+		
+		na_dateid_mask <- is.na(dat$dateID)
+		
+		# Try to reconstruct from sampleID using parseNEONsampleIDs
+		if ("sampleID" %in% colnames(dat)) {
+			sampleIDs_to_parse <- dat$sampleID[na_dateid_mask]
+			valid_sampleIDs <- sampleIDs_to_parse[!is.na(sampleIDs_to_parse)]
+			if (length(valid_sampleIDs) > 0) {
+				tryCatch({
+					parsed <- parseNEONsampleIDs(valid_sampleIDs)
+					if ("dateID" %in% colnames(parsed)) {
+						# Match parsed results back to original dat rows by rownames (parseNEONsampleIDs preserves original sampleID in rownames)
+						parsed_rownames <- rownames(parsed)
+						for (i in which(na_dateid_mask)) {
+							sampleID_val <- dat$sampleID[i]
+							# Find matching row in parsed (rownames should match original sampleID)
+							matched_idx <- which(parsed_rownames == sampleID_val)
+							if (length(matched_idx) > 0 && matched_idx[1] <= nrow(parsed)) {
+								parsed_dateID <- parsed$dateID[matched_idx[1]]
+								if (!is.na(parsed_dateID)) {
+									# Convert dateID to numeric format (YYYYMM)
+									dat$dateID[i] <- suppressWarnings(as.numeric(as.character(parsed_dateID)))
+								}
+							}
+						}
+						reconstructed_count <- sum(!is.na(dat$dateID) & na_dateid_mask)
+						if (reconstructed_count > 0) {
+							message("Reconstructed ", reconstructed_count, " dateID values from sampleID")
+						}
+					}
+				}, error = function(e) {
+					message("Could not reconstruct dateID from sampleID: ", conditionMessage(e))
+				})
+			}
+		}
+		
+		# If still NA, try to reconstruct from dates column
+		if (any(is.na(dat$dateID))) {
+			still_na_mask <- is.na(dat$dateID)
+			if ("dates" %in% colnames(dat)) {
+				dates_vals <- dat$dates[still_na_mask]
+				if (inherits(dates_vals, "Date") || (is.character(dates_vals) && any(!is.na(dates_vals)))) {
+					tryCatch({
+						date_parsed <- as.Date(dates_vals)
+						reconstructed_dateID <- as.numeric(format(date_parsed, "%Y%m"))
+						valid_reconstruction <- !is.na(reconstructed_dateID)
+						if (any(valid_reconstruction)) {
+							dat$dateID[still_na_mask][valid_reconstruction] <- reconstructed_dateID[valid_reconstruction]
+							message("Reconstructed ", sum(valid_reconstruction), " dateID values from dates column")
+						}
+					}, error = function(e) {
+						message("Could not reconstruct dateID from dates: ", conditionMessage(e))
+					})
+				}
+			}
+		}
+		
+		# After reconstruction attempts, filter out any remaining NA dateID
+		if (any(is.na(dat$dateID))) {
+			still_na_count <- sum(is.na(dat$dateID))
+			warning("Could not reconstruct dateID for ", still_na_count, " rows - filtering out these rows")
+			dat <- dat[!is.na(dat$dateID), ]
+		}
+	}
 
 	if (!is.null(keep_vec)){
 		dat <- dat[,colnames(rank.df) %in% keep_vec]
@@ -63,6 +136,7 @@ prepBetaRegData <- function(rank.df,
 
 
 	# Reorder & remove missing rows
+	# Since we've validated dateID is not NA above, plot_date should be valid
 	dat <- dat %>% arrange(siteID, plotID, dateID) %>%
 		mutate(plot_date = paste0(plotID, "_", dateID))
 	dat <- dat[!is.na(dat$plot_date),]
