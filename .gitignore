@@ -106,6 +106,9 @@ archive*/
 deprecated*/
 **/archive*/
 **/deprecated*/
+# Exception: keep create_figs/deprecated_figure_scripts so the folder exists in repo (run_all_figures.sh moves failed scripts here)
+!analysis/create_figs/deprecated_figure_scripts/
+!analysis/create_figs/deprecated_figure_scripts/.gitkeep
 # Exception: keep example/reference data files
 !data/reference/
 !data/example/
@@ -177,6 +180,16 @@ config.R
 # Cache directories
 cache/
 .cache/
+
+# Claude / AI agent files
+.claude/
+.cursorrules
+
+# Local R environment
+.Rprofile
+.here
+R_library/
+igraph/
 
 # Temporary R Markdown files
 *_cache/
