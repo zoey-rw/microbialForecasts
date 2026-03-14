@@ -285,7 +285,7 @@ cat("Models at max horizon (20 months):", max_h, "of", nrow(fcast_horizon_data),
     "(", round(100 * max_h / nrow(fcast_horizon_data), 1), "%)\n")
 
 # ── Figure assembly ────────────────────────────────────────────────────────────
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 # Tags applied here at assembly time — never baked into the plot objects above.

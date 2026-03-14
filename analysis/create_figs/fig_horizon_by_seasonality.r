@@ -62,6 +62,10 @@ base_theme <- theme_bw(base_size = 12) +
 fi <- readRDS(here("data/summary/fcast_horizon_input.rds"))
 model_mean <- as.data.table(fi[[4]])
 null_site <- as.data.table(fi[[3]])
+# Strip null_ prefix and filter to site_mean null type for backward compat
+if ("null_type" %in% names(null_site)) null_site <- null_site[null_type == "site_mean"]
+nc <- grep("^null_", names(null_site), value = TRUE)
+if (length(nc) > 0) setnames(null_site, nc, gsub("^null_", "", nc))
 
 # Null RSQ per model
 null_rsq <- null_site[model_name == "env_cycl",
@@ -291,7 +295,7 @@ if (!is.null(panel_g)) {
   fig_all <- ggarrange(fig_top, fig_mid, fig_bot, nrow = 3, heights = c(1, 0.7, 1))
 }
 
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig_horizon_by_seasonality.pdf"), fig_all,
@@ -299,4 +303,4 @@ ggsave(file.path(out_dir, "fig_horizon_by_seasonality.pdf"), fig_all,
 ggsave(file.path(out_dir, "fig_horizon_by_seasonality.png"), fig_all,
        width = 12, height = if (!is.null(panel_g)) 16 else 12, dpi = 200)
 
-cat("Saved: data/figures/fig_horizon_by_seasonality.pdf / .png\n")
+cat("Saved: figures/fig_horizon_by_seasonality.pdf / .png\n")

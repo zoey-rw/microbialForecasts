@@ -16,6 +16,10 @@ source("source.R")
 fi <- readRDS(here("data/summary/fcast_horizon_input.rds"))
 model_mean <- as.data.table(fi[[4]])  # per model x site x months_since_obs
 null_site <- as.data.table(fi[[3]])   # null model per model x site
+# Strip null_ prefix and filter to site_mean null type for backward compat
+if ("null_type" %in% names(null_site)) null_site <- null_site[null_type == "site_mean"]
+nc <- grep("^null_", names(null_site), value = TRUE)
+if (length(nc) > 0) setnames(null_site, nc, gsub("^null_", "", nc))
 
 # Focus on env_cycl
 scoring <- model_mean[model_name == "env_cycl"]
@@ -257,19 +261,13 @@ panel_f <- ggplot(model_site_var %>% filter(!is.na(site_sd)),
   theme(legend.position = "top")
 
 # ============================================================
-# Compose and save
+# Compose and save — Panel C only
 # ============================================================
 
-fig_top <- ggarrange(panel_a, panel_b, labels = c("A", "B"))
-fig_mid <- ggarrange(panel_c, panel_d, labels = c("C", "D"))
-fig_bot <- ggarrange(panel_e, panel_f, labels = c("E", "F"))
-fig_all <- ggarrange(fig_top, fig_mid, fig_bot, nrow = 3)
+ggsave(here("figures", "site_skill_drivers.png"), panel_c,
+       width = 7, height = 5, dpi = 200)
 
-png(here("figures", "site_skill_drivers.png"), width = 1400, height = 1500, res = 150)
-print(fig_all)
-dev.off()
-
-cat("\nFigure saved to figures/site_skill_drivers.png\n")
+cat("Saved: figures/site_skill_drivers.png\n")
 
 # ============================================================
 # Summary correlation table
