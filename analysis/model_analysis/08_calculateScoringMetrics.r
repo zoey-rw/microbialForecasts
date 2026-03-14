@@ -17,7 +17,7 @@ Sys.setenv(NUMEXPR_NUM_THREADS = "1")
 library(here)
 source(here("source.R"))
 # statsFunctions.r functions (add_scoring_metrics, etc.) loaded via microbialForecast package
-source(here("analysis/model_analysis/robust_add_scoring_metrics.R"))
+# robust version now merged into microbialForecast::add_scoring_metrics
 library(data.table)
 
 cat("Loading hindcast data...\n")
@@ -189,7 +189,7 @@ empty_metric_list <- function() list(
 safe_metrics <- function(obs, mu, med, sdv) {
   if (length(obs) <= 1L) return(empty_metric_list())
   tryCatch(
-    as.list(robust_add_scoring_metrics(
+    as.list(add_scoring_metrics(
       observed = obs, mean_predicted = mu, median_predicted = med, sd_predicted = sdv
     )),
     error = function(e) empty_metric_list()

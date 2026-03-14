@@ -1,6 +1,7 @@
 
 #' @title 	add_scoring_metrics
-#' @description Score models and forecasts
+#' @description Score models and forecasts. Handles edge cases (infinite values,
+#'   zero SDs, short vectors) gracefully by filtering and using tryCatch.
 #'
 #' @export
 add_scoring_metrics = function(observed,
@@ -18,54 +19,100 @@ add_scoring_metrics = function(observed,
 
 	require(Metrics, scoringRules)
 
-	if(sum(is.na(observed )) > 0){stop('Error: NAs in observed vector.' )}
-	if(sum(is.na(mean_predicted)) > 0){stop('Error: NAs in predicted vector.')}
+	# Input validation
+	if(length(observed) == 0 || length(mean_predicted) == 0) {
+		stop('Error: Empty input vectors.')
+	}
 
-	# These CRPS stats require distributions for each forecast
-	# and cannot be calculated from median
-	out_df1 <- cbind.data.frame(observed,mean_predicted,sd_predicted) %>%
-		summarise(CRPS = mean(
-			crps_norm(observed, mean_predicted, sd_predicted)),
-			CRPS_truncated = mean(
-				crps(observed,
-						 family = "tnorm",
-						 location = mean_predicted,
-						 scale = sd_predicted,
-						 lower = 0, upper = 1)))
+	if(sum(is.na(observed)) > 0 || sum(is.na(mean_predicted)) > 0) {
+		stop('Error: NAs in observed or predicted vectors.')
+	}
+
+	# Ensure all vectors have the same length
+	n <- length(observed)
+	if(length(mean_predicted) != n || length(median_predicted) != n || length(sd_predicted) != n) {
+		stop('Error: All input vectors must have the same length.')
+	}
+
+	# Remove any infinite values
+	finite_mask <- is.finite(observed) & is.finite(mean_predicted) & is.finite(median_predicted) & is.finite(sd_predicted)
+	if(sum(finite_mask) == 0) {
+		stop('Error: No finite values in input vectors.')
+	}
+
+	observed <- observed[finite_mask]
+	mean_predicted <- mean_predicted[finite_mask]
+	median_predicted <- median_predicted[finite_mask]
+	sd_predicted <- sd_predicted[finite_mask]
+
+	if(length(observed) < 2) {
+		stop('Error: Need at least 2 finite values for calculations.')
+	}
+
+	# Ensure sd values are positive
+	sd_predicted <- pmax(sd_predicted, 1e-10)
+
+	# CRPS stats require distributions and cannot be calculated from median
+	tryCatch({
+		CRPS <- mean(scoringRules::crps_norm(observed, mean_predicted, sd_predicted))
+	}, error = function(e) {
+		cat("Warning: CRPS calculation failed, setting to NA. Error:", e$message, "\n")
+		CRPS <<- NA
+	})
+
+	tryCatch({
+		CRPS_truncated <- mean(scoringRules::crps(observed, family = "tnorm",
+												 location = mean_predicted,
+												 scale = sd_predicted,
+												 lower = 0, upper = 1))
+	}, error = function(e) {
+		cat("Warning: CRPS truncated calculation failed, setting to NA. Error:", e$message, "\n")
+		CRPS_truncated <<- NA
+	})
 
 	# The rest of these metrics can use forecast median as the best estimate
-
 	if (use_median==TRUE) mean_predicted = median_predicted
 
-	out_df2 = cbind.data.frame(observed,mean_predicted,sd_predicted) %>%
-		summarise(
-			RMSE = rmse(actual = observed, predicted = mean_predicted),
-			RSQ.1 = 1 - (RMSE^2)/var(observed),
-			RSQ.1.colin = rsq_1.1(observed, mean_predicted),
-			predictive_loss(observed, mean_predicted, sd_predicted),
-			BIAS = bias(actual = observed, predicted = mean_predicted),
-			MAE = mae(actual = observed, predicted = mean_predicted),
-			MAPE = mape(actual = observed, predicted = mean_predicted),
-			RSQ = summary(lm(observed ~ mean_predicted))$r.squared,
-			mean_abundance = mean(observed, na.rm=T),
-			abundance = ifelse(mean_abundance < .005, .005, mean_abundance),
-			q1 = quantile(observed, .25),
-			q3 = quantile(observed, .75),
-			IQR = q3-q1,
-			RMSE.iqr = RMSE/IQR,
-			RMSE.norm = RMSE/abundance)
+	tryCatch({
+		RMSE = Metrics::rmse(actual = observed, predicted = mean_predicted)
+		RSQ.1 = 1 - (RMSE^2)/var(observed)
+		BIAS = Metrics::bias(actual = observed, predicted = mean_predicted)
+		MAE = Metrics::mae(actual = observed, predicted = mean_predicted)
+		RSQ = summary(lm(observed ~ mean_predicted))$r.squared
+		mean_abundance = mean(observed, na.rm=T)
+		abundance = ifelse(mean_abundance < .005, .005, mean_abundance)
+		q1 = quantile(observed, .25)
+		q3 = quantile(observed, .75)
+		IQR = q3-q1
+		RMSE.iqr = RMSE/IQR
+		RMSE.norm = RMSE/abundance
+	}, error = function(e) {
+		cat("Warning: Some metrics calculation failed, setting to NA. Error:", e$message, "\n")
+		RMSE <<- NA; RSQ.1 <<- NA; BIAS <<- NA; MAE <<- NA; RSQ <<- NA
+		mean_abundance <<- NA; abundance <<- NA; q1 <<- NA; q3 <<- NA; IQR <<- NA
+		RMSE.iqr <<- NA; RMSE.norm <<- NA
+	})
 
-	out_df = cbind.data.frame(out_df1, out_df2)
+	out_df = data.frame(
+		RMSE = RMSE,
+		BIAS = BIAS,
+		MAE = MAE,
+		CRPS = CRPS,
+		RSQ = RSQ,
+		RSQ.1 = RSQ.1,
+		RMSE.iqr = RMSE.iqr,
+		RMSE.norm = RMSE.norm,
+		CRPS_truncated = CRPS_truncated,
+		residual_variance = var(observed - mean_predicted, na.rm=TRUE),
+		predictive_variance = var(mean_predicted, na.rm=TRUE),
+		total_PL = var(observed - mean_predicted, na.rm=TRUE) + var(mean_predicted, na.rm=TRUE)
+	)
 
 	# Lower limit if RSQ 1:1 is 0
 	out_df$RSQ.1 = ifelse(out_df$RSQ.1 < 0, 0, out_df$RSQ.1)
 
 	# Upper limit of RMSE.normalized is 5
-	out_df$RMSE.norm.orig = out_df$RMSE.norm
 	out_df$RMSE.norm = ifelse(out_df$RMSE.norm > 5, 5, out_df$RMSE.norm)
-
-	out_df <- out_df %>%
-		select(!!type)
 
 	return(out_df)
 }
