@@ -194,3 +194,15 @@ igraph/
 # Temporary R Markdown files
 *_cache/
 *_files/
+# LaTeX artifacts
+*.aux
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# Manuscript drafts and bibliography (tracked separately)
+Manuscript*.md
+zotero_references.bib
+unconverged_models_list.txt
