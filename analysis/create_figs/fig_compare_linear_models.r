@@ -16,32 +16,15 @@ hindcast_filter <- scores_list$scoring_metrics_long %>%
 			site_prediction == "New time (observed site)")
 
 
-# Raw hindcast crps values
-hindcast_data <- readRDS(here("data/summary/all_hindcasts_plsr2.rds"))
-hindcast_data_df = hindcast_data %>%
-	#filter(model_id %in% converged) %>%
-	filter(!is.na(truth) & fcast_period=="hindcast" & new_site %in% c(FALSE, "Observed site"))
+# Raw hindcast data from current parquet (via duckdb, memory-efficient)
+# load_hindcasts() also reconstructs pretty_group from rank_name/species
+hindcast_data_df <- load_hindcasts(
+  fcast_period = "hindcast",
+  observed_only = TRUE
+)
+hindcast_data_df <- hindcast_data_df[!is.na(truth)]
 
-# Fill pretty_group from species for functional groups when upstream assignment left NA
-if ("pretty_group" %in% names(hindcast_data_df) && "species" %in% names(hindcast_data_df) &&
-    any(is.na(hindcast_data_df$pretty_group)) && requireNamespace("microbialForecast", quietly = TRUE)) {
-  fg_names <- microbialForecast:::keep_fg_names
-  na_rows <- is.na(hindcast_data_df$pretty_group)
-  is_fg <- hindcast_data_df$species[na_rows] %in% fg_names
-  if (any(is_fg)) {
-    sp_fg <- hindcast_data_df$species[na_rows][is_fg]
-    fg_kingdoms <- microbialForecast::assign_fg_kingdoms(
-      microbialForecast::assign_fg_categories(sp_fg)
-    )
-    idx_fill <- which(na_rows)[is_fg]
-    hindcast_data_df$pretty_group[idx_fill] <- ifelse(
-      fg_kingdoms == "16S", "Bacteria",
-      ifelse(fg_kingdoms == "ITS", "Fungi", NA_character_)
-    )
-  }
-}
-
-# Check if taxon_name exists, otherwise use taxon or species (used later for mean_crps, etc.)
+# Determine taxon column name
 if ("taxon_name" %in% names(hindcast_data_df)) {
   taxon_col <- "taxon_name"
 } else if ("taxon" %in% names(hindcast_data_df)) {

@@ -1,0 +1,568 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{natbib}
+\usepackage{hyperref}
+\usepackage[draft]{graphicx}  % Remove [draft] once figure files are in place
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\DeclareUnicodeCharacter{03B2}{$\beta$}
+\DeclareUnicodeCharacter{2013}{--}
+\DeclareUnicodeCharacter{2014}{---}
+\DeclareUnicodeCharacter{2019}{'}
+\DeclareUnicodeCharacter{00B2}{$^2$}
+\usepackage{lineno}
+\usepackage[markup=underlined,authormarkup=superscript]{changes}
+
+% Revision tracking: define authors for the changes package
+% Usage: \added[id=ZW]{new text}, \deleted[id=ZW]{old text}, \replaced[id=ZW]{new}{old}
+% Compile with \usepackage[final]{changes} to hide markup in final version
+\definechangesauthor[name={Zoey Werbin}, color=blue]{ZW}
+\definechangesauthor[name={Colin Averill}, color=orange]{CA}
+\definechangesauthor[name={Jennifer Bhatnagar}, color=purple]{JB}
+\definechangesauthor[name={Michael Dietze}, color=red]{MD}
+
+% Line numbers
+\linenumbers
+
+% Code listings style
+\lstset{
+  language=R,
+  basicstyle=\small\ttfamily,
+  keywordstyle=\color{blue!70!black},
+  commentstyle=\color{green!50!black},
+  stringstyle=\color{red!60!black},
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=5pt,
+  frame=single,
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=4,
+  showstringspaces=false,
+  xleftmargin=2em,
+  framexleftmargin=1.5em
+}
+
+% Citation style: numeric, sorted
+\bibliographystyle{unsrtnat}
+
+\title{Forecasting the soil microbiome at a continental scale}
+\author{
+  Zoey R.\ Werbin\textsuperscript{1,2}
+  \and Colin Averill\textsuperscript{3}
+  \and Jennifer M.\ Bhatnagar\textsuperscript{1}
+  \and Michael C.\ Dietze\textsuperscript{1,4}
+  \\[1em]
+  \small\textsuperscript{1}Department of Biology, Boston University, Boston, MA, USA \\
+  \small\textsuperscript{2}TODO: current affiliation \\
+  \small\textsuperscript{3}TODO: Colin affiliation \\
+  \small\textsuperscript{4}Department of Earth \& Environment, Boston University, Boston, MA, USA
+}
+\date{}
+
+
+\begin{document}
+\maketitle
+
+
+\begin{abstract}
+Despite the critical role of soil microorganisms in ecosystem processes, it is unclear how well we can anticipate changes in the Earth's microbiome before they occur. To test this, we integrated continental-scale, standardized soil genomic and environmental surveys to develop the first forecasts of soil microorganisms across biomes and time. We find that the abundance of fungi and bacteria can be predicted with 50\% and 91\% accuracy, respectively, for up to a year ahead of time, by simulating seasonal cycles in taxon abundances, due to X. Forecasts perform best for microbes grouped at broad taxonomic ranks or by ecological groups, such as decomposers and plant symbionts. We also found that the presence of plant-associated seasonal cycles increases the predictability of microbial groups. We highlight strengths and weaknesses in our capacity to predict the future of microorganisms on Earth and propose future directions to improve longer-term projections of soil organisms and the processes they drive.
+\end{abstract}
+
+
+\noindent\textbf{One-Sentence Summary:} Changes in the soil microbiome across the United States\linelabel{rev-24} can be accurately predicted many months before they occur.
+
+
+\section{INTRODUCTION}
+
+The soil microbiome is responsible for critical ecosystem services such as decomposition, nutrient cycling, and carbon sequestration \cite{jansson_soil_2020,Gougoulias2014}, yet our capacity to anticipate specific, quantitative responses of the soil microbiome to environmental change remains uncertain. Over the past several centuries, microbial research has accumulated and matured, resulting in large volumes of knowledge about soil microbiome dynamics, ecology, and taxonomy \cite{hooke_micrographia_1665,van_leewenhoeck_observations_1677,winogradsky_s_researches_1891}. This information suggests that broad changes in the soil microbiome may have far-reaching consequences, such as increased emissions of carbon dioxide and other greenhouse gasses \cite{Wieder2013,lajtha_chapter_2018}, or expanded ranges of pathogenic microbes that threaten food security \cite{schaad_emerging_2008,delgado-baquerizo_proportion_2020}. Nevertheless, it is unclear how universal or persistent these consequences will be, because we have not yet tested how well we can apply our accumulated knowledge to predict future states of soil microbiome composition. Anticipating broad changes in the soil microbiome has the potential to enable early responses to pressing climate change, biodiversity, and health threats, and is therefore critical for achieving the Sustainable Development Goals outlined by the United Nations \cite{fao_state_2020}. \\
+Iterative ecological forecasting, a cycle in which predictions are made, assessed, and then used to improve subsequent predictions, provides a powerful method for addressing questions about how predictable organisms are in time, while advancing our scientific understanding of their ecology and biology \cite{dietze_prediction_2017,dietze_iterative_2018}. For example, forecasts of aquatic algal blooms have not only improved water management, but have also helped researchers better understand the cyanobacterial life cycle \cite{dietze_ecological_2019,lofton_using_2022}. Ecological forecasting allows us to interrogate many complex factors at once, providing a realistic picture of the strongest predictors in the ecology of the target organisms \cite{currie_where_2019}. Additionally, partitioning forecast uncertainties can identify the largest unknowns, shining a light on deficits in data collection and what limits the scales of predictability \cite{dietze_ecological_2019,averill_soil_2021}.  \\
+Given past work, there are several key features of the microbiome that we hypothesize to be predictable in time. Microbes grouped by ecological function (such as plant symbionts and pathogens) rather than taxonomy can be successfully predicted in space by climate and soil chemistry \cite{averill_soil_2021}; these "functional groups" may also be easier to forecast in time, since they are often defined by preferences for time-varying carbon and nutrient sources \cite{hatosy_beta_2013,ferrenberg_changes_2013}. The predictability of broad taxonomic groups of microbes through time may be greater than narrower taxonomic groups \cite{bouskill_pre-exposure_2013,hatosy_beta_2013,ferrenberg_changes_2013,bissett_life_2010}, as observed for soil fungi across space \cite{averill_soil_2021}, due to the conservation of some environmental niche traits deep within phylogenetic history \cite{goberna_phylogenetic-scale_2018,martiny_microbiomes_2015}. Broad microbial taxonomic groups\linelabel{rev-8} such as fungi and bacteria also seem to differ in spatial predictability \cite{averill_soil_2021}, due to overall differences between species turnover rates, strategies for nutrient access, and stress-tolerance properties. \\
+Seasonal variability is an underexplored property of the soil microbiome, which may be key for accurate temporal microbiome forecasts. The magnitude of change in microbial community composition between seasons is extreme - potentially as dramatic\linelabel{rev-9} as the difference between communities over 4000 km apart \cite{Averill}. This strong influence of season may be due to the interdependence of soil microbes and plants, through processes like seasonally-varying root exudation and litterfall that provide critical nutrients to the soil microbiome \cite{finzi_rhizosphere_2015,zhalnina_dynamic_2018,matulich_temporal_2015,chapman_biodiversity_2010}. Direct measurements of climate, soil chemistry, and plant variables such as vegetation "phenophase" (e.g. peak greenness, dormancy), or indirect proxies for seasonality (e.g. latitude), could capture the seasonality of environmental conditions that shape microbial community structure. It is also possible that seasonal cycles impact microorganisms in ways that are not captured by commonly measured environmental variables: the activity of the soil microbiome can be decoupled from aboveground phenology, suggesting that soil ecosystems are shaped in complex and poorly-understood ways \cite{abramoff_are_2015,voriskova_seasonal_2014}.  \\
+To test and understand the limits of microbiome prediction in space and time, we constructed the first spatiotemporal forecasts of the soil microbiome, facilitated\linelabel{rev-35} by a national-scale\linelabel{rev-25}\linelabel{rev-36} microbiome observatory spanning 20 ecoclimatic domains. Soil bacterial and fungal community composition data were generated by the National Ecological Observatory Network (NEON) through amplicon sequencing of over 6000 soil samples that were collected across 43 sites and 5 years. We integrated data on soil conditions and plant community properties into near-term monthly forecasts using hierarchical Bayesian state space models (Materials and Methods) for microbial taxonomic groups (n = 135, from genus to phylum rank) and functional groups (n = 35 groups) \cite{averill_soil_2021}. Seasonality was included in the models using cyclical feature encoding (\cite{stolwijk_studying_1999}). To characterize the predictability of the soil microbiome across seasons, years, and biomes, we first calibrated models with 2 years of data from 30 of the 43 NEON sites, each with site as a random effect. We then compared the accuracy of forecasts at the 30 sites used for model calibration, as well as 13 "new" sites reserved for validation, which were forecasted with and without assuming prior knowledge of environmental conditions at the new sites. Using this framework, we test three key hypotheses regarding the temporal predictability of Earth's microbiome: (1) functional groups, high-level taxonomic groups, and bacterial taxa will be most predictable, consistent with previously-reported trends in spatial predictability \cite{averill_soil_2021} (2) microbial communities will exhibit predictable seasonal patterns, especially plant-associated microbial groups such as fungal root symbionts (\% TODO: verify citation keys for Llado et al 2019; Rasche et al 2011), and; (3) microbial communities inhabiting higher latitude ecosystems will have stronger seasonal trends, which can be leveraged to increase forecast accuracy.
+
+\section{RESULTS}
+
+The first near-term forecasts of 170 soil microbial groups at 43 sites across the United States (Figure 1 inset) showed that approximately 50\% (83) of these groups had reasonable forecast accuracy (over 10\% of the variation in observations explained by forecasts). However, we found wide variation in the forecast error, transferability (performance at new sites), and forecast horizons (length of time into the future for which forecasts are high-performing) across taxonomic and functional groups (reported for each model in Table S1).  \\
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/fig1_forecast_map_examples.png}
+\caption{\textbf{A)} Soil microbiome forecasts were created for 43 sites within the National Ecological Observatory Network (NEON), indicated by black points. The Central Plains and Konza Prairie sites are indicated by red points on map. Panels \textbf{B)} and \textbf{C)} show example forecasts for the functional group of dissimilatory nitrate-reducing bacteria. Panels \textbf{D)} and \textbf{E)} show example forecasts for the functional group of plant pathogenic fungi. Forecasting models were calibrated using observations (n = 2705 fungal and n = 3128 bacterial) from November 2015 until January 2018 and validated until January 2020. Darker and lighter shaded regions indicate the 50\% and 95\% credible intervals, respectively, for plot-level estimates. Black points indicate plot-level observed relative abundances. Bayesian hierarchical models were fit using environmental predictors (soil moisture, temperature, pH, percent carbon, leaf area index, and percent mycorrhizal trees) as well as a trigonometric transform of sampling month.}
+\label{fig:image1}
+\end{figure}
+\linelabel{rev-39}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/fig2_forecast_error_metrics.png}
+\caption{Estimates of forecast error metrics for 170 microbial groups predicted with three different sets of predictors, resulting in 313 converged forecasting models. Additional forecast metrics are shown in Supplementary Figure 1 for specific combinations of group and forecast predictor sets. Values in panels A-D are evaluated at 30 sites included within calibration models. A) Forecast error (normalized root mean squared error, nRMSE) across taxonomic rank, with letters indicating distinct groups returned by Tukey's post-hoc test after ANOVA returned p < .01. Values closer to zero indicate lower error, and better forecasts. B) Higher errors for fungal taxa compared to bacterial taxa (T-test; p < .001). C) Longer forecast horizon for fungal taxa compared to bacterial taxa (T-test; p = .003). D) Higher transferability to new sites for fungal taxa compared to bacterial taxa (T-test; p < .001), measured as the percent decrease in continuous ranked probability score (CRPS) at 13 sites not included in forecast calibration models, with values lower than 0 indicating worse performance at new sites.}
+\label{fig:image2}
+\end{figure}
+\linelabel{rev-fig2fix}
+
+
+\textbf{Predictability is highest for broad taxonomic groups and functional groups} \\
+Consistent with our first hypothesis, we found that the accuracy of microbial forecasts depends on phylogenetic scale. Broader taxonomic groups of fungi (e.g., phyla and class) were more predictable than finer taxonomic groups of fungi (i.e. genus and family) (Fig 2C), while bacterial taxa were more predictable at the class rank than phylum rank\linelabel{rev-10} (Fig. 2A) and statistical relationships with environmental predictors were stronger at broader taxonomic scales (Fig. S2). This result is consistent with trends in spatial soil microbiome predictability \cite{averill_soil_2021}, where broad taxonomic groups were more predictable in space than narrower groups (e.g., genera and species). It also suggests a universal trait conservatism across microorganisms that justifies the use of large taxonomic groupings (e.g. class) to study their ecology across systems. Among bacteria, broader taxonomic ranks tended to capture more variation in responses to slow-changing ecosystem properties like soil pH, soil carbon, and ectomycorrhizal tree composition (Fig. S3). This link between environmental sensitivity and taxonomic scale is consistent with phylogenetic studies of bacterial trait conservation, which have demonstrated that optimal environmental conditions for growth are often conserved at deeper branches of evolutionary history \cite{martiny_phylogenetic_2013,martiny_microbiomes_2015}, and is consistent with broad ecological patterns in trait conservatism established for plant, animal, and protist communities \cite{cavender-bares_phylogenetic_2006,cavenderbares_merging_2009,shade_macroecology_2018}. \\
+Soil bacteria were far more predictable than soil fungi overall (mean forecast model error of .68 vs 1.94, Fig. 2B), but had poor transferability to new sites (mean decrease in CRPS of 65\% vs. 8\%, Fig. 2D) and a slightly shorter forecast horizon than fungi (8 vs. 11 months, Fig. 2F). Bacteria showed consistently stronger relationships to multiple environmental predictors than fungi (Fig. S4), whereas strong predictors could not be identified for over a third of fungal groups (Fig. 3A; see Table S1 for all covariate estimates). High overall accuracy may also be attributed to strong temporal autocorrelation in bacterial communities: our models estimated that bacterial relative abundances\linelabel{rev-27a} at one monthly time point were strong predictors of relative abundances at subsequent timepoints (Fig. S5). However, this may have limited model transferability to new sites with no history of observations. Previous work has also noted difficulties in validating bacterial models to new locations in space \cite{averill_soil_2021}, but the strong spatial autocorrelation observed among bacterial relative abundances (Fig. S6) suggests that transferable bacterial forecasts may be achievable with spatially-explicit modeling approaches. \\
+Functional groups of microorganisms (such as fungal decomposers, bacterial nitrogen cyclers, and bacterial extremophiles) were more predictable than most taxonomic groups (Fig. 2A and 2B), indicating that grouping taxa by their ecological function successfully captures spatiotemporal patterns in both bacterial and fungal relative abundances in soil. Seasonal trends in functional groups reflected associations with the plant growing season: for instance, copiotrophic (high-nutrient-associated) bacteria peak in the early growing season of temperate forest sites, when plants deposit large amounts of labile carbon belowground \cite{kaiser_belowground_2010}, while oligotrophic (low-nutrient-associated) bacteria peak after the growing season ends, when plants decrease their belowground carbon allocation (Fig. S7) \cite{kaiser_belowground_2010}. Some fungal functional groups with global health significance, such as plant and animal pathogens, had poor forecast accuracy (forecast R2 of .06 and .15, respectively; see Table S1 for parameters and forecast metrics from each model). Improving forecasts for these particular groups, which have expanded their niche as the climate warms \cite{delgado-baquerizo_proportion_2020}, could benefit agricultural sectors and allow for targeted interventions.  \\
+The higher predictability of functional groups compared to taxonomic groups of microbes was attributed to different mechanisms for fungi and bacteria. Fungal functional groups were more sensitive than fungal taxa to all predictors other than soil pH, but an inverse trend was observed for bacterial groups, where bacterial taxa were more sensitive to environmental predictors than bacterial functional groups (Fig. S2). By contrast, bacterial functional groups showed stronger temporal autocorrelation (the influence of one month's relative abundance on the subsequent month) than bacterial taxa (Fig. S5). Overall, this suggests that categorizing bacteria into functional groups may allow us to successfully distinguish meaningful changes in relative abundance over time from the natural volatility of species dynamics \cite{shan_annotation-free_2022}. Fungal functional groups, on the other hand, allow us to better-detect resource preferences of fungal lineages.
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/fig3_functional_group_error.png}
+\caption{Forecast error for microbial functional groups across different group assignment strategies. Asterisks represent significance of ANOVA followed by Tukey Honest Significant Differences. Y-axis shows each group's forecast error (nRMSE) across all observed sites for seasonality-only model, with similar patterns for other predictor sets. Metrics for all groups available in Table S1.}
+\label{fig:image3}
+\end{figure}
+
+
+When assigning bacterial functional groups, the type of evidence used for grouping had a significant effect on forecast accuracy. Bacterial groups assigned via a combination of literature review and genomic pathway evidence (e.g. nitrogen cyclers and cellulolytic bacteria) were more predictable than groups assigned using only literature reviews (p < 0.001) or soil enrichment experiments (p < 0.01) (Fig. 3). This suggests that a functional grouping system refined by the wide variety of genomic information available from environmental isolates would benefit bacterial forecasts. Alternative grouping approaches have recently been proposed that forgo the taxonomic assignment step before linking microbial relative abundances to environmental fluctuations \cite{shan_annotation-free_2022}, which may further improve the consistency and interpretability of bacterial functional groups while still improving our understanding of the ecological roles of specific organisms.  \\
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/fig4_predictor_sets_accuracy.png}
+\caption{Forecast accuracy varies for each of three model predictor sets for bacteria (top row, A-C) and fungi (bottom row, D-F). Y-axis shows the mean of observed relative abundances of soil cores at each plot, and x-axis shows the median of the distribution of forecasted group relative abundances for each plot. G) Forecast horizon for seasonality-only model is further into the future for microbes that vary with plant phenology. Horizon was defined as the point where a Loess curve fit to forecast accuracy over time (Rsq of predicted and observed values) decayed to the accuracy of a null model, which was the historical mean of a site. Microbes were designated as "varying with plant phenophase" if their modeled relative abundances were significantly different across the 4 plant phenophases that were assigned via satellite data to each site and timepoint (Supplementary Figure 13).}
+\label{fig:image4}
+\end{figure}
+
+
+\textbf{Seasonal trends can substitute for environmental predictors for intra-annual forecasts} \\
+We found that seasonal trends in soil microbial abundances are widespread and can be leveraged to make accurate forecasts, consistent with our second hypothesis. Forecasts based on a dynamic linear model of seasonality (Supplementary Appendix 2) were able to predict most microbial groups as well as, or better than, forecasts based on a dynamic linear model of six environmental predictors (pH, percent carbon, temperature, moisture, ectomycorrhizal trees, and leaf area index). These seasonality-only models were able to forecast microbial relative abundances to new time points with 93\% accuracy for bacteria and 49\% accuracy for fungi, whereas environmental predictor models reduced accuracy of fungal forecasts to 30\% (Fig. 4A-F). Seasonality was a powerful predictor of microbial relative abundances because of its connection to plant phenology: we found that over 90\% of microbes varied with plant phenophase and those microbes could be forecasted further into the future than other groups (Fig. 4G). This finding may be especially important for forecasts of rare soil microbes, which are generally the most difficult to predict (Supplementary Figure 1A), yet can have particularly strong seasonal trends (Supplementary Figure 8). About 40\% of bacterial and fungal groups had a significant effect of seasonality predictors, regardless of whether environmental predictors were added to the model (Fig. 4). In fact, when determining the overall predictability of any microbial group, the amplitude of seasonal cycles was more important than most other parameters (Fig. 5B), suggesting that quantifying baseline seasonal fluctuations in the soil microbiome is crucial for making accurate predictions of their future relative abundances. \\
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/fig5_predictor_significance.png}
+\caption{A) Proportion of microbial groups with significant predictor parameters for seasonality-only model (left column) and environmental predictors and seasonality model (right column). B) Effect of parameter absolute values on forecast error (normalized root mean squared error, nRMSE). Negative values, such as seasonal amplitude, are associated with reduced error, whereas positive values, such as temperature effect, are associated with higher error.}
+\label{fig:image5}
+\end{figure}
+
+
+\textbf{Mean relative abundance, not latitude, explains predictability} \\
+We did not find strong support for the hypothesis that microbes are more predictable at higher-latitude sites, where seasonal variation in environment is expected to be stronger. Among bacterial groups, we found a weak negative correlation between site latitude and the accuracy of all predictions at the site, with lower accuracy at sites further from the equator (Fig S9). The negative relationship between latitude and absolute error is likely, in part, an inherent statistical property: increased variability in environmental conditions should lead to variability in microbial abundances, and values that fluctuate over time are harder to predict accurately than groups whose abundances are relatively constant. For a subset of microbial groups, there are relationships between latitude and predictability, but the direction of these relationships were not consistent across groups, These mixed relationships between predictability and latitude for specific groups may also be linked to other macro-ecological patterns observed for the soil microbiome, such as the complex relationships between latitude, resource availability, and microbial diversity \cite{xiao_latitudinal_2021,andam_latitudinal_2016}, \cite{bickel_hierarchy_2019,bickel_soil_2020}. Instead, the strongest, consistent predictor of future microbial relative abundances is mean relative abundance: highly abundant organisms are better predicted for both fungi and bacteria (Figure S8C), likely due to higher taxonomic ranks being more abundant than lower taxonomic ranks.  \\
+  \\
+\textbf{Improving forecast transferability}   \\
+The ultimate achievement of a forecast is to predict into new spaces and time points with appropriate confidence \cite{bodner_bridging_2021}. We initially found that predictions of microbial relative abundances at new sites were underconfident (i.e. extra-large confidence intervals) due to unknown "site" effects. We found that if we estimated “site” effects for new sites using spatially-varying climate and soil nutrient variables, forecast accuracy significantly improved (p < .0001) and corrected for spatial autocorrelation in the site effects (Fig S11), suggesting that accurate forecasts can be produced for any site across the continent using commonly-measured variables. The most important variables for estimating site effects were cation levels\linelabel{rev-13} (calcium, sodium and potassium), as well as climate-related factors (mean annual temperature (MAT) and mean annual precipitation (MAP)). Some predictors varied in importance between fungal and bacterial forecasts, such as soil cation exchange, phosphate, silicon, and aluminum, which were more important for fungi, and MAP, which was more important for bacteria (Fig S12A). These differences are consistent with previous work suggesting that fungal spatial patterns are more influenced by local chemical conditions than bacteria \cite{tecon_biophysical_2017}, which may be particularly driven by historical precipitation regimes \cite{bissett_life_2010,Averill2016}.
+
+\section{CONCLUSIONS}
+
+Despite many unknowns in soil microbial ecology, we find that forecasting the soil microbiome in time is now possible\linelabel{rev-29} using commonly-measured environmental data. We leveraged the first standardized, spatially- and temporally-extensive soil microbiome dataset to show that accurate forecasts can be created for most bacteria, broad taxonomic ranks, and functional groups. We also found that seasonal trends structure many microbial groups and present opportunities (as well as difficulties) for deepening our knowledge of soil ecology. We also highlight groups that defied accurate predictions, such as fungal pathogens (despite their widespread use in fungal ecology studies \cite{zanne_fungal_2020,polme_fungaltraits_2020,hoeksema_ectomycorrhizal_2020}) and rare, seasonally-varying bacterial taxa. Currently, microbial forecasts have a drop-off in accuracy (i.e. a "forecast horizon") within 12 months after each plot's last observation. These forecasts may benefit from greater sampling coverage from poorly-characterized seasons (e.g. winter months) and consideration of interactions between microbes, which can cause rapid changes in abundances through niche partitioning or competition \cite{kramer_resource_2016,maynard_species_2018}.  Our analysis represents a major step forward in transitioning soil microbial ecology from a descriptive to a predictive science, and lays the groundwork for more sophisticated mechanistic models of the Earth microbiome.
+
+% === Reviewer response label TODOs ===
+% Add \linelabel{} at each location when the corresponding text is written.
+% rev-1: Add Discussion text clarifying predictability = taxa tracking environmental gradients
+% rev-2-start, rev-2-end: Add text about compositional data rationale (range)
+% rev-3: Add text: absolute abundances cannot be recovered from amplicon data
+% rev-5: Add text improving intended meaning of key results
+% rev-6: Add text with rationale for methodological choices in Methods
+% rev-11a, rev-11b: Add text reporting abundance-prediction test (bacteria R2=.22, fungi n=4)
+% rev-15: Add text: unclassified reads distributed broadly across phylogeny
+% rev-16 (=rev-41): Add Discussion text: functional guild forecast skill constrained by ecological flexibility
+% rev-17: Add text noting precipitation seasonality not explicitly modeled
+% rev-19: Add Methods/caption text about non-mutually exclusive FUNGuild assignments
+% rev-20a: Add Figure 4 caption text about posterior median vs plot means
+% rev-21: Add Supplementary Methods note about median/mean distinction
+% rev-22a: Add Figure 5 caption text that it aggregates bacteria and fungi
+% rev-22b: Add Supplementary Methods note about the aggregation
+% rev-27: Verify "relative abundance" used consistently throughout (systematic check)
+% rev-29: Add text making motivations for forecasting relative abundance explicit
+% rev-30: Add text acknowledging relative abundance forecasts cannot capture absolute biomass (qPCR/PLFA)
+% rev-43: Add text about binary covariate for primer change
+% =======================================
+ 
+
+\section{SUMMARY METHODS}
+
+Overview \\
+To test the predictability of the soil microbiome over time and space, we leveraged data from the NSF-funded National Ecological Observatory Network (NEON), which collects time series information on soil bacterial and fungal communities and environmental conditions from across multiple ecosystem types within the United States. Forecasting models were built using relative abundances\linelabel{rev-44} of 236 cosmopolitan taxa, as well as 40 functional groups representing microbes with ecological significance \cite{averill_soil_2021}. The dataset was split into a “calibration” period for fitting each model (Nov 2015 – Jan 2018, n = 2705 and 3128 samples, respectively, for fungi and bacteria), and a “forecast” period for testing each model’s predictive accuracy (Feb 2018 – Jan 2020, n = 1617 and 1199 samples, respectively, for fungi and bacteria). Environmental data (soil conditions, climate, and plant community composition and growth) were used as predictor variables in models for each taxonomic or functional group (details in Appendix S1). After fitting calibration models, we conducted hindcast analyses, which are forecasts that project values from an early date to a later one, but can be validated with empirical data from the later dates, representing a withheld out-of-sample test. Forecasts were then evaluated for accuracy by then comparing them to plot-level observations of microbial relative abundances.\linelabel{rev-27b} After evaluating forecast accuracy, held-out observations were iteratively assimilated into the model to increase the confidence of parameter estimates for forecasts that may be used in future studies.
+
+All models used state-space dynamic linear modeling, in which values at one plot and month are modeled using a combination of linear predictors, as well as the previous month' relatives abundance (representing temporal memory; this is the "dynamic" component of the linear model). Up to  three soil cores per plot were considered to be multiple observations of each sampling plot and a random effect was estimated for each sampling site (see "Statistical models"). Following our previous development of models to predict microbial relative abundances in space \cite{averill_soil_2021}\linelabel{rev-45}\linelabel{rev-33}, environmental predictors of soil microbial relative abundances included soil temperature, soil moisture (percent water content), soil pH, soil percent carbon (pC), leaf area index (LAI), and percent basal area of ectomycorrhizal-associated (EM) trees. These variables were measured at various spatial scales and were therefore matched to soil microbial community measurements at the site level (for soil temperature, soil moisture, and LAI) or plot level (for soil pC, pH, and \% EM trees). Detailed methods of covariate data collection, access, and preparation are in Supplementary Text, Appendix S1. Briefly, temporal predictors were restricted to those with near-real time measurements, which currently includes soil temperature, soil moisture, and remotely-sensed leaf area index (LAI). Soil temperature and soil moisture are measured continuously by NEON using instrumented arrays of 5 sensors at various depths; measurements were aggregated by month and site from the two shallowest sensors (<10 cm deep). LAI was reported at 8-day intervals for 500m pixels by NASA MODIS (MOD15A2H Version 6; \cite{myneni_r_knyazikhin_y_park_mod15a2h_2015}) and aggregated by month and site. Inter-annual change in plant composition was represented by ectomycorrhizal tree area (measured once per year at most plots). For spatial predictors, we chose a subset of soil characteristics that are measured at all NEON plots and are temporally stable: pH and percent organic carbon (pC), which take millenia to develop \cite{turner_soil_2015,Walker2010}. Seasonality was estimated using cyclical feature encoding, in which coefficients were estimated for the sine- and cosine-components of sampling month. To identify both strong seasonal trends as well as the unexplained portion of microbial seasonality, three sets of predictors were used to model each group: only seasonality (without environmental predictors), only environmental predictors, or both seasonality and environmental predictors. These three predictor sets were used to model 276 groups, which resulted in 313 converged models of 170 groups for the hindcast analysis (n = 124 seasonality-only models; n = 93 environmental predictor-only models; n = 96 environmental and seasonality models).
+
+\subsection{Study Data Set Collection}
+
+The NEON dataset includes 47 terrestrial field sites spanning 20 ecoclimatic domains across the US and its territories, 43 of which were included in the analysis (Table S2) after filtering by data availability. Plots were included if they were sampled for at least three timepoints within the calibration time period, resulting in 30 calibration sites; 13 sites were completely excluded by this metric, which were then used for out-of-sample (new site) predictions.
+
+\subsubsection{Soil microbial sampling}
+
+Microbial data were collected 2-4 times a year by NEON, with the goal of capturing transitions in microbial activity before and after peak greenness \cite{stanish_neondoc000908_2018}. Due to differences in DNA sequencing protocols, “provisional” data (preceding November 2015) were excluded. The NEON sampling design is hierarchical, with 3 separate soil cores taken from ten 40m x 40m plots at each of 47 sites (summarized in Table S2). Soil cores were taken up to 30cm deep and split into mineral and organic horizons when possible, and sub-samples of these soil cores were stored at -80º C until further microbial and chemical analyses (full details in \cite{stanish_tos_2018}). We retained samples from each site’s most frequently-sampled horizon type\linelabel{rev-48} (organic or mineral horizon).
+
+\subsubsection{DNA extraction, amplification, and sequencing}
+
+DNA extraction protocols, primers, and sequencing protocols are described in NEON TOS Protocol and Procedure: Soil Biogeochemical and Microbial Sampling (NEON.DOC.014048vL). Briefly, soil fungi and bacteria were characterized with amplicon metabarcoding, targeting the ITS1 region (fungi) and the 16S V3-V4 region\linelabel{rev-50} (bacteria) of rDNA. DNA was extracted from soil using the PowerSoil HTP Kit (NEON DNA Extraction Standard Operating Procedure v.1). Amplicons were sequenced using an Illumina Miseq and v2 2x250 base-pair paired end chemistry at Argonne National Laboratory and Illumina MiSeq v3 2x300 base-pair paired end chemistry at Battelle Applied Genomics (NEON 16S and ITS Sequencing Standard Operating Procedure, v.1). Raw sequences can be accessed via the NEON data portal (data.neonscience.org) or MG-RAST (\% TODO: verify citation key for Meyer et al. 2008). 
+
+\subsubsection{Bioinformatics}
+
+\subsection{Data Processing}
+
+Exact Sequence Variants (ESVs) in both bacterial and fungal datasets were identified using the DADA2\linelabel{rev-dada2} bioinformatics pipeline \cite{callahan_dada2:_2016}, with quality filtering steps, percent read retention, and pipeline parameters described in \cite{qin_dna_2021}. Paired-end reads were generated for 16S and ITS amplicons, but ITS reverse reads were excluded due to poor data quality \cite{qin_dna_2021}. After DADA2 processing and singleton removal, bacterial ESV tables contained 87 million reads across 7943 samples and fungal ESV tables contained 68578 ESVs across 6268 samples. Bacterial and fungal ESVs were then retained if present in at least 3 soil samples. Samples were discarded if read depth was lower than 5000 reads (bacteria) or 3000 reads (fungi). Bacterial and fungal samples had a median of 9416 and 13175 sequences after DADA2 processing, respectively, and 13444 and 11348 sequences after removing low-prevalence ESVs and low-quality samples.
+
+Taxonomy was assigned to ESVs using the rAnomaly pipeline to choose the most confident assignment from multiple databases \cite{theil_ranomaly_2021}. Fungal sequences were identified using both the UNITE database \cite{nilsson_unite_2019} and the UTOPIA database \cite{theil_utopia_2019}. Bacterial sequences were identified using the SILVA v132 database \cite{quast_silva_2013} and the GTDB v95 database \cite{parks_gtdb_2021}. This resulted in 33\% of bacterial ESVs and 27\% of fungal ESVs classified to the genus rank for subsequent assignment of functional groups. 
+
+\subsubsection{Taxonomic group selection}
+
+Only highly abundant taxa at each rank (phylum, class, order, family, genera) were modeled, due to the dominance of experimental measurement error for low-relative-abundance taxa, which has been shown to obscure true temporal fluctuations \cite{jia_sequencing_2022}. For each bacterial or fungal rank, we selected the 30 most abundant taxa (based on the sum of relative abundance across samples). For some ranks (fungal genera and phyla), this resulted in mostly low-prevalence taxa, which were excluded if present in fewer than 20\% of all samples.\linelabel{rev-14}
+
+\subsubsection{Functional group assignment}
+
+Functional groups representing groups of microbes that represent specific processes or habitat constraints \cite{scoma_functional_2021} were assigned to ESVs classified at the genus rank, with the exception of confident higher-level classifications (as in \cite{averill_soil_2021}). Functional groups for fungal ESVs with taxonomic assignments were assigned using FUNGuild \cite{nguyen_funguild_2016} and the FunFun database \cite{zanne_fungal_2020}, and resulted in the following 40 groups of particular interest for the soil microbiome: endophytes, litter saprotrophs, lichenized fungi, animal pathogens, plant pathogens, saprotrophs, wood saprotrophs, and ectomycorrhizae. For bacterial ESVs with taxonomic assignment, enrichment experiments \cite{naylor_deconstructing_2020} were used to designate stress-tolerant bacteria (salt, herbicide, osmotic, heat, light, acidic), simple-sugar enriched bacteria (acetate, glycerol, pyruvate, glucose, galactose, xylose), complex-sugar enriched bacteria (sucrose, cellobiose, cellulose, chitin). A combination of literature review \cite{Ho2017} and genomic pathway presence at the genus level \cite{Berlemont2013,Albright2018}  was used to assign decomposer bacteria (chitin-degrading, cellulose-degrading, lignin-degrading, and chitin-degrading), life-history categories (copiotroph, oligotroph), and nitrogen-cycling (assimilatory nitrite reducers, dissimilatory nitrite reducers, assimilatory nitrate reducers, nitrogen fixers, dissimilatory nitrate reducers, nitrifiers, and denitrifiers). At least one functional group was assigned to 59.4\% of bacterial ESVs and 23.3\% of fungal ESVs. Code for generating bacterial functional groups is hosted on Github at \href{https://github.com/zoey-rw/soil_bacteria_functional_groups/tree/main}{https://github.com/zoey-rw/soil\_bacteria\_functional\_groups}\textbf{.} 
+
+\subsubsection{Phylogenetic analysis}
+
+To determine why predictability and environmental effect sizes vary by taxonomic ranks, we carried out a phylogenetic analysis for bacteria. This was not possible for fungi due to known limitations in detecting phylogenetic relationships based on ITS sequences alone \cite{lucking_unambiguous_2020}. From each bacterial taxon with model estimates, 5 ESVs were sampled without replacement and assigned the value of model error or predictor coefficient values for the taxon. From the resulting 460 ESVs, a phylogenetic tree was created de-novo using the workflow outlined in \cite{callahan_bioconductor_2016}, generating a maximum-likelihood tree using the GTR+G+I (Generalized time-reversible with Gamma rate variation) algorithm. The tree (along with the forecasting model coefficients assigned to each ESV tip) was used as input for the aov function of the Phylocomr R package \cite{ooms_phylocomr_2023}. After dropping the reported contributionIndex associated with tips, the values associated with all nodes at a taxonomic rank were used to calculate the mean contribution of a phylogenetic rank to the variation in model coefficients and predictability for bacteria \cite{vivelo_evolutionary_2019}).
+
+\subsection{Statistical models }
+
+Monthly relative abundances\linelabel{rev-27c} of 276 soil microbial groups (resulting in converged models for 170 groups) were modeled using Beta regression, which bounds observations between zero and one \cite{ferrari_beta_2004}. 
+
+Observed species relative abundances, from individual soil samples \textit{y}, were treated as samples of an underlying plot-level latent mean $\mu$ and from time point \textit{t}, with $\tau$core capturing variation around the plot mean and a truncated Normal distribution to prevent values outside the (0,1) interval.
+
+
+\begin{equation}
+y \sim \text{T}\!\left(\mathcal{N}(\mu_{p,t},\, \tau_\text{core}),\, 0,\, 1\right)
+\label{eq:obs_model}
+\end{equation}
+ \\
+Plot-level means were modeled as a linear combination of predictors and coefficients,  \\
+
+\begin{equation}
+\text{logit}(\mu_{p,t}) = \rho \cdot Ex_{p,t-1} + \boldsymbol{\theta} \cdot \boldsymbol{\chi} + \alpha_\text{site}
+\label{eq:process_model}
+\end{equation}
+ \\
+where $\mu$ is the latent state, $\chi$ is a vector of predictor values, $\theta$ is a vector of coefficients, and $\rho$ is the coefficient associated with the expected value of the previous time point, \textit{Exp,t-1}. $\rho$ therefore captures temporal memory within the plot, and can be negative (representing oscillation) or positive (representing continuity over time). $\alpha$site is a random intercept estimated for the site \textit{site} that the plot is located at, Normally distributed with across-site variation estimated as $\tau$site:
+\begin{equation}
+\alpha_\text{site} \sim \text{Normal}(0,\, \tau_\text{site})
+\label{eq:site_effect}
+\end{equation}
+ \\
+The latent state $\mu$ is mapped to the Beta distribution with $\alpha$ and $\beta$ as shape parameters:
+\begin{align}
+\alpha &= \mu^2 (1 - \mu) / \tau^2_\text{process} - \mu \label{eq:beta_alpha} \\
+\beta &= \mu (1 - \mu)^2 / (\tau^2_\text{process} + \mu - 1) \label{eq:beta_beta} \\
+Obs_{p,t} &\sim \text{Normal}(Ex_{p,t-1},\, \sigma) \label{eq:process_error}
+\end{align}
+ \\
+where $\tau$process  captures unexplained error associated with the ecological processes.
+
+\subsubsection{Seasonality regression analysis}
+
+Seasonal cycles were estimated using cyclical feature encoding in linear regression models, via trigonometric transformations of the sampling month \cite{stolwijk_studying_1999}. This method ensures that the end of a year is treated as continuous with the following year (i.e. December is followed by January). A "seasonality-only" model was fit without environmental predictors to establish the amplitude of baseline seasonal trends. Linear models were also fit that included environmental predictors and seasonality, or only environmental predictors without seasonality (resulting in three models per microbial group). For each model, the seasonal cycle was estimated using a sine and cosine model transformation as follows: \\
+
+\begin{align}
+\chi_\text{sine} &= \sin(2 \pi \cdot \text{month}_{1,12} / 12) \label{eq:sin_encoding} \\
+\chi_\text{cosine} &= \cos(2 \pi \cdot \text{month}_{1,12} / 12) \label{eq:cos_encoding}
+\end{align}
+
+
+After model-fitting, the estimated regression coefficients (Eq 2) associated with these terms were used to calculate seasonal amplitude: \\
+
+\begin{equation}
+\text{amplitude} = \sqrt{\chi_\text{sine}^2 + \chi_\text{cosine}^2}
+\label{eq:amplitude}
+\end{equation}
+
+
+\subsubsection{Phenophase analysis}
+
+To determine the relationship between seasonal fluctuations in microbial relative abundances and plant growing seasons, we identified the plant phenophase in which each microbial group reached peak relative abundance at each site, defined as dormancy, greenup, peak greenness, and senescence. For each microbial group, the median of estimated relative abundances per plot were averaged to a single value at each site per month per year for years 2016-2018. For the months with the highest relative abundances, the phenophase at that time and site was identified using the MODIS Land Cover Dynamics MCD12Q2 product \cite{gray_user_nodate}. This product uses remote-sensing data to estimate various transition points related to plant greenness at 500m resolution, and we limited our analysis to the periods in between greenup, peak greenness, green down, and dormancy (Fig S13), as defined in the MCD12Q2 User Guide \cite{gray_user_nodate}. The phenophase most frequently associated with a group’s relative abundance peaks was labeled the “peak” phenophase for that group.
+
+\subsubsection{Model fitting and evaluation}
+
+Models were fit with a Bayesian framework using Markov Chain Monte Carlo (MCMC) in the NIMBLE software \cite{de_valpine_programming_2017}. NIMBLE code for all models is available in Appendix S2. Uninformative priors were used when fitting the calibration model, constrained by permissible bounds of values (i.e. no negative abundances).
+
+A predictor was considered significant if the 95\% Credible Interval (CI) of the coefficient’s posterior distribution did not overlap with zero. All predictor measurements were standardized and centered (mean = 0, variance = 1) before inclusion in models \cite{enders_centering_2007}. To create probabilistic forecasts, parameter distributions were jointly sampled (N=5000). Each MCMC chain was run with an initial "burn-in" of 100000 samples, and sampling continued for at least 150000 additional samples, until either 5000000 iterations were reached or the minimum value of each parameter's effective sample size was 500 (calculated by the "es" function in the coda R package) \cite{plummer_coda_2006}.
+
+Models were evaluated against observed relative abundances of microbial groups using four metrics: continuous ranked probability score (CRPS) using the scoringRules package in R \cite{jordan_evaluating_2019}, the root mean squared error normalized by mean observation (nRMSE), the R-squared of observations and predictions, as well as the R-squared relative to the 1:1 line, which can highlight prediction bias \cite{averill_soil_2021}. Model development and evaluation was conducted using the R statistical environment \cite{r_development_core_team_r_2008}.
+
+\subsubsection{Forecasting to observed and new sites}
+
+Temporal forecasts at plots within observed sites resulted in probabilistic distributions (i.e. a range of values was predicted), and the median and quantile predicted values were used for evaluation. To forecast at an observed site, the last observed value was used as the initial condition. New values for environmental predictors were combined with the samples from the posterior distributions of estimated model parameters.
+
+Spatio-temporal forecasts at plots within “new sites” (e.g. not in the calibration dataset) used two methods. To represent a site without prior information, a site effect was randomly sampled from the estimated normal distribution of site effects, with a mean of 0 and a standard deviation estimated separately for each group. The second method involved predicting new site effects using calibrated site effects and soil and climate variables reported by NEON \cite{noauthor_national_2020}) (nitrite, total phosphorus, total nitrogen, organic carbon, nitrate, phosphate, aluminum, iron, aluminum, cation exchange, magnesium, sodium, manganese, potassium, calcium, sulfate, sulfur, silicon, mean annual temperature, mean annual precipitation, latitude), to determine the most valuable measurements needed to accurately predict at new sites. For each model, the median of the fitted site effects were modeled by partial least-squares regression (PLSR) using the "plsr" function from the pls R package \cite{liland_pls_2023}, with prediction uncertainty for new sites estimated using the standard errors reported from leave-one-out cross-validation. Variable importance was estimated using the "vip" function from the spectratrait R package \cite{lamour_spectratrait_2023}.
+
+\section{ACKNOWLEDGEMENTS}
+
+The National Ecological Observatory Network is a program sponsored by the National Science Foundation and operated under cooperative agreement by Battelle Memorial Institute. We thank Lee Stanish for providing provisional NEON microbial data.
+
+NSF Macrosystems Biology \#1638577 (ZW, CA, MCD and JMB) \\
+Microbiome Initiative 2020 Fellowship Program (Microbiome Initiative at the Boston University Biological Design Center) (ZRW) \\
+National Research Foundation Graduate Research Fellowship \#2020285775 (ZRW)
+
+\textbf{Author Contributions:} \\
+Conceptualization: ZRW, CA, MD, JMB \\
+Methodology:  ZRW, CA, MD, JMB \\
+Investigation:  ZRW, MD, JMB \\
+Visualization:  ZRW \\
+Funding acquisition:  ZRW, CA, MD, JMB \\
+Project administration: MD, JMB \\
+Supervision: MD, JMB \\
+Writing – original draft: ZRW \\
+Writing – review \& editing:  ZRW, CA, MD, JMB
+
+\textbf{Competing interests:} Authors declare that they have no competing interests.
+
+\textbf{Data and materials availability:} All data are publicly accessible from their respective sources. Processed data used for model fitting and evaluation are available at the following Github repository: \url{https://github.com/zoey-rw/microbialForecasts} (archived version and Zenodo ID will generated at time of publication)
+
+\bibliography{zotero_references}
+
+
+\clearpage
+\setcounter{figure}{0}
+\renewcommand{\thefigure}{S\arabic{figure}}
+\setcounter{table}{0}
+\renewcommand{\thetable}{S\arabic{table}}
+\setcounter{equation}{0}
+\renewcommand{\theequation}{S\arabic{equation}}
+
+\section*{Supplementary Materials}
+
+
+\textbf{Supplementary Materials}
+
+Figs. S1 to S20 \\
+Tables S1 to S3 \\
+Appendices S1 to S3
+
+
+\subsubsection{Supplementary Materials for}
+
+
+\subsubsection{\textbf{Forecasting the soil microbiome at a continental scale}}
+
+
+\subsubsection{Zoey Werbin, Colin Averill, Jennifer Bhatnagar, Michael Dietze}
+
+
+\subsubsection{Corresponding author: zrwerbin@bu.edu}
+
+
+\subsubsection{\textbf{The PDF file includes:}}
+
+\subsubsection{Figs. S1 to S20}
+
+\subsubsection{Tables S1 to S2}
+
+\subsubsection{Appendices S1 to S3}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS1_forecast_metrics_rank.png}
+\caption{Forecast metrics across taxonomic ranks and functional groups of soil bacteria (left column) and fungi (right column), for three different sets of model predictors.}
+\label{fig:image12}
+\end{figure}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS2_parameter_estimates_rank.png}
+\caption{Absolute value of bacterial (top row) and fungal (bottom row) model estimates for taxonomic groups of soil microbes. Letters indicate distinct groups returned by Tukey's post-hoc test after ANOVA returned p < .05. For visualization, significance to each parameter was assigned if zero did not fall within the upper and lower 95\% credible interval for the parameter.}
+\label{fig:image13}
+\end{figure}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS3_phylogenetic_contribution.png}
+\caption{Mean phylogenetic contribution index of taxonomic ranks to variation in one of 6 environmental predictors, or overall predictability (RSQ) estimated via the phylocomr package \cite{ooms_phylocomr_2023}.}
+\label{fig:image14}
+\end{figure}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS4_parameter_violin.png}
+\caption{Violin plots showing parameter estimates for functional groups (top row) and taxonomic groups (bottom row) of soil microbes. T-tests show differences between fungi and bacteria for seasonal amplitude (estimated from seasonality-only model), seasonal amplitude (estimated from environmental predictor and seasonality model), and absolute sizes of environmental predictors, with asterisks indicating tests significant after false discovery rate p-value correction \cite{benjamini_controlling_1995}.}
+\label{fig:image15}
+\end{figure}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS5_rho_temporal_memory.png}
+\caption{Mean of seasonality-only model estimates for $\rho$ parameter, representing temporal memory (Equation 2). $\rho$ is multiplied by abundance at previous timepoint. Significance was assigned if zero did not fall within the upper and lower 95\% credible interval for the parameter.}
+\label{fig:image16}
+\end{figure}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS6_moran_vs_rsq.png}
+\caption{Scatterplot of positive relationship between forecast prediction RSQ and spatial autocorrelation, measured using Moran's I, with higher values indicating stronger clustering of abundances over space.}
+\label{fig:image17}
+\end{figure}
+
+
+\textbf{Figure S7.} Seasonal trends in abundances of functional groups that are expected to be associated with plant growing seasons. Lines indicate loess curves over the modeled abundances for two deciduous New England NEON sites (Bartlett Forest and Harvard Forest) with similar phenophase transition points (dormancy, greenup, peak greenness, and senescence). Copiotrophic bacteria are thought to thrive in high nutrient environments, such as soils during the growing season when plants are exchanging simple sugars with microbes, while oligotrophic bacteria thrive in lower-nutrient environments \cite{Ho2017}. Plant pathogens are fungi whose dominant trophic guild is plant pathogenic, and saprotrophs are free-living fungi that consume decaying organic matter. \\
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS8_abundance_error_amplitude.png}
+\caption{Scatterplot showing relationships between mean group abundance, forecast error (normalized root mean squared error, nRMSE), and seasonal amplitude, estimated from seasonality-only model.}
+\label{fig:image18}
+\end{figure}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS9_latitude_vs_accuracy.png}
+\caption{. Scatterplot of relationship between site latitude and site forecast accuracy (R-squared of predicted and observed values) for fungi (teal) and bacteria (orange) for seasonality-only model, with similar patterns for other predictor sets.}
+\label{fig:image19}
+\end{figure}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS10_error_by_latitude.png}
+\caption{Forecast error (normalized root mean squared error, nRMSE) by latitude of observed sites, for groups with significant latitude-error relationships. Forecasts are from linear models with environmental predictors and seasonality.}
+\label{fig:image20}
+\end{figure}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS11_variogram_pvalues.png}
+\caption{. P-values of variograms created for the random site effects of every statistical model. While the site effects estimated by the models tend to have a spatial signal (median p-value below .05), but this spatial signal is rarely significant in the residuals of site effects modeled by partial least-squares regression (PLSR). P-values of PLSR residuals were not significantly different from a uniform distribution, except for the models without seasonality predictors, which retained a weak spatial signal. Variograms generated by the "variogram" function in the gstat R package \cite{graler_spatio-temporal_2016}, and significance estimated using "envelope" and "envsig" in the variosig R package \cite{wang_monte_2018}.}
+\label{fig:image21}
+\end{figure}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS12_plsr_importance.png}
+\caption{Importance of site characteristics for explaining the site random effects of each soil fungal (orange) or bacterial (teal) group over time. Partial least squares regression models were fit to 30 site effect estimates using the plsr function from the pls package, then importance was calculated from using the "vip" function from the spectratrait R package \cite{lamour_spectratrait_2023}. Asterisks indicate significant T-tests at alpha=.05, comparing importance values for all fungal and bacterial groups.}
+\label{fig:image22}
+\end{figure}
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS13_phenophase_diagram.png}
+\caption{Simplified diagram of plant community phenophases assigned to each site and month by the MODIS Land Cover Dynamics data product \cite{gray_user_nodate}. Among all 5362 site-month combinations within model calibration period, dormancy was assigned 2235 times, greenup 1115 times, peak greenness 492 times, and senescence 1520 times.}
+\label{fig:image23}
+\end{figure}
+
+\textbf{Table S1. Parameter and performance summary.} Estimated parameters and performance for 673 models fit to the calibration time period of 2015-11-01 to 2018-01-01. Significant linear model predictors are in bold text. NA values represent covariates not estimated by a given model, e.g. "seasonality" models included coefficients for the sine and cosine of the sampling month, but no other environmental predictors. Sigma is the process error associated with the plot-level linear model, and core\_sd is the standard deviation of samples taken from a single plot and timepoint. Rho is the temporal stability or autocorrelation between timepoints. (CSV)
+
+\textbf{Table S2. Summary of sites included in forecasting models.}  NEON site descriptions and number of high-quality samples per site used in calibration and validation datasets for bacteria and fungi. Sample quality filtering is described in Methods. (CSV)
+
+\subsubsection{Supplementary text}
+
+\subsubsection{Appendix S1: Extended data preparation methods.}
+
+Scripts for downloading and preparing these datasets are located at \url{https://github.com/zoey-rw/microbialForecasts}. Soil moisture and soil temperature data are released with approx. 1 month lag time by NEON, while microbial data takes multiple months to process before release. Therefore, “forecasts” of microbial abundance can be made before microbial data are released, but these forecasts do not continue into the future. While soil moisture and temperature are components of many weather and agricultural forecasting systems (i.e. Syngenta’s “Greencast”, National Weather Service Arkansas Red Basin forecasts), there are no publicly available forecast products that span the United States. If forecasts for model covariates become available, they will allow our microbial forecast system to extend into the future.
+
+Soil temperature \\
+Soil temperature is measured continuously at all NEON sites via an array of five soil sensors at nine depths, and released as 30-minute averages (NEON DP1.00041.001). Soil temperatures represent point measurements, so the two sensors shallower than 30 cm were retained, to match the depths of microbial soil samples. 
+
+As described in the above section, sensor depth was chosen through comparison between sensor temperature data and temperature measurements associated with the soil sub-samples used for microbial analyses (NEON DP1.10047.001). The resulting measurements from samples and soil sensors were compared via linear regression R2 values, and the shallowest sensor layer (0 cm deep) had the strongest relationship (R2 = 0.63) and was used for soil temperature inputs. 
+
+Temperature data were gap-filled using daily air temperature data from DAYMET \cite{thornton_daymet_2020}, which was strongly correlated with NEON soil sensor data (Figure S14).
+
+\textbf{Figure S14. A)} Gap-filled soil temperature time-series for NEON sites. \textbf{B)} DAYMET air temperature was modeled as a linear function of NEON soil temperature sensor data, then the regression was used to predict soil temperature at sites or monthly with missing soil temperature values. Uncertainty from sensor uncertainty and monthly averaging was propagated into monthly predictions using an errors-in-variables (EIV) approach in the NIMBLE statistical software.
+
+Soil water content (i.e. soil moisture) \\
+Volumetric soil water content (SWC) is measured continuously at all NEON sites via an array of five soil sensors at eight depths, and released as 30-minute averages (NEON DP1.00094.001). SWC sensors vertically integrate moisture from 5 cm above and below sensor midpoint, so sensors shallower than 25 cm were retained, to match the depths of microbial soil samples.
+
+To decide which sensor depths were most relevant for microbial communities, we compared sensor data to gravimetric SWC measurements, which were associated with the soil sub-samples used for microbial analyses (NEON DP1.10047.001). To match the units of volumetric SWC sensor data, gravimetric SWC, $\theta_g$, was converted to volumetric SWC, $\theta_v$,  by multiplying SWC by soil bulk density, \textit{BD}:
+
+$\theta_v$ = $\theta_g$ *  BD 
+
+Soil bulk density was derived from each site from an initial characterization product (NEON DP1.10047.001); data were subsetted to soil horizons no deeper than 35 cm and mean bulk density was calculated for the site. The resulting moisture measurements from samples and soil sensors were compared via linear regression R2 values, and the second shallowest sensor layer (approx. 6 cm deep at most sites) had the strongest relationship and was used for soil moisture inputs. 
+
+Moisture data were gap-filled using daily soil moisture values from soil sensor networks when available, and from satellite-derived values otherwise. Gap-filling used data from Soil Climate Analysis Network (SCAN), NASA’s Soil Moisture Active Passive (SMAP) satellite, and ESA’s Soil Moisture and Ocean Salinity (SMOS) satellite, in that order \cite{schaefer_usda_2007,reichle_r_g_de_lannoy_r_d_koster_w_t_crow_j_s_kimball_smap_2017,font_smos_2012}. Correlations with NEON soil sensor data varied by source (Figure S15).
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS15_soil_moisture_gapfill.png}
+\caption{\textbf{A)} Gap-filled soil moisture time-series for NEON sites. \textbf{B-D)} Soil moisture from each source was modeled as a linear function of NEON soil moisture sensor data, then the regression was used to predict soil moisture at sites or monthly with missing soil moisture values. Uncertainty from sensor uncertainty and monthly averaging was propagated into monthly predictions using an errors-in-variables (EIV) approach in the NIMBLE statistical software.}
+\label{fig:image24}
+\end{figure}
+
+
+Soil moisture/temperature averaging and uncertainty propagation: \\
+NEON calculates expanded uncertainty estimates, which incorporate individual measurement uncertainty into time-averaged mean uncertainties for 30-minute means (described in \cite{ayres_neon_nodate-1,ayres_neon_nodate}). Because we averaged data by the month, we scaled up the uncertainties associated with each measurement (reported by NEON as "Expanded Uncertainty" and "Standard Error") by sampling random biases and errors from a month's 30-minute measurements to add to each month's mean values, resulting in a site-level time-series with varying amounts of uncertainty depending on data source and reported measurement uncertainty.
+
+Soil pH and percent carbon \\
+Many soil cores used for microbial samples had associated measurements of soil pH and percent carbon reported in DP1.10086.001 \cite{noauthor_national_2020}. For forecasts, however, we do not expect to know where in a plot the soil cores will come from; therefore, plot-level mean values were constructed using all previous soil pH and percent carbon measurements, and these plot-level values were used for prediction, with site-level values used to gap-fill any missing plot-level values. One site with no soil chemistry measurements from any year was excluded from models (ABBY).
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS16_ph_carbon_variation.png}
+\caption{Variation across sampling plots and timepoints, within 3 example NEON sites, for observed measurements of A) soil pH and B) soil percent carbon. Points indicate individual measurements that were aggregated at the plot level.}
+\label{fig:image25}
+\end{figure}
+
+
+Ectomycorrhizal basal area percent \\
+Percent basal area of ectomycorrhizal trees was estimated using stem diameter from the NEON woody plant vegetation structure (DP1.10098.001) \cite{noauthor_national_2020}), with ectomycorrhizal status assigned to individual trees using species names. After accounting for insect-damaged and fallen trees, basal area of trees was scaled to the plot level and values were averaged over all years of measurements. The following site identifiers had a land cover type of "Cultivated Crops", "Shrub/Scrub", or "Grassland/Herbaceous" and consequently had no ectomycorrhizal tree abundances: BARR, CPER, DCFS, JORN, KONA, OAES, STER, TOOL, and WOOD.
+
+Leaf area index (LAI) \\
+To calculate the monthly LAI for each site, we first use the site latitude and longitude as input to the call\_modis function from the PecanTools R package \cite{lebauer_predictive_2019} to download the satellite-based MOD15A2H Version 6 Moderate Resolution Imaging Spectroradiometer (MODIS) combined Leaf Area Index (LAI) and Fraction of Photosynthetically Active Radiation (FPAR) product \cite{myneni_r_knyazikhin_y_park_mod15a2h_2015}. LAI values were then averaged from each site and month from the 8-day composite values.
+
+\subsubsection{Appendix S2: Determination of calibration time period }
+
+Provisional data from NEON was available to extend the time series to additional years, but inclusion of these data led to higher forecast bias. This had a known cause for bacterial sequences (a methodological shift in 16S amplicon sequencing primers \cite{averill_soil_2021}) but the bias could not be explained for fungi. After evaluating the hindcasts, we increased the model calibration period to include all available data (spanning 2018-2020, but only for a subset of sites), which increased precision in environmental predictor covariates and reduced overall confidence intervals (Figure S17). 
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS17_calibration_periods.png}
+\caption{Calibration periods used in this analysis, shown as a time-series at one plot. Provisional data (red) was dropped due to bias caused by methodological changes. Partial dataset (blue) was used to evaluate forecasts. Full dataset (green) was used to create forecasts that can be evaluated in the future.}
+\label{fig:image26}
+\end{figure}
+
+
+\subsubsection{Appendix S3: Nimble Statistical Modeling Code.}
+
+The Nimble code below (embedded in R) represents a dynamic linear model of a single group, with environmental covariates and seasonal predictors included. Nimble code for the two simpler models is hosted at \url{https://github.com/zoey-rw/microbialForecasts}.
+
+Nimble is a Bayesian statistical language and software with benefits for ecological modeling \cite{ponisio_one_2020}. It creates custom statistical distributions that represent common ecological data formats, such as counts, zero-inflation, and correlated data. For iterative forecasting in particular, the availability of cutting-edge data assimilation algorithms (e.g. sequential monte carlo filters) enables states to efficiently be updated with new data.  \\
+
+\paragraph{Data (observation) model}
+
+In constructing the statistical model, we evaluated the following distributions for the data model (lines 3-6 in Example Code below), representing the microbial relative abundances observed in multiple soil samples taken from the same plot (about 20m2).  To increase computational efficiency, we leveraged the advantage of conjugate Gibbs sampling whenever possible: parameterizations of variance terms (e.g. distributions such as gamma, Inverse gamma, Normal truncated).
+
+\textit{Dirichlet distribution} \\
+The Dirichlet distribution is a multivariate generalization of the beta distribution, allowing multiple fractional abundances to be modeled at once \cite{averill_soil_2021,pawlowsky-glahn_modeling_2015}. This accounts for covariance among microbial taxa arising simply from the "sum-to-one" constraint. However, the number of model-estimated parameters increases linearly with the number of taxa included, and model fitting is much less efficient (evaluated using Effective Sample Size (ESS) / computation time, from the compareMCMCs R package \cite{de_valpine_comparemcmcs_2022}). When low-abundance taxa are included, model-fitting occurred on the scale of weeks or months, rather than hours or days. Additionally, the Dirichlet distribution does not account for correlation between increased sequencing depth and precision, which can lead to heteroskedastic observation error. We found that predicted coefficients were qualitatively similar between the Dirichlet and Beta regression approaches.
+
+\textit{Multinomial Dirichlet distribution} \\
+The multinomial Dirichlet distribution has the properties of the Dirichlet distribution, with an additional set of parameters representing observation error. This is a natural choice for microbial data, since it can model fractional abundances as well as the effects of sequencing depth. However, it had the same practical drawbacks as standard Dirichlet, with even lower model-fitting efficiency and high sensitivity to model priors and initial conditions.
+
+\textit{Normal distribution with CLR transformation} \\
+The center log-ratio (CLR) transformation is a common choice for microbial relative abundance data because it reduces the impact of the sum-to-one constraint by scaling all abundances against the geometric mean of a "reference" taxon \cite{quinn_field_2019}. Because transformed values enter an unbounded space (-Inf, Inf), the Normal distribution can be used for modeling observations. However, this approach can make forecasts harder to interpret: forecast users may have to transform values back to (0,1) for interpretability, or apply the CLR-transformation to all subsequent microbial samples to compare observations with forecasts. We found that models fit to CLR-transformed data produced similar parameter estimates to models fit with Beta-distributed relative abundances, but the overall convergence rate was lower, especially for rare (low-abundance) taxa (Fig S18). 
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/figS18_clr_vs_beta_comparison.png}
+\caption{Comparison of models fit to microbial data transformed via centered-log ratio (CLR) or modeled as beta-distributed relative abundances. Left set of figures shows correlation between parameter estimates from the two approaches, calculated from the black points, which represent models that converged with both approaches; gray points are models that did not converge with one of the approaches. Right panel shows the percent of models converged as a function of the mean relative abundance of a group, for all abundance levels with more than one group representative. Colors indicate model approach and point size indicates the sample size of models at each abundance level.}
+\label{fig:image27}
+\end{figure}
+
+
+\paragraph{Link function}
+
+Considerations for link function (which links the observed relative abundance values to the underlying model of the ecological process): the logit-link is commonly used link function, and improved model convergence by reducing proposed MCMC values outside the (0,1) interval. We also evaluated models with no link function, or with a log-link, which are both statistically valid, but led to much longer convergence times.
+
+\paragraph{Bayesian prior considerations}
+
+\textbf{Figure S19.} Distributions chosen as weakly informative priors in hierarchical Bayesian models. 
+
+Priors for process error (sigma, lines 46) and core-level variation (core\_sd, line 45) were represented by an Inverse gamma distribution (Fig S19A). Priors for site effect variation (sig, line 47) were represented by a more lenient inverse gamma distribution (Fig 19B).
+
+Error around environmental predictor values (lines 55-81) represents a combination of multiple error sources, which were modeled separately to reduce computational effort. This includes instrument error, reported by some of the data sources (see Appendix S2), and uncertainty around the specific sampling date within a month (represented by the standard deviation of the entire month's values). 
+
+Priors for coefficients associated with environmental predictors (lines 53) were given relatively flat priors with a mean of zero and a precision of .0001, corresponding to a standard deviation of 100. These priors could be improved with domain-specific knowledge from experimental or field manipulation, e.g. heat-loving soil extremophiles may be assigned a strong positive prior distribution, representing scientific evidence for an effect. However, in this analysis, uninformative priors were used for all environmental predictors to facilitate comparisons between model structures.
+
+The first-order autoregressive parameter ($\rho$) was specified with a weakly informative Beta prior, $\\rho \\sim \\text{Beta}(1, 1)$, which restricts the parameter space to the interval $(0, 1)$. This constraint was chosen to enforce two biologically realistic assumptions for these microbial communities over long time horizons. First, by restricting $|\\rho| < 1$, we enforce weak stationarity, assuming the dynamics are fundamentally non-explosive (i.e., populations do not grow infinitely without bound). Second, by restricting $\\rho > 0$, we test the assumption of positive temporal persistence, where previous abundances pull future abundances in the same direction. A concern with strictly bounded priors is that they might artificially truncate the posterior distribution if the true parameter value lies outside the bounds (e.g., if the true dynamics were explosive/chaotic, $\\rho \\ge 1$). If this were the case, the posterior distribution would exhibit heavy "boundary piling" against the 1.0 upper limit. To verify that our bounded prior did not artificially suppress evidence of chaotic dynamics, we calculated the 95th percentile of the posterior draws for $\rho$ across our production model fits. We observed no significant boundary piling; the posterior mass for $\rho$ naturally settled below the 1.0 boundary. This indicates that the data supports stable dynamics, independent of the prior’s upper bound constraint.
+
+
+\end{document}
