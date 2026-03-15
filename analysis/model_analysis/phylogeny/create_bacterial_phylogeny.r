@@ -6,9 +6,8 @@ options(scipen=999)
 library(phyloseq)
 library(DECIPHER) #BiocManager::install("DECIPHER")
 library(phangorn)
-library(speedyseq)
+if (requireNamespace("speedyseq", quietly = TRUE)) library(speedyseq)
 library(tidyverse)
-library(speedyseq)
 
 library(phytools)
 library(ggtree)
@@ -20,7 +19,7 @@ library(ape)
 # Set output path
 output_path <- here("data/clean/bacterial_phylogeny.rds")
 # Read in data
-ps <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_16S.rds")
+ps <- readRDS(here("data/clean/phyloseq_16S.rds"))
 # Remove weird characters from names
 ps@tax_table[,c("family")] <- gsub("\\-|\\(|\\)| ", "\\.", ps@tax_table[,c("family")])
 ps@tax_table[,c("genus")] <- gsub("\\-|\\(|\\)| ", "\\.", ps@tax_table[,c("genus")])
@@ -66,6 +65,15 @@ all_rank_taxa_sample[[k]] <- stack(rank_taxa_sample) %>% mutate(rank=!!rank_name
 
 ASVs_for_phylogeny <- do.call(rbind, all_rank_taxa_sample)
 colnames(ASVs_for_phylogeny) <- c("ASV", "taxon", "rank_only")
+
+# Deduplicate: if an ASV was sampled for multiple ranks, keep only the finest rank
+# (genus > family > order > class > phylum) so each ASV maps to one taxon
+rank_priority <- c(genus = 1, family = 2, order = 3, class = 4, phylum = 5)
+ASVs_for_phylogeny$rank_order <- rank_priority[ASVs_for_phylogeny$rank_only]
+ASVs_for_phylogeny <- ASVs_for_phylogeny %>%
+	arrange(ASV, rank_order) %>%
+	distinct(ASV, .keep_all = TRUE) %>%
+	select(-rank_order)
 
 #####
 

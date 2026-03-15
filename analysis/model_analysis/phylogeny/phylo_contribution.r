@@ -10,8 +10,8 @@ library(phylocomr) # remotes::install_github("ropensci/phylocomr")
 # Takes a minute to load, huge workspace file
 load(here("data/phylo_workspace.Rdata"))
 
-detach("package:speedyseq", unload = TRUE)
-detach("package:phyloseq", unload = TRUE)
+if ("package:speedyseq" %in% search()) detach("package:speedyseq", unload = TRUE)
+if ("package:phyloseq" %in% search()) detach("package:phyloseq", unload = TRUE)
 
 # Read & reshape model effect estimates
 sum.all <- readRDS(here("data/summary/predictor_effects.rds"))
@@ -22,7 +22,7 @@ betas_wide = sum.all %>% filter(model_name=="env_cycl" & pretty_group=="Bacteria
 
 # Merge ASV list with model effect estimates
 ASVs_betas <- merge(ASVs_for_phylogeny, betas_wide %>%
-											filter(time_period == "2015-11_2018-01"), all=T) %>%
+											filter(time_period == "20130601_20180101"), all=T) %>%
 	filter(rank_only !="functional")
 
 # Create dendrogram version of SILVA phylogeny
@@ -43,13 +43,13 @@ ASVs_betas = ASVs_betas %>% filter(!grepl("other", taxon))
 ASVs_betas[!is.na(ASVs_betas$ASV), ]$ASV = janitor::make_clean_names(ASVs_betas[!is.na(ASVs_betas$ASV), ]$ASV)
 
 # Add in hindcast scores
-scores_list = readRDS(here("data", paste0("summary/scoring_metrics_cv.rds")))
+scores_list = readRDS(here("data/summary/scoring_metrics_plsr2.rds"))
 scores_to_merge = scores_list$scoring_metrics %>% filter(#pretty_group="Bacteria" &
 																												 	site_prediction=="New time (observed site)" &
 																												 		model_name=="env_cycl" &
 																												 		!pretty_name %in% c("Functional group", "Diversity")) %>%
 	ungroup() %>%
-	select(taxon, pretty_name, CRPS = CRPS_truncated, RSQ, RSQ.1)
+	select(taxon = species, pretty_name, CRPS = CRPS_truncated, RSQ, RSQ.1)
 ASVs_betas_scores <- merge(ASVs_betas, scores_to_merge , all.x=T) %>% distinct()
 merged_fort_beta <- left_join(merged_fort, ASVs_betas_scores, by=c("label"="ASV"))
 merged_fort_beta$label = janitor::make_clean_names(merged_fort_beta$label)
@@ -214,40 +214,6 @@ trait_data = results_to_save$merged_fort_beta
 
 
 
-
-genus_tree <- genus_treedata %>%
-	ggtree(aes(color=as.numeric(rank)), show.legend = F) +
-	geom_nodelab(geom = "label", aes(label = label), show.legend = F) +
-	scale_color_viridis_c() +
-	theme(legend.position = "right")
-
-
-
-
-genus_treedata2 <- root(genus_treedata, outgroup = 1, edgelabel = TRUE)
-
-genus_treedata2 <- merged_fort_beta %>% as.treedata()
-
-genus_treedata_pruned <- ggtree:::drop.tip(genus_treedata, "asv1301", trim.internal = T)
-
-genus_treedata
-
-
-to_keep = merged_fort_beta %>% unnest(cols = c(Temperature, Moisture, pH, pC, `Ectomycorrhizal\ntrees`, LAI,
-																										sin, cos)) %>%
-	filter(isTip & !is.na(label) & rank_only=="genus") %>% group_by(label) %>% dplyr::slice(1) %>% ungroup
-#to_keep = y_genus %>% filter(rank=="ASV" & !is.na(genus_label)) %>% group_by(genus_label) %>% dplyr::slice(1)
-species<-to_keep$label %>% unlist() %>% unique
-genus_treedata <- merged_fort_beta %>% unnest(cols = c(Temperature, Moisture, pH, pC, `Ectomycorrhizal\ntrees`, LAI,
-																											 sin, cos))  %>% filter(!isTip | label %in% species)
-genus_treedata$rank = tax_long[match(genus_treedata$label, tax_long$label),]$rank
-genus_treedata$rank <- factor(genus_treedata$rank, levels = c(NA, "phylum", "class", "order", "family", "genus", "ASV"), ordered =T)
-
-to_drop =  merged_fort_beta %>% filter(isTip & is.na(pH)) %>% select(label) %>% unlist
-#genus_treedata_pruned <- ggtree:::drop.tip(as.treedata(genus_treedata), to_drop)
-
-tree2 = tree_subset(merged_fort_beta %>% as.treedata(), 2, levels_back = 5)
-tree2 = tree_subset(merged_fort_beta %>% as.treedata(), "phylum/class/order/family/genus")
 
 
 
