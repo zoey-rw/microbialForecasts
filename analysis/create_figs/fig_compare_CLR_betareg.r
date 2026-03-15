@@ -1,9 +1,10 @@
 # Covariate effect comparison: CLR vs Cloglog vs Dirichlet — env_cycl model
-# Ascomycota phylum, 20130601–20180101 calibration period
+# Ascomycota only (all three models comparable for this taxon)
+# Two-panel figure: (A) covariate effects, (B) observed vs estimated
 # Colorblind-safe (Okabe-Ito) palette; shape + color double-encoding
 
 source("source.R")
-pacman::p_load(ggplot2, dplyr, stringr)
+pacman::p_load(ggplot2, dplyr, stringr, patchwork)
 
 # ---- Helpers ----
 
@@ -24,21 +25,24 @@ beta_display_order <- rev(beta_labels)   # bottom = Temperature on y-axis
 
 # Okabe-Ito palette — safe for deuteranopia, protanopia, tritanopia
 model_colors <- c(
-  "Cloglog"   = "#D55E00",   # vermillion
-  "CLR"       = "#0072B2",   # deep blue
-  "Dirichlet" = "#009E73"    # bluish green
+  "Cloglog"        = "#D55E00",   # vermillion
+  "CLR"            = "#0072B2",   # deep blue
+  "Trunc. normal"  = "#CC79A7",   # pink
+  "Dirichlet"      = "#009E73"    # bluish green
 )
 model_shapes <- c(
-  "Cloglog"   = 16,   # filled circle
-  "CLR"       = 17,   # filled triangle
-  "Dirichlet" = 15    # filled square
+  "Cloglog"        = 16,   # filled circle
+  "CLR"            = 17,   # filled triangle
+  "Trunc. normal"  = 18,   # filled diamond
+  "Dirichlet"      = 15    # filled square
 )
 
 # ---- Load predictor-effect summaries ----
 
-clr_eff     <- readRDS(here("data/summary/clr_predictor_effects.rds"))
-cloglog_eff <- readRDS(here("data/summary/predictor_effects.rds"))
-dirich_eff  <- readRDS(here("data/summary/dirichlet_predictor_effects.rds"))
+clr_eff      <- readRDS(here("data/summary/clr_predictor_effects.rds"))
+cloglog_eff  <- readRDS(here("data/summary/predictor_effects.rds"))
+truncnorm_eff <- readRDS(here("data/summary/truncated_normal_predictor_effects.rds"))
+dirich_eff   <- readRDS(here("data/summary/dirichlet_predictor_effects.rds"))
 
 mk_forest_df <- function(df, model_label) {
   df %>%
@@ -55,6 +59,7 @@ mk_forest_df <- function(df, model_label) {
     )
 }
 
+# All three models: ascomycota only
 clr_f <- clr_eff %>%
   filter(model_name == "env_cycl",
          taxon       == "ascomycota",
@@ -70,6 +75,12 @@ clog_f <- cloglog_eff %>%
   mutate(beta = as.character(beta)) %>%
   mk_forest_df("Cloglog")
 
+tn_f <- truncnorm_eff %>%
+  filter(taxon == "ascomycota") %>%
+  mutate(beta = clean_beta(as.character(beta))) %>%
+  filter(beta %in% names(beta_labels)) %>%
+  mk_forest_df("Trunc. normal")
+
 dir_f <- dirich_eff %>%
   filter(model_name == "env_cycl", taxon == "ascomycota") %>%
   mutate(beta = clean_beta(as.character(beta))) %>%
@@ -83,16 +94,16 @@ dir_f <- dirich_eff %>%
     model_type = "Dirichlet"
   )
 
-forest_df <- bind_rows(clr_f, clog_f, dir_f) %>%
+forest_df <- bind_rows(clr_f, clog_f, tn_f, dir_f) %>%
   mutate(
     beta_label = factor(beta_label, levels = beta_display_order),
     model_type = factor(model_type, levels = names(model_colors))
   )
 
-# ---- Figure ----
+# ---- Panel A: Covariate effects ----
 
-fig <- ggplot(forest_df, aes(x = Mean, y = beta_label,
-                              color = model_type, shape = model_type)) +
+fig_a <- ggplot(forest_df, aes(x = Mean, y = beta_label,
+                                color = model_type, shape = model_type)) +
   geom_vline(xintercept = 0, linetype = "dashed",
              color = "grey60", linewidth = 0.4) +
   geom_linerange(aes(xmin = lo, xmax = hi),
@@ -100,46 +111,100 @@ fig <- ggplot(forest_df, aes(x = Mean, y = beta_label,
                  position  = position_dodge(width = 0.6)) +
   geom_point(size     = 3.2,
              position = position_dodge(width = 0.6)) +
-  scale_color_manual(values = model_colors,
-                     name   = "Model") +
-  scale_shape_manual(values = model_shapes,
-                     name   = "Model") +
+  scale_color_manual(values = model_colors, name = "Model") +
+  scale_shape_manual(values = model_shapes, name = "Model") +
   scale_x_continuous(expand = expansion(mult = 0.05)) +
-  theme_classic(base_size = 13) +
+  theme_bw(base_size = 13) +
   theme(
     axis.title.y      = element_blank(),
     axis.text.y       = element_text(size = 12),
-    legend.position   = c(0.82, 0.18),
-    legend.background = element_rect(fill = "white", color = "grey80",
-                                     linewidth = 0.3),
-    legend.key.height = unit(1.3, "lines"),
+    legend.position   = "bottom",
     legend.title      = element_text(size = 11, face = "bold"),
     legend.text       = element_text(size = 11),
+    panel.grid.minor  = element_blank(),
     panel.grid.major.x = element_line(color = "grey92", linewidth = 0.3)
   ) +
   xlab("Posterior mean \u00b1 1.96 SD")
 
-# ---- Caption (printed to console; paste into manuscript) ----
+# ---- Panel B: Observed vs Estimated (calibration) ----
 
-caption <- paste0(
-  "Fig. X. Posterior mean covariate effects (\u00b11.96 SD) from three model types ",
-  "fit to Ascomycota phylum relative abundance across NEON soil fungal communities ",
-  "(calibration period 2013\u20132018; environmental + seasonal model structure). ",
-  "Filled circles: cloglog beta-regression (univariate, proportion-scale response with driver uncertainty). ",
-  "Filled triangles: CLR model (univariate, centered log-ratio response with driver uncertainty). ",
-  "Filled squares: Dirichlet model (multivariate, all fungal phyla modeled jointly as a compositional vector). ",
-  "Seasonal predictors represent monthly sine and cosine harmonics. ",
-  "Temperature and soil moisture include driver uncertainty propagated from repeated measurements. ",
-  "EM tree cover = relative basal area of ectomycorrhizal-associated tree species; ",
-  "LAI = leaf area index. ",
-  "Colors and shapes are redundantly encoded for colorblind accessibility. ",
-  "Note: Dirichlet model results are preliminary (median Rhat = 1.18 at 10k iterations; ",
-  "target < 1.1). Wider credible intervals partly reflect incomplete convergence."
+# Load cloglog plot estimates
+plot_est <- readRDS(here("data/summary/plot_estimates.rds"))
+
+# CLR plot estimates: use CLR-scale obs vs est if predictions are available
+clr_sum <- readRDS(here("data/summary/clr_regression_summaries.rds"))
+clr_pe  <- clr_sum$plot_est
+clr_ove <- clr_pe %>%
+  filter(species == "ascomycota",
+         !is.na(model_name), model_name == "env_cycl",
+         !is.na(Mean), Mean != 0, !is.na(truth)) %>%
+  transmute(estimated = Mean, observed = truth, model_type = "CLR")
+has_clr_panel <- nrow(clr_ove) > 10
+
+# Dirichlet plot estimates from summary file
+dirich_sum <- readRDS(here("data/summary/dirichlet_regression_summaries.rds"))
+dirich_pe <- dirich_sum$plot_est
+
+# Subset to env_cycl ascomycota for comparable obs vs est
+clog_ove <- plot_est %>%
+  filter(species == "ascomycota", model_name == "env_cycl") %>%
+  transmute(estimated = Mean, observed = truth, model_type = "Cloglog")
+
+dir_ove <- dirich_pe %>%
+  filter(taxon == "ascomycota",
+         !is.na(model_name), model_name == "env_cycl") %>%
+  transmute(estimated = Mean, observed = truth, model_type = "Dirichlet")
+
+# Sample to reasonable size for plotting
+set.seed(42)
+ove_parts <- list(
+  clog_ove %>% sample_n(min(2000, n())),
+  dir_ove  %>% sample_n(min(2000, n()))
 )
-cat("\n--- FIGURE CAPTION ---\n", caption, "\n\n")
+if (has_clr_panel) {
+  ove_parts <- c(ove_parts, list(clr_ove %>% sample_n(min(2000, n()))))
+}
+ove_df <- bind_rows(ove_parts) %>%
+  filter(!is.na(estimated), !is.na(observed)) %>%
+  mutate(model_type = factor(model_type, levels = names(model_colors)))
+
+# Compute R-squared per model
+rsq <- ove_df %>%
+  group_by(model_type) %>%
+  summarize(
+    rsq = cor(observed, estimated, use = "complete.obs")^2,
+    rmse = sqrt(mean((observed - estimated)^2, na.rm = TRUE)),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(label = sprintf("R\u00b2 = %.3f\nRMSE = %.3f", rsq, rmse))
+
+fig_b <- ggplot(ove_df, aes(x = observed, y = estimated, color = model_type)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+  geom_point(alpha = 0.15, size = 0.8) +
+  geom_text(data = rsq, aes(label = label),
+            x = -Inf, y = Inf, hjust = -0.1, vjust = 1.3,
+            size = 3.2, show.legend = FALSE) +
+  facet_wrap(~model_type, scales = if (has_clr_panel) "free" else "fixed") +
+  scale_color_manual(values = model_colors, guide = "none") +
+  { if (!has_clr_panel) coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) } +
+  theme_bw(base_size = 12) +
+  theme(
+    strip.background = element_rect(fill = "grey95"),
+    strip.text       = element_text(size = 11),
+    panel.grid.minor = element_blank()
+  ) +
+  xlab("Observed") +
+  ylab("Estimated")
+
+# ---- Combine panels ----
+
+combined <- fig_a / fig_b +
+  plot_layout(heights = c(2, 1.2)) +
+  plot_annotation(tag_levels = "A")
 
 # ---- Save ----
 
 outpath <- here("figures/fig_compare_CLR_betareg.png")
-ggsave(outpath, fig, width = 7, height = 5.5, dpi = 300)
+ggsave(outpath, combined, width = 8, height = 9, dpi = 300)
 cat("Saved:", outpath, "\n")
