@@ -3,7 +3,7 @@
 # Shows pooled data points, loess fits, null baselines, and calculated horizons
 
 library(here)
-source(here("source.R"))
+source("source.R")
 library(data.table)
 library(ggplot2)
 library(gridExtra)

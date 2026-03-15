@@ -124,7 +124,7 @@ fig3 <- ggarrange(
 
 print(fig3)
 
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig3_f_b_seasonality.png"), fig3, width = 13, height = 5, dpi = 200)

@@ -114,7 +114,7 @@ fig1 <- ggarrange(
   heights = c(1, 0.8)
 )
 
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig1_fcast_types_composite.png"), fig1,

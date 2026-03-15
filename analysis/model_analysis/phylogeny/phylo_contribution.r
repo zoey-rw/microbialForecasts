@@ -1,4 +1,4 @@
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("../../source.R")
 options(scipen=999)
 
 library(treeio)

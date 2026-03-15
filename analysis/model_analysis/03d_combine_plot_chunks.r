@@ -4,7 +4,7 @@
 # Script to combine plot estimate chunks on-demand
 # This allows other scripts to load the combined data when needed
 
-source("source.R")
+source("../../source.R")
 library(data.table)
 library(arrow)
 library(here)

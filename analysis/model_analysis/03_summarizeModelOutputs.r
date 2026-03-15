@@ -45,7 +45,7 @@ if (!exists("base_path") || is.null(base_path) || base_path == "") {
 cat("Base path:", base_path, "\n")
 cat("Model types to process:", paste(model_types, collapse = ", "), "\n")
 
-source("source.R")
+source("../../source.R")
 library(dplyr)
 library(coda)
 library(purrr)

@@ -6,7 +6,7 @@
 # in the main 03_summarizeModelOutputs.r script
 # Updated to handle driver uncertainty model types
 
-source("source.R")
+source("../../source.R")
 library(data.table)
 if (require(arrow, quietly = TRUE)) {
   library(arrow)

@@ -1,7 +1,5 @@
 # Combine chains from reconstructed checkpoint files
 # This script specifically processes files in the reconstructed_from_checkpoints directory
-setwd("/Users/zoeywerbin/Documents/microbialForecasts/analysis/model_analysis/")
-
 source("../../source.R")
 
 # CRITICAL FIX: Add comprehensive taxon name validation function
