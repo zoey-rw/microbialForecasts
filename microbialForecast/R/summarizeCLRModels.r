@@ -68,19 +68,26 @@ summarize_clr_model <- function(file_path, save_summary = NULL, overwrite=NULL, 
 
 	message("Summarizing CLR model: ", species, ", ", rank.name, ", ", time_period, ", ", model_name)
 
-	# For CLR models, we don't have plot_mu tracking, so create minimal structure
-	# Create dummy plot data for compatibility with existing summary structure
-	dummy_plot_data <- data.frame(
-		plot_num = 1,
-		timepoint = 1,
-		Mean = 0,
-		SD = 0,
-		`2.5%` = 0,
-		`25%` = 0,
-		`50%` = 0,
-		`75%` = 0,
-		`97.5%` = 0
-	)
+	# Check whether plot-level predictions (mu/eta) were monitored.
+	# Newer runs save these via monitors2; older runs do not.
+	plot_summary_valid <- FALSE
+	if (!is.null(plot_summary) && is.list(plot_summary) && length(plot_summary) >= 2) {
+		rownms <- rownames(plot_summary[[2]])
+		has_mu <- any(grepl("^(mu|eta|plot_mu)\\[", rownms))
+		if (has_mu && nrow(plot_summary[[2]]) > 0) {
+			# Normalize names: rename mu[...] -> plot_mu[...] for parse_plot_mu_vars()
+			if (any(grepl("^mu\\[", rownms)) && !any(grepl("^plot_mu\\[", rownms))) {
+				rownames(plot_summary[[1]]) <- sub("^mu\\[", "plot_mu[", rownames(plot_summary[[1]]))
+				rownames(plot_summary[[2]]) <- sub("^mu\\[", "plot_mu[", rownames(plot_summary[[2]]))
+			}
+			if (any(grepl("^eta\\[", rownms)) && !any(grepl("^plot_mu\\[", rownms))) {
+				rownames(plot_summary[[1]]) <- sub("^eta\\[", "plot_mu[", rownames(plot_summary[[1]]))
+				rownames(plot_summary[[2]]) <- sub("^eta\\[", "plot_mu[", rownames(plot_summary[[2]]))
+			}
+			plot_summary_valid <- TRUE
+			message("  Found plot-level predictions in plot_summary (CLR scale)")
+		}
+	}
 
 	cov_key <- switch(model_name,
 										"all_covariates" = microbialForecast:::all_covariates_key,
@@ -129,16 +136,32 @@ summarize_clr_model <- function(file_path, save_summary = NULL, overwrite=NULL, 
 		taxon_key[[1]] = species
 	}
 
-	# For CLR models, we don't have plot-level predictions, so use dummy data
-	# This maintains compatibility with existing summary structure
-	pred.quantiles <- dummy_plot_data %>%
-		merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
+	if (plot_summary_valid) {
+		# Extract real plot-level predictions (on CLR scale)
+		plot_quantiles <- plot_summary[[2]] %>% parse_plot_mu_vars()
+		plot_means     <- plot_summary[[1]] %>% parse_plot_mu_vars()
 
-	pred.means <- dummy_plot_data %>%
-		merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T)
+		pred.quantiles <- plot_quantiles %>%
+			merge(truth.plot.long, by = c("plot_num", "timepoint"), all = TRUE)
+		pred.means <- plot_means %>%
+			merge(truth.plot.long, by = c("plot_num", "timepoint"), all = TRUE)
 
-	pred.quantiles$Mean <- pred.means$Mean
-	pred.quantiles$SD <- pred.means$SD
+		pred.quantiles$Mean <- pred.means$Mean
+		pred.quantiles$SD   <- pred.means$SD
+		message("  Merged ", nrow(pred.quantiles), " plot-level CLR predictions with truth data")
+	} else {
+		# Older runs without monitored latent states: create empty structure
+		message("  No plot-level predictions available (mu/eta not monitored) — using empty structure")
+		pred.quantiles <- data.frame(
+			plot_num = integer(0), timepoint = integer(0),
+			Mean = numeric(0), SD = numeric(0),
+			`X2.5.` = numeric(0), `X25.` = numeric(0), `X50.` = numeric(0),
+			`X75.` = numeric(0), `X97.5.` = numeric(0),
+			stringsAsFactors = FALSE
+		)
+		pred.quantiles <- merge(pred.quantiles, truth.plot.long,
+			by = c("plot_num", "timepoint"), all = TRUE)
+	}
 
 	# Get mean values for parameters
 	means <- param_summary[[1]]

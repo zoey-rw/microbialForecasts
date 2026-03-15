@@ -86,11 +86,14 @@ cloglog beta-regression (univariate, proportion-scale response),
 CLR normal (univariate, centered log-ratio response),
 truncated normal (univariate, bounded on $(0,1)$), and
 Dirichlet (multivariate, all fungal phyla modeled jointly as a compositional vector).
-(B)~Calibration-period observed vs.\ estimated relative abundance for Ascomycota.
-CLR and truncated normal estimates are omitted from panel~(B) because CLR values are on the centered log-ratio scale and truncated normal plot-level predictions were not monitored during MCMC sampling.}
+(B)~Calibration-period observed vs.\ estimated values for Ascomycota.
+CLR comparisons are shown on the centered log-ratio scale (free axis), not relative abundance.
+Truncated normal estimates are omitted because plot-level predictions were not monitored during MCMC sampling.}
 \label{fig:clr_comparison}
 \end{figure}
 
+\paragraph{Note on parameter comparability.}
+Because each observation model operates on a different response scale, the estimated $\beta$ coefficients are not directly comparable across formulations. In the cloglog beta-regression model, $\beta$ values describe effects on the latent $\eta$ scale, which maps to $(0,1)$ through the nonlinear, asymmetric inverse cloglog link. In the CLR model, $\beta$ values describe effects on the centered log-ratio scale, where a positive coefficient indicates that the focal taxon increases \emph{relative to the geometric mean of all taxa in the community}---not necessarily that its absolute abundance increases. This distinction can produce apparent sign disagreements (e.g., for temperature in Fig.~\ref{fig:clr_comparison}A) that reflect the different scales of interpretation rather than genuine ecological contradictions. Furthermore, because the CLR model is fit to each taxon independently, CLR predictions cannot be properly back-transformed to relative abundances without assembling all taxa's CLR values and applying the softmax (inverse CLR) jointly, which is why CLR estimates are omitted from calibration comparisons (Fig.~\ref{fig:clr_comparison}B).
 
 \subsection{Truncated normal}
 
