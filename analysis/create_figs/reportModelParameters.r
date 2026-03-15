@@ -75,7 +75,7 @@ cal_scores_to_merge = scores_list$calibration_metrics %>% ungroup() %>%
 #select(model_id, mean_crps_sample, RSQ)
 
 df_wide$model_id <- gsub("_beta_regression$", "", df_wide$model_id)
-df_wide_scores = merge(df_wide, cal_scores_to_merge, all.y=F)  %>% as.data.frame() %>% merge(hindcast_scores_to_merge)
+df_wide_scores = merge(df_wide, cal_scores_to_merge, all.x=TRUE)  %>% as.data.frame() %>% merge(hindcast_scores_to_merge, all.x=TRUE)
 
 kable(df_wide_scores, "html") %>%
 	kable_styling(bootstrap_options = c("striped", "hover")) %>%
