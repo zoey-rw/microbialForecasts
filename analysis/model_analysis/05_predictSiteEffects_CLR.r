@@ -9,7 +9,7 @@
 # 4. Limited dredge search space
 # 5. Streamlined data operations
 
-source("source.R")
+source("../../source.R")
 pacman::p_load(stringr, forestplot, gridExtra, ggpubr, MuMIn, pls, ggforce, reshape2, plotrix, spectratrait, 
                parallel, doParallel, foreach)
 

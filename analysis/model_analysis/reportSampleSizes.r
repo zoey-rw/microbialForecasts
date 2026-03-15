@@ -1,4 +1,4 @@
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("../../source.R")
 library(kableExtra)
 
 fieldsites_raw <- read.csv("https://www.neonscience.org/sites/default/files/NEON_Field_Site_Metadata_20220412.csv")  %>% filter(!grepl("Aquatic", field_site_type)) %>%
@@ -39,11 +39,11 @@ n_newsite_plot_obs = hindcast_201511_201801 %>% filter(new_site==T & !is.na(trut
 	select(plotID, dateID) %>% distinct() %>% tally
 
 # How many samples in entire dataset? #6005 for fungi
-abun_its = readRDS("/projectnb/dietzelab/zrwerbin/microbialForecasts/data/clean/groupAbundances_ITS_2023.rds")
+abun_its = readRDS(here("data/clean/groupAbundances_ITS_2023.rds"))
 unique(abun_its$phylum_fun$sampleID) %>% length
 
 # How many samples in entire dataset? #6080 for bacteria
-abun_16s = readRDS("/projectnb/dietzelab/zrwerbin/microbialForecasts/data/clean/groupAbundances_16S_2023.rds")
+abun_16s = readRDS(here("data/clean/groupAbundances_16S_2023.rds"))
 unique(abun_16s$phylum_bac$sampleID) %>% length
 
 calibration = hindcast_201511_201801 %>% filter(fcast_period == "calibration" & !is.na(truth))

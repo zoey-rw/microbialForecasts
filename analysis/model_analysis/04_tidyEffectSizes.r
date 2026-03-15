@@ -1,6 +1,6 @@
 # Combine & separately save model parameter and effect size estimates (beta covariates) from all models
 
-source("source.R")
+source("../../source.R")
 pacman::p_load(stringr, forestplot, gridExtra, dplyr)
 
 # Source helper functions if package not available

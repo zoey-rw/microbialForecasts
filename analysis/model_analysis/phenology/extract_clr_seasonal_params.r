@@ -5,7 +5,7 @@
 cat("=== EXTRACTING SEASONAL PARAMETERS FROM CLR PHENOLOGY MODELS ===\n\n")
 
 # Load required packages and environment
-source("source.R")
+source("../../source.R")
 
 cat("✅ Environment loaded successfully\n")
 

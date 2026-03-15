@@ -2,7 +2,7 @@
 
 # Dirichlet model convergence and consistency
 
-source("source.R")
+source("../../source.R")
 
 # Load the effects data
 effects <- readRDS("data/model_outputs/dirichlet_regression/dirichlet_effects.rds")

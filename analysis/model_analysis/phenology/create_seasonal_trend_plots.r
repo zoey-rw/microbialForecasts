@@ -4,7 +4,7 @@
 cat("=== CREATING SEASONAL TREND PLOTS ===\n\n")
 
 # Load required packages and environment
-source("source.R")
+source("../../source.R")
 
 cat("✅ Environment loaded successfully\n")
 

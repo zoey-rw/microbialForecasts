@@ -1,5 +1,5 @@
 # Combine chains from each taxon model, and create basic summary stats
-source("source.R")
+source("../../source.R")
 
 # Configuration: Chain size limits (can be set via environment variables)
 # Default: truncate to reduce memory usage for long chains

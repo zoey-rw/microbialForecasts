@@ -1,5 +1,5 @@
 # Combine chains from each Dirichlet model, and create basic summary stats
-source("source.R")
+source("../../source.R")
 source(here::here("analysis/model_analysis/dirichlet_covariance/dirichlet_helper_functions.r"))
 
 # Function to combine Dirichlet chains and create summary structure

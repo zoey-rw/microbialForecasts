@@ -1,7 +1,7 @@
 # Summarize MCMC output from all Dirichlet models
 # Assumes input files have already had MCMC chains combined
 
-source("source.R")
+source("../../source.R")
 
 # Find all Dirichlet model output files
 file.list = intersect(list.files(here("data/model_outputs/dirichlet_driver_uncertainty/"), recursive = T,

@@ -221,7 +221,7 @@ fig_labeled <- ggdraw(fig) +
   draw_label("G", x = 0.66, y = 0.30, fontface = "bold", size = 14)
 
 # ── 6. Save ─────────────────────────────────────────────────────────────────
-out_dir <- here("data", "figures")
+out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig_exampleHindcasts.png"), fig_labeled,

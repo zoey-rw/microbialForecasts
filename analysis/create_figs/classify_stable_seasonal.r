@@ -133,7 +133,7 @@ library(ggrepel)
 
 kingdom_colors <- c("Bacteria" = "#4DAF4A", "Fungi" = "#FF7F00")
 
-fig_out_dir <- here("data", "figures")
+fig_out_dir <- here("figures")
 if (!dir.exists(fig_out_dir)) dir.create(fig_out_dir, recursive = TRUE)
 
 # Label the most extreme point in each quadrant

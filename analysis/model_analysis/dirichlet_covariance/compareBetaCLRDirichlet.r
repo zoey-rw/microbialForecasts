@@ -1,6 +1,6 @@
 library(ggstatsplot)
 
-source("source.R")
+source("../../source.R")
 library(ggpubr)
 library(scoringRules)
 

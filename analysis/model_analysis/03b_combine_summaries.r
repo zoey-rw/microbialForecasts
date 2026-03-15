@@ -3,7 +3,7 @@
 # Script to combine existing summary files from logit_beta_regression directories
 # This script efficiently combines existing summary files with proper memory management
 
-source("source.R")
+source("../../source.R")
 library(dplyr)
 library(tidyr)
 

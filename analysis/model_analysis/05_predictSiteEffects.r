@@ -2,7 +2,7 @@
 # Creates the "site_effects_dredged.rds" files
 # 06_createHindcasts must be run after this.
 
-source("source.R")
+source("../../source.R")
 pacman::p_load(stringr, forestplot, gridExtra, ggpubr, MuMIn, pls, ggforce, 
                reshape2, plotrix, spectratrait, parallel, doParallel, foreach, dplyr, tidyr, here)
 
