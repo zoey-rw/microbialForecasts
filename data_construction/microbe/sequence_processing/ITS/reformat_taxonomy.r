@@ -1,12 +1,13 @@
 # Converting ITS outputs into formats suitable for modeling.
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source("../../../../source.R")
 
 library(phyloseq)
 library(dplyr)
 library(tidyr)
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/assign_fungal_guilds.r")
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
-source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/binTaxGroups.r")
+source(here("functions/assign_fungal_guilds.r"))
+source(here("functions/helperFunctions.r"))
+# binTaxGroups.r from NEON_16S_ITS_data_construction repo — not available locally
+# source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/binTaxGroups.r")
 
 # RECENT DATA #
 # Load combined sequence table and taxonomic table

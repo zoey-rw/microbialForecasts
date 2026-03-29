@@ -202,8 +202,18 @@ igraph/
 *.fdb_latexmk
 *.synctex.gz
 
-# Manuscript drafts and bibliography (tracked separately)
+# Manuscript drafts, LaTeX, and bibliography
 Manuscript*.md
+manuscript.tex
+response_to_reviewers.tex
+model_descriptions.tex
+convert_manuscript.py
+add_linelabels.py
 zotero_references.bib
+*.loc
+*.soc
 unconverged_models_list.txt
 verify_manuscript_stats.R
+data/new_neon_microbe/
+data/clean/new_neon_*
+data/clean/phylum_name_mapping.rds
