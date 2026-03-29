@@ -18,10 +18,10 @@ if (length(argv) > 0){
 }
 
 # LOCAL TESTING: Run with 2 chains on 2 cores for local testing
-nchains = 3
+nchains <- as.integer(Sys.getenv("NCHAINS", "3"))
 
 # Set number of cores for parallel execution (1 model × 3 chains)
-n_cores = 3
+n_cores <- as.integer(Sys.getenv("NCORES", "2"))
 
 #### Run on all groups ----
 
@@ -242,7 +242,7 @@ assert_vector_len <- function(x, n, name) {
   invisible(TRUE)
 }
 
-create_inits_with_uncertainty <- function(constants, model_name, model_data = NULL) {
+create_inits_with_uncertainty <- function(constants, model_name, model_data = NULL, chain_no = 1) {
     cat("Creating initial values with driver uncertainty for", model_name, "...\n")
     
     # Determine number of beta parameters based on model type
@@ -262,22 +262,48 @@ create_inits_with_uncertainty <- function(constants, model_name, model_data = NU
         }
     }
 
-    # Base initial values that all models need
-    inits <- list(
-        precision = 50,  # Start with moderate precision
-        rho = 0.3,      # Start rho at 0.3 (moderate persistence)
-        beta = beta_init,  # Seasonal + environmental coefficients
-        site_effect_sd = 0.5,  # Start with moderate site effect SD
-        site_effect = rnorm(constants$N.site, 0, 0.1),  # Small random initial values
-        intercept = 0,  # Start at 0 for symmetry
-        legacy_effect = 0,  # Start legacy effect at 0 (all models use legacy covariate)
-        sigma_proc = 0.1,  # Start with small process noise
-        sigma_init = 0.5,  # Start with moderate initial state uncertainty
-        # NEW: eta matrix for direct AR(1) on eta (mu is deterministic from eta)
-        eta = matrix(0, nrow = constants$N.plot, ncol = constants$N.date)  # Start eta at 0 for symmetry
-    )
-    
-    cat("  ✓ Added legacy_effect for all models (including", model_name, ")\n")
+    # Check for warm-start file
+    warmstart_file <- Sys.getenv("WARMSTART_FILE", "")
+    if (warmstart_file != "" && file.exists(warmstart_file)) {
+        cat("  Loading warm-start initial values from:", warmstart_file, "\n")
+        ws <- readRDS(warmstart_file)
+        pm <- ws$param_means
+
+        # Add per-chain jitter to break symmetry
+        set.seed(chain_no * 42)
+        jitter_sd <- 0.05
+
+        inits <- list(
+            precision = abs(pm["precision"] + rnorm(1, 0, jitter_sd * 5)),
+            rho = max(0.001, min(0.999, pm["rho"] + rnorm(1, 0, jitter_sd))),
+            beta = sapply(1:n_beta, function(b) pm[paste0("beta[", b, "]")] + rnorm(1, 0, jitter_sd)),
+            site_effect_sd = abs(pm["site_effect_sd"] + rnorm(1, 0, jitter_sd * 0.5)),
+            site_effect = sapply(1:constants$N.site, function(k)
+                pm[paste0("site_effect[", k, "]")] + rnorm(1, 0, jitter_sd)),
+            intercept = pm["intercept"] + rnorm(1, 0, jitter_sd),
+            legacy_effect = pm["legacy_effect"] + rnorm(1, 0, jitter_sd),
+            sigma_proc = abs(pm["sigma_proc"] + rnorm(1, 0, jitter_sd * 0.2)),
+            sigma_init = abs(pm["sigma_init"] + rnorm(1, 0, jitter_sd * 0.2)),
+            eta = matrix(0, nrow = constants$N.plot, ncol = constants$N.date)
+        )
+        cat("  ✓ Warm-start loaded from", ws$source_iterations, "iteration run, jitter_sd=", jitter_sd, "\n")
+    } else {
+        # Default cold-start initial values
+        inits <- list(
+            precision = 50,
+            rho = 0.3,
+            beta = beta_init,
+            site_effect_sd = 0.5,
+            site_effect = rnorm(constants$N.site, 0, 0.1),
+            intercept = 0,
+            legacy_effect = 0,
+            sigma_proc = 0.1,
+            sigma_init = 0.5,
+            eta = matrix(0, nrow = constants$N.plot, ncol = constants$N.date)
+        )
+    }
+
+    cat("  ✓ Initial values set for", model_name, "model\n")
     
     # Initialize driver uncertainty variables ONLY for environmental models
     if (model_name %in% c("env_cycl", "env_cov")) {
@@ -860,7 +886,7 @@ run_scenarios_fixed <- function(j, chain_no) {
 	set.seed(chain_no * 1000 + j * 100)  # Different seed per chain/model
 	
 	# Use the standardized initialization function
-	inits <- create_inits_with_uncertainty(constants, model_name, model_data = model.dat)
+	inits <- create_inits_with_uncertainty(constants, model_name, model_data = model.dat, chain_no = chain_no)
 	
 	cat("Model built successfully\n")
 	
@@ -989,14 +1015,22 @@ run_scenarios_fixed <- function(j, chain_no) {
 	
 	cat("MCMC configured successfully\n")
 	
-	# Full-dataset env_cycl: 1000 iterations per chain
-	burnin <- 50
-	iter_per_chunk <- 100
-	init_iter <- 1000  # 1000 iterations per chain
+	# Production MCMC parameters
+	burnin <- 5000
+	iter_per_chunk <- 5000
+	init_iter <- 5000
 	min_eff_size_perchain <- 5
-	max_loops <- 0  # No extra loops; stop after init_iter (1000)
+	max_loops <- 40
 	max_save_size <- 100000
-	min_total_iterations <- 1000
+	min_total_iterations <- 50000
+	max_total_iterations <- 200000
+
+	max_iter_env <- suppressWarnings(as.integer(Sys.getenv("MAX_ITER", NA)))
+	if (!is.na(max_iter_env)) {
+		max_total_iterations <- max_iter_env
+		min_total_iterations <- min(min_total_iterations, max_iter_env)
+		cat("  MAX_ITER override:", max_total_iterations, "\n")
+	}
 	
 	cat("Running MCMC: 1000 iterations per chain (env_cycl full dataset)\n")
 	cat("  Burn-in iterations:", burnin, "\n")
@@ -1073,7 +1107,7 @@ run_scenarios_fixed <- function(j, chain_no) {
 	# This matches the beta regression workflow which doesn't create multiple checkpoint files per chain
 	cat("  Initial samples collected:", nrow(all_samples), "iterations\n")
 	
-	while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
+	while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops && total_iterations < max_total_iterations) {
 		if (continue) {
 			cat("  Effective sample size too low; running for another", iter_per_chunk, "iterations\n")
 		} else {
