@@ -90,9 +90,9 @@ summarize_clr_model <- function(file_path, save_summary = NULL, overwrite=NULL, 
 	}
 
 	cov_key <- switch(model_name,
-										"all_covariates" = microbialForecast:::all_covariates_key,
-										"env_cov" = microbialForecast:::all_covariates_key,
-										"env_cycl" = microbialForecast:::all_covariates_key,
+										"all_covariates" = microbialForecast:::env_cycl_covariates_key,
+										"env_cov" = microbialForecast:::env_cov_covariates_key,
+										"env_cycl" = microbialForecast:::env_cycl_covariates_key,
 										"cycl_only" = microbialForecast:::cycl_only_key)
 
 	taxon_key <- unique(truth.plot.long$species)
