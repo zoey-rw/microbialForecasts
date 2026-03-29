@@ -10,8 +10,11 @@
 # - All output files go to: here("data", "model_outputs", "truncated_normal", ...)
 
 # Function to create stable truncated normal model with proper parameterization
-create_truncated_normal_model <- function(model_name, use_legacy_covariate = TRUE) {
-  cat("Building TRUNCATED NORMAL Nimble model:", model_name, "\n")
+create_truncated_normal_model <- function(model_name, use_legacy_covariate = TRUE,
+                                          temporalDriverUncertainty = TRUE,
+                                          spatialDriverUncertainty = TRUE) {
+  cat("Building TRUNCATED NORMAL Nimble model:", model_name,
+      " temporalDU=", temporalDriverUncertainty, " spatialDU=", spatialDriverUncertainty, "\n")
   
   if (model_name == "cycl_only" && use_legacy_covariate) {
     modelCode <- nimble::nimbleCode({
@@ -41,22 +44,22 @@ create_truncated_normal_model <- function(model_name, use_legacy_covariate = TRU
         }
       }
       
-      # PRIORS - Based on working approach
+      # PRIORS - Tightened for better mixing
       core_sd ~ dunif(0, 1)        # Observation noise
-      sigma ~ dunif(0, 1)          # Process noise
-      
-      # Site effects
-      site_effect_sd ~ dunif(0, 5)  # Site variation
+      sigma ~ dunif(0, 0.2)        # Process noise (tight to prevent sigma->0 drift)
+
+      # Site effects (non-centered: intercept separate from site effects)
+      intercept ~ dnorm(0, sd = 2)
+      site_effect_sd ~ dgamma(2, 20)  # mode ~0.05, informative
       for (k in 1:N.site) {
         site_effect[k] ~ dnorm(0, sd = site_effect_sd)
       }
-      
-      intercept ~ dnorm(0, sd = 1)  # Baseline
-      rho ~ dnorm(0, sd = 1)        # Temporal persistence (unbounded)
-      legacy_effect ~ dnorm(0, sd = 1)  # Legacy effect
-      
+
+      rho ~ dunif(0, 0.99)          # Bounded positive persistence
+      legacy_effect ~ dnorm(0, sd = 2)  # Legacy effect
+
       for (b in 1:2) {
-        beta[b] ~ dnorm(0, sd = 0.5)  # Seasonal effects
+        beta[b] ~ dnorm(0, sd = 2)  # Seasonal effects
       }
     })
   } else if (model_name == "env_cycl" && use_legacy_covariate) {
@@ -80,32 +83,68 @@ create_truncated_normal_model <- function(model_name, use_legacy_covariate = TRU
           logit(Ex[p, t]) <- rho * logit(plot_mu[p, t - 1]) +
                              site_effect[plot_site_num[p]] +
                              beta[1] * sin_mo[t] + beta[2] * cos_mo[t] +  # Seasonal terms
-                             beta[3] * temp[plot_site_num[p], t] + beta[4] * mois[plot_site_num[p], t] +  # Site-level environmental terms
-                             beta[5] * pH[p, t] + beta[6] * pC[p, t] +  # Plot-level environmental terms
-                             beta[7] * relEM[p, t] + beta[8] * LAI[plot_site_num[p], t] +  # Mixed level terms
-                             legacy_effect * legacy[p, t] +  # Legacy covariate
-                             intercept  # Baseline abundance
+                             beta[3] * temp_est[plot_site_num[p], t] + beta[4] * mois_est[plot_site_num[p], t] +
+                             beta[5] * pH_est[p, t] + beta[6] * pC_est[p, t] +
+                             beta[7] * relEM[p, t] + beta[8] * LAI[plot_site_num[p], t] +
+                             legacy_effect * legacy[p, t] +
+                             intercept
           
           plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
         }
       }
+
+      # DRIVER UNCERTAINTY - Temporal (temperature and moisture)
+      if (temporalDriverUncertainty) {
+        for (k in 1:N.site) {
+          for (t in site_start[k]:N.date) {
+            mois_est[k, t] ~ dnorm(mois[k, t], sd = mois_sd[k, t])
+            temp_est[k, t] ~ dnorm(temp[k, t], sd = temp_sd[k, t])
+          }
+        }
+      } else {
+        for (k in 1:N.site) {
+          for (t in site_start[k]:N.date) {
+            mois_est[k, t] <- mois[k, t]
+            temp_est[k, t] <- temp[k, t]
+          }
+        }
+      }
+
+      # DRIVER UNCERTAINTY - Spatial (pH and pC - constant over time)
+      if (spatialDriverUncertainty) {
+        for (p in 1:N.plot) {
+          pH_est_p[p] ~ dnorm(pH[p, plot_start[p]], sd = pH_sd[p, plot_start[p]])
+          pC_est_p[p] ~ dnorm(pC[p, plot_start[p]], sd = pC_sd[p, plot_start[p]])
+          for (t in plot_start[p]:N.date) {
+            pH_est[p, t] <- pH_est_p[p]
+            pC_est[p, t] <- pC_est_p[p]
+          }
+        }
+      } else {
+        for (p in 1:N.plot) {
+          for (t in plot_start[p]:N.date) {
+            pH_est[p, t] <- pH[p, t]
+            pC_est[p, t] <- pC[p, t]
+          }
+        }
+      }
       
-      # PRIORS - Based on working approach
+      # PRIORS - Tightened for better mixing
       core_sd ~ dunif(0, 1)        # Observation noise
-      sigma ~ dunif(0, 1)          # Process noise
-      
-      # Site effects
-      site_effect_sd ~ dunif(0, 5)  # Site variation
+      sigma ~ dunif(0, 0.2)        # Process noise (tight to prevent sigma->0 drift)
+
+      # Site effects (non-centered: intercept separate from site effects)
+      intercept ~ dnorm(0, sd = 2)
+      site_effect_sd ~ dgamma(2, 20)  # mode ~0.05, informative
       for (k in 1:N.site) {
         site_effect[k] ~ dnorm(0, sd = site_effect_sd)
       }
-      
-      intercept ~ dnorm(0, sd = 1)  # Baseline
-      rho ~ dnorm(0, sd = 1)        # Temporal persistence (unbounded)
-      legacy_effect ~ dnorm(0, sd = 1)  # Legacy effect
-      
+
+      rho ~ dunif(0, 0.99)          # Bounded positive persistence
+      legacy_effect ~ dnorm(0, sd = 2)  # Legacy effect
+
       for (b in 1:8) {
-        beta[b] ~ dnorm(0, sd = 0.5)  # Environmental effects
+        beta[b] ~ dnorm(0, sd = 2)  # Environmental effects
       }
     })
   } else if (model_name == "env_cov" && use_legacy_covariate) {
@@ -128,35 +167,71 @@ create_truncated_normal_model <- function(model_name, use_legacy_covariate = TRU
           # Dynamic linear model with logit transformation (the working approach)
           logit(Ex[p, t]) <- rho * logit(plot_mu[p, t - 1]) +
                              site_effect[plot_site_num[p]] +
-                             beta[1] * temp[plot_site_num[p], t] +
-                             beta[2] * mois[plot_site_num[p], t] +
-                             beta[3] * pH[p, t] +
-                             beta[4] * pC[p, t] +
+                             beta[1] * temp_est[plot_site_num[p], t] +
+                             beta[2] * mois_est[plot_site_num[p], t] +
+                             beta[3] * pH_est[p, t] +
+                             beta[4] * pC_est[p, t] +
                              beta[5] * relEM[p, t] +
                              beta[6] * LAI[plot_site_num[p], t] +
-                             legacy_effect * legacy[p, t] +  # Legacy covariate
-                             intercept  # Baseline abundance
+                             legacy_effect * legacy[p, t] +
+                             intercept
           
           plot_mu[p, t] ~ dbeta(mean = Ex[p, t], sd = sigma)
         }
       }
+
+      # DRIVER UNCERTAINTY - Temporal (temperature and moisture)
+      if (temporalDriverUncertainty) {
+        for (k in 1:N.site) {
+          for (t in site_start[k]:N.date) {
+            mois_est[k, t] ~ dnorm(mois[k, t], sd = mois_sd[k, t])
+            temp_est[k, t] ~ dnorm(temp[k, t], sd = temp_sd[k, t])
+          }
+        }
+      } else {
+        for (k in 1:N.site) {
+          for (t in site_start[k]:N.date) {
+            mois_est[k, t] <- mois[k, t]
+            temp_est[k, t] <- temp[k, t]
+          }
+        }
+      }
+
+      # DRIVER UNCERTAINTY - Spatial (pH and pC - constant over time)
+      if (spatialDriverUncertainty) {
+        for (p in 1:N.plot) {
+          pH_est_p[p] ~ dnorm(pH[p, plot_start[p]], sd = pH_sd[p, plot_start[p]])
+          pC_est_p[p] ~ dnorm(pC[p, plot_start[p]], sd = pC_sd[p, plot_start[p]])
+          for (t in plot_start[p]:N.date) {
+            pH_est[p, t] <- pH_est_p[p]
+            pC_est[p, t] <- pC_est_p[p]
+          }
+        }
+      } else {
+        for (p in 1:N.plot) {
+          for (t in plot_start[p]:N.date) {
+            pH_est[p, t] <- pH[p, t]
+            pC_est[p, t] <- pC[p, t]
+          }
+        }
+      }
       
-      # PRIORS - Based on working approach
+      # PRIORS - Tightened for better mixing
       core_sd ~ dunif(0, 1)        # Observation noise
-      sigma ~ dunif(0, 1)          # Process noise
-      
-      # Site effects
-      site_effect_sd ~ dunif(0, 5)  # Site variation
+      sigma ~ dunif(0, 0.2)        # Process noise (tight to prevent sigma->0 drift)
+
+      # Site effects (non-centered: intercept separate from site effects)
+      intercept ~ dnorm(0, sd = 2)
+      site_effect_sd ~ dgamma(2, 20)  # mode ~0.05, informative
       for (k in 1:N.site) {
         site_effect[k] ~ dnorm(0, sd = site_effect_sd)
       }
-      
-      intercept ~ dnorm(0, sd = 1)  # Baseline
-      rho ~ dnorm(0, sd = 1)        # Temporal persistence (unbounded)
-      legacy_effect ~ dnorm(0, sd = 1)  # Legacy effect
-      
+
+      rho ~ dunif(0, 0.99)          # Bounded positive persistence
+      legacy_effect ~ dnorm(0, sd = 2)  # Legacy effect
+
       for (b in 1:6) {
-        beta[b] ~ dnorm(0, sd = 0.5)  # Environmental effects
+        beta[b] ~ dnorm(0, sd = 2)  # Environmental effects
       }
     })
   } else {
@@ -166,10 +241,135 @@ create_truncated_normal_model <- function(model_name, use_legacy_covariate = TRU
   return(modelCode)
 }
 
+assert_matrix_dims <- function(x, nr, nc, name) {
+  if (is.null(dim(x))) {
+    stop(sprintf("Expected matrix for %s, got vector of length %d", name, length(x)))
+  }
+  if (!identical(dim(x), c(nr, nc))) {
+    stop(sprintf("Dimension mismatch for %s: got %dx%d; expected %dx%d",
+                 name, nrow(x), ncol(x), nr, nc))
+  }
+  invisible(TRUE)
+}
+
+sanitize_driver_uncertainty <- function(constants) {
+  cat("Sanitizing driver uncertainty data (STRICT, window-aware)\n")
+
+  eps <- 1e-6
+
+  .summarize_bad <- function(mask, max_show = 10) {
+    rc <- which(mask, arr.ind = TRUE)
+    if (length(rc) == 0) return("0")
+    head_pairs <- apply(head(rc, max_show), 1, \(r) paste0("(", r[1], ",", r[2], ")"))
+    paste0(nrow(rc), " cells; e.g., ", paste(head_pairs, collapse = ", "),
+           if (nrow(rc) > max_show) ", ..." else "")
+  }
+  .in_scope_site <- function(Nsite, Ndate, site_start) {
+    m <- matrix(FALSE, Nsite, Ndate)
+    for (k in seq_len(Nsite)) {
+      if (is.finite(site_start[k]) && site_start[k] >= 1 && site_start[k] <= Ndate) {
+        m[k, site_start[k]:Ndate] <- TRUE
+      }
+    }
+    m
+  }
+
+  bad_pC    <- !is.finite(constants$pC)
+  bad_pC_sd <- !is.finite(constants$pC_sd) | (constants$pC_sd <= 0)
+
+  pC_fill <- median(constants$pC[is.finite(constants$pC)], na.rm = TRUE)
+  constants$pC[bad_pC] <- pC_fill
+  pC_sd_fill <- median(constants$pC_sd[is.finite(constants$pC_sd) & constants$pC_sd > 0], na.rm = TRUE)
+  if (!is.finite(pC_sd_fill) || pC_sd_fill <= 0) pC_sd_fill <- eps
+  constants$pC_sd[bad_pC_sd] <- pC_sd_fill
+
+  idx_pc <- cbind(seq_len(constants$N.plot), pmax(1, pmin(constants$plot_start, constants$N.date)))
+  constants$has_pC_plot <- is.finite(constants$pC[idx_pc]) &
+                           is.finite(constants$pC_sd[idx_pc]) &
+                           (constants$pC_sd[idx_pc] > 0)
+
+  cat(sprintf("  pC repaired: mean cells=%d, sd cells=%d | valid pC plots at start=%d\n",
+              sum(bad_pC), sum(bad_pC_sd), sum(constants$has_pC_plot)))
+
+  bad_pH    <- !is.finite(constants$pH)
+  bad_pH_sd <- !is.finite(constants$pH_sd) | (constants$pH_sd <= 0)
+
+  pH_fill <- median(constants$pH[is.finite(constants$pH)], na.rm = TRUE)
+  constants$pH[bad_pH] <- pH_fill
+  pH_sd_fill <- median(constants$pH_sd[is.finite(constants$pH_sd) & constants$pH_sd > 0], na.rm = TRUE)
+  if (!is.finite(pH_sd_fill) || pH_sd_fill <= 0) pH_sd_fill <- eps
+  constants$pH_sd[bad_pH_sd] <- pH_sd_fill
+
+  idx_ph <- cbind(seq_len(constants$N.plot), pmax(1, pmin(constants$plot_start, constants$N.date)))
+  constants$has_pH_plot <- is.finite(constants$pH[idx_ph]) &
+                           is.finite(constants$pH_sd[idx_ph]) &
+                           (constants$pH_sd[idx_ph] > 0)
+
+  cat(sprintf("  pH repaired: mean cells=%d, sd cells=%d | valid pH plots at start=%d\n",
+              sum(bad_pH), sum(bad_pH_sd), sum(constants$has_pH_plot)))
+
+  if (!is.null(constants$temp)) {
+    in_scope <- .in_scope_site(constants$N.site, constants$N.date, constants$site_start)
+
+    bad_temp_all <- !is.finite(constants$temp)
+    bad_temp_sd_all <- !is.finite(constants$temp_sd) | (constants$temp_sd <= 0)
+
+    bad_temp_in  <- bad_temp_all  & in_scope
+    bad_tsd_in   <- bad_temp_sd_all & in_scope
+
+    denom <- max(1L, sum(in_scope))
+    bad_temp_pct <- 100 * sum(bad_temp_in) / denom
+    bad_tsd_pct  <- 100 * sum(bad_tsd_in)  / denom
+
+    if (any(bad_temp_in)) {
+      stop(sprintf("sanitize_driver_uncertainty: temp has non-finite values within site windows (%.2f%%; %s). No filling allowed.",
+                   bad_temp_pct, .summarize_bad(bad_temp_in)))
+    }
+    if (any(bad_tsd_in)) {
+      stop(sprintf("sanitize_driver_uncertainty: temp_sd has non-finite or <=0 values within site windows (%.2f%%; %s). No filling allowed.",
+                   bad_tsd_pct, .summarize_bad(bad_tsd_in)))
+    }
+
+    cat(sprintf("  temp: 100%% valid within site windows | checked cells=%d | out-of-window ignored=%d\n",
+                sum(in_scope), sum(!in_scope & (bad_temp_all | bad_temp_sd_all))))
+    constants$has_temp <- TRUE
+  }
+
+  if (!is.null(constants$mois)) {
+    in_scope <- .in_scope_site(constants$N.site, constants$N.date, constants$site_start)
+
+    bad_mois_all <- !is.finite(constants$mois)
+    bad_mois_sd_all <- !is.finite(constants$mois_sd) | (constants$mois_sd <= 0)
+
+    bad_mois_in <- bad_mois_all & in_scope
+    bad_msd_in  <- bad_mois_sd_all & in_scope
+
+    denom <- max(1L, sum(in_scope))
+    bad_mois_pct <- 100 * sum(bad_mois_in) / denom
+    bad_msd_pct  <- 100 * sum(bad_msd_in)  / denom
+
+    if (any(bad_mois_in)) {
+      stop(sprintf("sanitize_driver_uncertainty: mois has non-finite values within site windows (%.2f%%; %s). No filling allowed.",
+                   bad_mois_pct, .summarize_bad(bad_mois_in)))
+    }
+    if (any(bad_msd_in)) {
+      stop(sprintf("sanitize_driver_uncertainty: mois_sd has non-finite or <=0 values within site windows (%.2f%%; %s). No filling allowed.",
+                   bad_msd_pct, .summarize_bad(bad_msd_in)))
+    }
+
+    cat(sprintf("  mois: 100%% valid within site windows | checked cells=%d | out-of-window ignored=%d\n",
+                sum(in_scope), sum(!in_scope & (bad_mois_all | bad_mois_sd_all))))
+    constants$has_mois <- TRUE
+  }
+
+  cat("✓ Driver uncertainty data sanitized (STRICT, window-aware)\n")
+  constants
+}
+
 # Function to create stable initialization with proper parameters
-create_truncated_normal_inits <- function(constants, model_name, model_data = NULL) {
+create_truncated_normal_inits <- function(constants, model_name, model_data = NULL, chain_no = 1) {
   cat("Creating TRUNCATED NORMAL initial values for", model_name, "...\n")
-  
+
   # Determine number of beta parameters based on model type
   if (model_name == "env_cycl") {
     n_beta <- 8
@@ -178,51 +378,95 @@ create_truncated_normal_inits <- function(constants, model_name, model_data = NU
   } else {
     n_beta <- 2  # cycl_only
   }
-  
-  # Data-informed initialization if model_data is available
-  if (!is.null(model_data) && "y" %in% names(model_data)) {
-    cat("  Using data-informed initialization...\n")
-    
-    # Extract response data for informed initialization
-    y_values <- as.vector(model_data$y[,1])
-    y_values <- y_values[!is.na(y_values) & is.finite(y_values)]
-    
-    if (length(y_values) > 0) {
-      # Calculate reasonable starting values from data
-      y_mean <- mean(y_values, na.rm = TRUE)
-      y_var <- var(y_values, na.rm = TRUE)
-      
-      # Avoid boundary conditions with data-informed initialization
-      core_sd_init <- max(0.1, min(0.9, sqrt(y_var)))
-      sigma_init <- max(0.01, min(0.5, sqrt(y_var * 0.1)))
-      
-      cat("  Data-informed core_sd:", round(core_sd_init, 3), "\n")
-      cat("  Data-informed sigma:", round(sigma_init, 3), "\n")
-    } else {
-      core_sd_init <- 0.5  # Fallback value
-      sigma_init <- 0.1    # Fallback value
-      cat("  Using fallback values: core_sd = 0.5, sigma = 0.1\n")
-    }
+
+  # Check for warm-start file
+  warmstart_file <- Sys.getenv("WARMSTART_FILE", "")
+  if (warmstart_file != "" && file.exists(warmstart_file)) {
+    cat("  Loading warm-start initial values from:", warmstart_file, "\n")
+    ws <- readRDS(warmstart_file)
+    pm <- ws$param_means
+
+    # Add per-chain jitter to break symmetry
+    set.seed(chain_no * 42)
+    jitter_sd <- 0.05
+
+    inits <- list(
+      core_sd = max(0.001, min(0.999, pm["core_sd"] + rnorm(1, 0, jitter_sd))),
+      sigma = max(0.001, min(0.199, pm["sigma"] + rnorm(1, 0, jitter_sd * 0.5))),
+      site_effect_sd = abs(pm["site_effect_sd"] + rnorm(1, 0, jitter_sd * 0.5)),
+      site_effect = sapply(1:constants$N.site, function(k)
+        pm[paste0("site_effect[", k, "]")] + rnorm(1, 0, jitter_sd)),
+      intercept = pm["intercept"] + rnorm(1, 0, jitter_sd),
+      rho = max(0.001, min(0.99, pm["rho"] + rnorm(1, 0, jitter_sd))),
+      legacy_effect = pm["legacy_effect"] + rnorm(1, 0, jitter_sd),
+      beta = sapply(1:n_beta, function(b) pm[paste0("beta[", b, "]")] + rnorm(1, 0, jitter_sd)),
+      Ex = matrix(0.5, nrow = constants$N.plot, ncol = constants$N.date),
+      plot_mu = matrix(0.5, nrow = constants$N.plot, ncol = constants$N.date)
+    )
+    cat("  Warm-start loaded from", ws$source_iterations, "iteration run, jitter_sd=", jitter_sd, "\n")
+    cat("  core_sd:", round(inits$core_sd, 4), " sigma:", round(inits$sigma, 4),
+        " rho:", round(inits$rho, 4), "\n")
   } else {
-    # Use model-specific default values
-    core_sd_init <- 0.5  # Default observation noise
-    sigma_init <- 0.1    # Default process noise
-    cat("  Using default values: core_sd = 0.5, sigma = 0.1\n")
+    # Cold-start: data-informed initialization if model_data is available
+    if (!is.null(model_data) && "y" %in% names(model_data)) {
+      cat("  Using data-informed initialization...\n")
+
+      # Extract response data for informed initialization
+      y_values <- as.vector(model_data$y[,1])
+      y_values <- y_values[!is.na(y_values) & is.finite(y_values)]
+
+      if (length(y_values) > 0) {
+        # Calculate reasonable starting values from data
+        y_mean <- mean(y_values, na.rm = TRUE)
+        y_var <- var(y_values, na.rm = TRUE)
+
+        # Avoid boundary conditions with data-informed initialization
+        core_sd_init <- max(0.1, min(0.9, sqrt(y_var)))
+        sigma_init <- max(0.01, min(0.5, sqrt(y_var * 0.1)))
+
+        cat("  Data-informed core_sd:", round(core_sd_init, 3), "\n")
+        cat("  Data-informed sigma:", round(sigma_init, 3), "\n")
+      } else {
+        core_sd_init <- 0.5  # Fallback value
+        sigma_init <- 0.1    # Fallback value
+        cat("  Using fallback values: core_sd = 0.5, sigma = 0.1\n")
+      }
+    } else {
+      # Use model-specific default values
+      core_sd_init <- 0.5  # Default observation noise
+      sigma_init <- 0.1    # Default process noise
+      cat("  Using default values: core_sd = 0.5, sigma = 0.1\n")
+    }
+
+    # Start with conservative, bounded values aligned with priors
+    inits <- list(
+      core_sd = core_sd_init,                    # Observation noise
+      sigma = sigma_init,                        # Process noise
+      site_effect_sd = 0.5,                     # Site variation
+      site_effect = rnorm(constants$N.site, 0, 0.1),  # Very small random values
+      intercept = 0,                             # Start at reasonable value
+      rho = 0.3,                                 # Consistent across all models
+      legacy_effect = 0,                         # Start at 0
+      beta = rep(0.01, n_beta),                 # Start with very small effects
+      Ex = matrix(0.5, nrow = constants$N.plot, ncol = constants$N.date),  # Center of range
+      plot_mu = matrix(0.5, nrow = constants$N.plot, ncol = constants$N.date)   # Center of range
+    )
   }
-  
-  # Start with conservative, bounded values aligned with priors
-  inits <- list(
-    core_sd = core_sd_init,                    # Observation noise
-    sigma = sigma_init,                        # Process noise
-    site_effect_sd = 0.5,                     # Site variation
-    site_effect = rnorm(constants$N.site, 0, 0.1),  # Very small random values
-    intercept = 0,                             # Start at reasonable value
-    rho = 0.3,                                 # Consistent across all models
-    legacy_effect = 0,                         # Start at 0
-    beta = rep(0.01, n_beta),                 # Start with very small effects
-    Ex = matrix(0.5, nrow = constants$N.plot, ncol = constants$N.date),  # Center of range
-    plot_mu = matrix(0.5, nrow = constants$N.plot, ncol = constants$N.date)   # Center of range
-  )
+
+  if (model_name %in% c("env_cycl", "env_cov")) {
+    if (isTRUE(constants$temporalDriverUncertainty)) {
+      if (!"temp_est" %in% names(inits)) {
+        inits$temp_est <- constants$temp
+        inits$mois_est <- constants$mois
+      }
+    }
+    if (isTRUE(constants$spatialDriverUncertainty)) {
+      if (!"pH_est_p" %in% names(inits)) {
+        inits$pH_est_p <- constants$pH[cbind(1:constants$N.plot, constants$plot_start)]
+        inits$pC_est_p <- constants$pC[cbind(1:constants$N.plot, constants$plot_start)]
+      }
+    }
+  }
   
   # Additional validation to prevent initialization warnings
   cat("  Validating initial values...\n")
@@ -333,19 +577,46 @@ cat("==================================================\n")
 
 # Get arguments from the command line (run with qsub script & OGE scheduler)
 argv <- commandArgs(TRUE)
-# Check if the command line is not empty and convert values to numerical values
-if (length(argv) > 0){
-  k <- as.numeric( argv[1] )
-} else {
-  k=1
+
+# helpers
+get_flag <- function(name) any(grepl(paste0("^", name, "$"), argv))
+get_opt  <- function(name, default = NULL) {
+  hit <- grep(paste0("^", name, "="), argv, value = TRUE)
+  if (length(hit) > 0) return(sub(paste0("^", name, "="), "", hit[1]))
+  idx <- match(name, argv)
+  if (!is.na(idx) && idx < length(argv)) return(argv[idx + 1L])
+  return(default)
 }
 
-# Run with at least 2 cores available (one MCMC chain per core for testing)
-nchains = 4
+# Back-compat integer task index from first argument
+k <- suppressWarnings(as.integer(if (length(argv) > 0) argv[1] else NA))
+
+# Linear task from CLI or scheduler env
+cli_task      <- suppressWarnings(as.integer(get_opt("--task", NA)))
+sge_task      <- suppressWarnings(as.integer(Sys.getenv("SGE_TASK_ID", NA)))
+pbs_task      <- suppressWarnings(as.integer(Sys.getenv("PBS_ARRAYID", NA)))
+slurm_task    <- suppressWarnings(as.integer(Sys.getenv("SLURM_ARRAY_TASK_ID", NA)))
+array_task_id <- suppressWarnings(as.integer(na.omit(c(cli_task, sge_task, pbs_task, slurm_task))[1]))
+if (!is.na(k) && is.na(array_task_id)) array_task_id <- k
+
+# Store single-task mode flag for later use
+single_task_mode <- !is.na(array_task_id)
+
+# Chains: default 2 for local runs; set NCHAINS env var for HPC
+nchains <- as.integer(Sys.getenv("NCHAINS", "2"))
+
+# CLI selection filters
+cli_rank       <- get_opt("--rank",       NULL)
+cli_species    <- get_opt("--species",    NULL)
+cli_model_name <- get_opt("--model-name", NULL)
 
 #### Run on all groups ----
 
-source("source.R")
+source(here("source.R"))
+
+du_raw <- Sys.getenv("DRIVER_UNCERTAINTY", "TRUE")
+driver_uncertainty_mode <- tolower(trimws(du_raw)) %in% c("1", "true", "yes", "t")
+cat("driver_uncertainty_mode:", driver_uncertainty_mode, " (DRIVER_UNCERTAINTY=", du_raw, ")\n", sep = "")
 
 # Load data early for filtering
 cat("Loading data files for filtering...\n")
@@ -388,34 +659,35 @@ params_in = read.csv(here("data/clean/model_input_df.csv"),
                                    rep("character", 4)))
 
 rerun_list = readRDS(here("data/summary/unconverged_taxa_list.rds"))
-converged_list = readRDS(here("data/summary/converged_taxa_list.rds"))
 
-# TEST CONFIGURATION: Test all three model types with phylum_fun rank for comprehensive testing
+# Base filter: production scenario, 2013-2018 period, and the three model types
 params <- params_in %>% ungroup %>% filter(
-  # Test ALL THREE model types with phylum_fun rank for comprehensive testing
-  rank.name == "phylum_fun" &
-  # Focus ONLY on 2013-2018 period (exclude 2015-2018)
   scenario %in% c("Legacy with covariate 2013-2018") &
-  # Test ALL THREE model types: cycl_only, env_cov, env_cycl
+  min.date == "20130601" &
+  max.date == "20180101" &
   model_name %in% c("cycl_only", "env_cov", "env_cycl")
 )
 
-# Filter out already converged models
-params <- params %>% filter(!model_id %in% converged_list)
-
-# Sample up to 3 models (one of each type) for comprehensive testing
-set.seed(123)  # For reproducible sampling
-params <- params %>%
-  sample_n(size = min(3, n()), replace = FALSE) %>%  # Test with up to 3 models (one per type)
-  ungroup()
-
-cat("TESTING CONFIGURATION: Running", nrow(params), "models (all three types) with phylum_fun rank and", nchains, "chains each\n")
-cat("Model configuration:\n")
-if (nrow(params) > 0) {
-  print(params[, c("rank.name", "species", "model_name", "model_id")])
-} else {
-  cat("No models to run\n")
+# Apply CLI filters
+if (!is.null(cli_rank)) {
+  params <- params %>% dplyr::filter(rank.name == cli_rank)
+  cat("Filtered to rank.name=", cli_rank, "->", nrow(params), "rows\n")
 }
+if (!is.null(cli_species)) {
+  params <- params %>% dplyr::filter(species == cli_species)
+  cat("Filtered to species=", cli_species, "->", nrow(params), "rows\n")
+}
+if (!is.null(cli_model_name)) {
+  params <- params %>% dplyr::filter(model_name == cli_model_name)
+  cat("Filtered to model_name=", cli_model_name, "->", nrow(params), "rows\n")
+}
+if (nrow(params) == 0) {
+  stop("No models remain after filtering; check --species / --model-name / --rank.")
+}
+
+cat("Running", nrow(params), "models with", nchains, "chains each\n")
+cat("Model configuration:\n")
+print(params[, c("rank.name", "species", "model_name", "model_id")])
 
 # Filter parameters to only include models with available species and ranks
 cat("Filtering models to only include those with available data...\n")
@@ -481,10 +753,10 @@ print(valid_models)
 
 cat("HPC PRODUCTION: Running", nrow(valid_models), "models across all ranks with truncated normal approach\n")
 
-# Create cluster for parallel execution - Use full 28 cores for HPC production
-n_cores <- 28  # Use full HPC allocation
-cat("Creating cluster with", n_cores, "cores for", nrow(valid_models), "models ×", nchains, "chains\n")
-cat("HPC cores allocated:", n_cores, "\n")
+# Create cluster for parallel execution
+n_cores <- as.integer(Sys.getenv("NCORES", "2"))
+cat("Creating cluster with", n_cores, "cores for", nrow(valid_models), "models x", nchains, "chains\n")
+cat("Cores allocated:", n_cores, "(set NCORES env var to change)\n")
 
 # Create cluster with explicit error handling
 tryCatch({
@@ -700,6 +972,36 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
           stop("Missing required environmental predictor: ", pred)
         }
       }
+
+      if (length(constants$site_start) >= constants$N.site) {
+        constants$site_start <- as.integer(unname(constants$site_start[seq_len(constants$N.site)]))
+        if (any(is.na(constants$site_start))) constants$site_start <- rep(1L, constants$N.site)
+      } else {
+        constants$site_start <- rep(1L, constants$N.site)
+      }
+      stopifnot(length(constants$site_start) == constants$N.site)
+
+      constants$temporalDriverUncertainty <- driver_uncertainty_mode
+      constants$spatialDriverUncertainty <- driver_uncertainty_mode
+      cat("  temporalDriverUncertainty =", constants$temporalDriverUncertainty,
+          " spatialDriverUncertainty =", constants$spatialDriverUncertainty, "\n")
+
+      if (constants$temporalDriverUncertainty || constants$spatialDriverUncertainty) {
+        if (constants$temporalDriverUncertainty) {
+          constants$temp_sd <- model.dat$temp_sd
+          constants$mois_sd <- model.dat$mois_sd
+          assert_matrix_dims(constants$temp_sd, constants$N.site, constants$N.date, "temp_sd")
+          assert_matrix_dims(constants$mois_sd, constants$N.site, constants$N.date, "mois_sd")
+        }
+        if (constants$spatialDriverUncertainty) {
+          constants$pH_sd <- model.dat$pH_sd
+          constants$pC_sd <- model.dat$pC_sd
+          assert_matrix_dims(constants$pH_sd, constants$N.plot, constants$N.date, "pH_sd")
+          assert_matrix_dims(constants$pC_sd, constants$N.plot, constants$N.date, "pC_sd")
+        }
+        constants <- sanitize_driver_uncertainty(constants)
+        cat("  Driver uncertainty data added and sanitized\n")
+      }
     } else {
       cat("Skipping environmental predictors for", model_name, "model\n")
     }
@@ -750,11 +1052,19 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
     
     # Create truncated normal model using our function
     cat("Building Nimble model with truncated normal approach...\n")
-    modelCode <- create_truncated_normal_model(model_name, use_legacy_covariate)
+    tdu <- isTRUE(constants$temporalDriverUncertainty)
+    sdu <- isTRUE(constants$spatialDriverUncertainty)
+    if (!model_name %in% c("env_cycl", "env_cov")) {
+      tdu <- TRUE
+      sdu <- TRUE
+    }
+    modelCode <- create_truncated_normal_model(model_name, use_legacy_covariate,
+                                               temporalDriverUncertainty = tdu,
+                                               spatialDriverUncertainty = sdu)
     
     # Create truncated normal initial values
     cat("Creating initial values using truncated normal approach...\n")
-    inits <- create_truncated_normal_inits(constants, model_name, model_data = model.dat)
+    inits <- create_truncated_normal_inits(constants, model_name, model_data = model.dat, chain_no = chain_no)
     
     cat("Model built successfully\n")
     
@@ -872,7 +1182,9 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
     if (use_legacy_covariate) {
       monitors <- c(monitors, "legacy_effect")
     }
-    mcmcConf <- configureMCMC(cModel, monitors = monitors, useConjugacy = FALSE)
+    monitors2 <- c("plot_mu")  # plot-level estimates for obs vs est comparison
+    mcmcConf <- configureMCMC(cModel, monitors = monitors, monitors2 = monitors2,
+                               thin2 = 10, useConjugacy = FALSE)
     
     # Remove default samplers before adding specialized ones
     mcmcConf$removeSamplers(c("core_sd", "sigma", "rho", "site_effect_sd", "intercept"))
@@ -944,19 +1256,30 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
     
     # Run MCMC with convergence-based sampling
     cat("Running MCMC with convergence-based sampling...\n")
-    burnin <- 50
-    thin <- 1
-    iter_per_chunk <- 100
-    init_iter <- 100
-    min_eff_size_perchain <- 5
-    max_loops <- 3
-    min_total_iterations <- 200
-    
+    burnin <- 5000
+    thin <- as.integer(Sys.getenv("THIN", unset = "1"))
+    cat("  Thinning: thin =", thin, "\n")
+    iter_per_chunk <- 5000
+    init_iter <- 5000
+    min_eff_size_perchain <- as.integer(Sys.getenv("MIN_ESS", unset = "5"))
+    cat("  Min ESS target per chain:", min_eff_size_perchain, "\n")
+    max_loops <- 40
+    min_total_iterations <- 50000
+    max_total_iterations <- 200000
+
+    max_iter_env <- suppressWarnings(as.integer(Sys.getenv("MAX_ITER", NA)))
+    if (!is.na(max_iter_env)) {
+      max_total_iterations <- max_iter_env
+      min_total_iterations <- min(min_total_iterations, max_iter_env)
+      cat("  MAX_ITER override:", max_total_iterations, "\n")
+    }
+
     cat("Running MCMC with convergence-based sampling\n")
     cat("  Initial iterations:", init_iter, "burnin:", burnin, "\n")
     cat("  Iterations per chunk:", iter_per_chunk, "max loops:", max_loops, "\n")
     cat("  Target ESS per chain:", min_eff_size_perchain, "\n")
     cat("  Minimum total iterations:", min_total_iterations, "\n")
+    cat("  Maximum total iterations:", max_total_iterations, "\n")
     
     # Run initial iterations with progress reporting and adaptation
     cat("  Running initial iterations (", init_iter, " iterations) for adaptation...\n")
@@ -965,8 +1288,10 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
     
     # Get initial samples and check convergence
     initial_samples <- as.matrix(compiled$mvSamples)
+    initial_samples2 <- as.matrix(compiled$mvSamples2)
     cat("  Initial samples collected, checking convergence...\n")
     cat("  Initial samples dimensions:", dim(initial_samples), "\n")
+    cat("  Initial samples2 dimensions:", dim(initial_samples2), "\n")
     
     # Create output directory for checkpoints using the global model_output_dir
     cat("  Creating output directory for checkpoints...\n")
@@ -1006,6 +1331,7 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
     
     # Store all samples as we go
     all_samples <- initial_samples
+    all_samples2 <- initial_samples2
     cat("  Starting iterative accumulation with", nrow(all_samples), "initial samples\n")
     
     # Save initial samples as checkpoint
@@ -1036,7 +1362,7 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
       cat("  ✗ Failed to create progress file:", e$message, "\n")
     })
     
-    while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops) {
+    while ((continue || total_iterations < min_total_iterations) && loop_counter < max_loops && total_iterations < max_total_iterations) {
       if (continue) {
         cat("  Effective sample size too low; running for another", iter_per_chunk, "iterations\n")
       } else {
@@ -1050,9 +1376,10 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
       
       # Get updated samples and accumulate them
       current_samples <- as.matrix(compiled$mvSamples)
+      current_samples2 <- as.matrix(compiled$mvSamples2)
       cat("  Current total samples in compiled object:", nrow(current_samples), "\n")
       cat("  Previous accumulated samples:", nrow(all_samples), "\n")
-      
+
       # Only take the new samples (skip the initial ones we already have)
       if (nrow(current_samples) > nrow(initial_samples)) {
         new_samples <- current_samples[(nrow(initial_samples) + 1):nrow(current_samples), , drop = FALSE]
@@ -1061,6 +1388,13 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
       } else {
         cat("  WARNING: No new samples detected, using current samples\n")
         all_samples <- current_samples
+      }
+      # Accumulate samples2 (plot_mu)
+      if (nrow(current_samples2) > nrow(initial_samples2)) {
+        new_s2 <- current_samples2[(nrow(initial_samples2) + 1):nrow(current_samples2), , drop = FALSE]
+        all_samples2 <- rbind(all_samples2, new_s2)
+      } else {
+        all_samples2 <- current_samples2
       }
       
       # Save checkpoint after each loop
@@ -1160,21 +1494,26 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
     # Save MCMC samples with absolute path
     samples_file <- file.path(model_output_dir, paste0("samples_", model_id, "_chain", chain_no, ".rds"))
     
+    has_driver_uncertainty <- (model_name %in% c("env_cycl", "env_cov")) && isTRUE(driver_uncertainty_mode)
+
     # Create the complete chain structure with metadata
     chain_output <- list(
       samples = all_samples,
+      samples2 = all_samples2,
       metadata = list(
         rank.name = rank.name,
         species = species,
         model_name = model_name,
         model_id = model_id,
         use_legacy_covariate = use_legacy_covariate,
+        has_driver_uncertainty = has_driver_uncertainty,
         scenario = scenario,
         min.date = min.date,
         max.date = max.date,
         niter = total_iterations,
         nburnin = burnin,
         thin = thin,
+        thin2 = 10,
         model_data = model.dat,
         nimble_code = modelCode,
         model_structure = "truncated_normal_with_mean_sd_beta"
@@ -1219,6 +1558,7 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
         model_name = model_name,
         model_id = model_id,
         use_legacy_covariate = use_legacy_covariate,
+        has_driver_uncertainty = has_driver_uncertainty,
         scenario = scenario,
         min.date = min.date,
         max.date = max.date,
@@ -1308,6 +1648,30 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
       error_file = error_file
     ))
   })
+}
+
+# Define global model_output_dir (needed by run_truncated_normal_scenarios)
+model_output_dir <- here("data", "model_outputs", "truncated_normal")
+
+# ---------- SINGLE-TASK SELECTION (--task N) ----------
+if (single_task_mode) {
+  all_tasks <- expand.grid(model_idx = 1:nrow(valid_models), chain_no = 1:nchains)
+  total_tasks <- nrow(all_tasks)
+  if (array_task_id < 1 || array_task_id > total_tasks) {
+    stop(sprintf("array_task_id=%d out of bounds (1..%d)", array_task_id, total_tasks))
+  }
+  model_idx <- all_tasks$model_idx[array_task_id]
+  chain_no  <- all_tasks$chain_no[array_task_id]
+
+  cat(sprintf("Single-task mode: task=%d of %d -> model_idx=%d, chain_no=%d\n",
+              array_task_id, total_tasks, model_idx, nrow(valid_models)))
+
+  set.seed(100000 + model_idx * 100 + chain_no)
+  res <- run_truncated_normal_scenarios(j = model_idx, chain_no = chain_no)
+
+  if (!is.null(cl)) stopCluster(cl)
+  cat("Single-task mode completed.\n")
+  quit(save = "no", status = 0)
 }
 
 # Prepare parallel tasks
@@ -1511,7 +1875,7 @@ runAndSave_task <- function(task_idx) {
           model_name = valid_models$model_name[model_idx],
           model_id = model_id,
           use_legacy_covariate = grepl("Legacy with covariate", valid_models$scenario[model_idx]),
-          has_driver_uncertainty = FALSE,  # Flag to identify regular models (no driver uncertainty)
+          has_driver_uncertainty = valid_models$model_name[model_idx] %in% c("env_cycl", "env_cov") && isTRUE(driver_uncertainty_mode),
           scenario = valid_models$scenario[model_idx],
           min.date = valid_models$min.date[model_idx],
           max.date = valid_models$max.date[model_idx],
@@ -1615,7 +1979,7 @@ model_output_dir <- here("data", "model_outputs", "truncated_normal")
 start_time <- Sys.time()
 
 # Export the function to workers
-clusterExport(cl, c("runAndSave_task", "run_truncated_normal_scenarios", "valid_models", "all_tasks", "model_output_dir", "params"))
+clusterExport(cl, c("runAndSave_task", "run_truncated_normal_scenarios", "valid_models", "all_tasks", "model_output_dir", "params", "driver_uncertainty_mode", "assert_matrix_dims", "sanitize_driver_uncertainty", "create_truncated_normal_model", "create_truncated_normal_inits"))
 
 # Run everything in parallel with incremental saving
 cat("DEBUG: Starting foreach loop with", nrow(all_tasks), "tasks\n")
@@ -1665,7 +2029,7 @@ cat("DEBUG: Data exists in workers:", unlist(test_data), "\n")
 
 all_results_parallel = foreach(task_idx = 1:nrow(all_tasks), 
                              .packages = c("nimble", "microbialForecast", "here", "tidyverse", "coda"),
-                             .export = c("runAndSave_task", "run_truncated_normal_scenarios", "valid_models", "all_tasks", "model_output_dir", "params")) %dopar% {
+                             .export = c("runAndSave_task", "run_truncated_normal_scenarios", "valid_models", "all_tasks", "model_output_dir", "params", "driver_uncertainty_mode", "assert_matrix_dims", "sanitize_driver_uncertainty", "create_truncated_normal_model", "create_truncated_normal_inits")) %dopar% {
   cat("DEBUG: Worker starting task", task_idx, "at", Sys.time(), "\n")
   
   # Test if we can access the function
