@@ -42,22 +42,25 @@ if (!exists("base_path") || is.null(base_path) || base_path == "") {
   base_path <- "data/model_outputs/cloglog_beta_driver_uncertainty/"
 }
 
-cat("Base path:", base_path, "\n")
+cat("Base path (before here resolution):", base_path, "\n")
 cat("Model types to process:", paste(model_types, collapse = ", "), "\n")
 
 source("../../source.R")
+# Relative base_path is from project root (here::i_am), not from getwd()
+if (!grepl("^(/|~|[A-Za-z]:)", base_path)) {
+  base_path <- paste0(here::here(gsub("/$", "", gsub("^\\./", "", base_path))), "/")
+}
+cat("Base path (resolved):", base_path, "\n")
+MF_PROJECT_R_LIBRARY <- here::here("R_library")
 library(dplyr)
 library(coda)
 library(purrr)
 library(data.table)
-# Arrow package for parquet file support (optional)
-if (!require(arrow, quietly = TRUE)) {
-  tryCatch({
-    install.packages("arrow", repos = "https://cran.rstudio.com/", dependencies = FALSE, quiet = TRUE)
-    library(arrow)
-  }, error = function(e) {
-    cat("Warning: arrow package not available. Parquet file support will be limited.\n")
-  })
+# Arrow package for parquet file support (optional; do not auto-install — can block on compile)
+if (!requireNamespace("arrow", quietly = TRUE)) {
+  cat("Warning: arrow package not available. Parquet file support will be limited.\n")
+} else {
+  suppressPackageStartupMessages(library(arrow))
 }
 
 # summarize_beta_model and calculate_plot_summary_from_samples loaded via microbialForecast package
@@ -631,10 +634,13 @@ cat("Validating files using parallel processing...\n")
 cl <- makeCluster(max_cores)
 
 # Export all necessary functions and variables
-clusterExport(cl, c("validate_file", "extract_species_name", "get_file_type", "get_model_type", "here"))
+clusterExport(cl, c("validate_file", "extract_species_name", "get_file_type", "get_model_type", "here", "MF_PROJECT_R_LIBRARY"))
 
 # Set up the cluster environment
 clusterEvalQ(cl, {
+  if (exists("MF_PROJECT_R_LIBRARY") && nzchar(MF_PROJECT_R_LIBRARY) && dir.exists(MF_PROJECT_R_LIBRARY)) {
+    .libPaths(c(MF_PROJECT_R_LIBRARY, .libPaths()))
+  }
   library(dplyr)
   library(here)
   # Source the helper functions that might be needed
@@ -834,8 +840,12 @@ if (use_sequential) {
   cat("Using parallel processing with", max_cores, "cores\n")
   cl <- makeCluster(max_cores)
   
+  clusterExport(cl, "MF_PROJECT_R_LIBRARY", envir = environment())
   # Set up cluster environment - load updated source code
   clusterEvalQ(cl, {
+    if (exists("MF_PROJECT_R_LIBRARY") && nzchar(MF_PROJECT_R_LIBRARY) && dir.exists(MF_PROJECT_R_LIBRARY)) {
+      .libPaths(c(MF_PROJECT_R_LIBRARY, .libPaths()))
+    }
     library(dplyr)
     library(here)
     library(microbialForecast)
@@ -1080,21 +1090,11 @@ if(exists("ready_file_paths")) {
   }
 }
 
-# Filter out empty summary files
-valid_summary_files <- c()
-for (file in summary_file_list) {
-  tryCatch({
-    obj <- readRDS(file)
-    if (length(obj) > 0 && (length(names(obj)) > 0 || (is.list(obj) && length(obj) >= 3))) {
-      valid_summary_files <- c(valid_summary_files, file)
-    } else {
-      cat("Skipping empty summary file:", basename(file), "\n")
-    }
-  }, error = function(e) {
-    cat("Skipping corrupted summary file:", basename(file), "\n")
-  })
+# Filter out zero-byte files (corrupted writes) without re-reading contents
+valid_summary_files <- summary_file_list[file.size(summary_file_list) > 0]
+if (length(valid_summary_files) < length(summary_file_list)) {
+  cat("Skipped", length(summary_file_list) - length(valid_summary_files), "zero-byte summary files\n")
 }
-
 summary_file_list <- valid_summary_files
 cat("Valid summary files:", length(summary_file_list), "\n")
 

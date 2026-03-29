@@ -4,6 +4,12 @@
 # Establish project root — works whether sourced from project root or subdirectories
 here::i_am("source.R")
 
+# Prefer project R_library (e.g. when getwd() is analysis/model_analysis, .Rprofile is not read)
+proj_lib <- here::here("R_library")
+if (dir.exists(proj_lib)) {
+  .libPaths(c(proj_lib, .libPaths()))
+}
+
 # Load microbialForecast package (provides helper functions and global variables)
 library(microbialForecast)
 
