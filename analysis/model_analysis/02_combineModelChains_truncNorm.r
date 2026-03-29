@@ -1,5 +1,6 @@
 # Combine chains from each taxon model, and create basic summary stats
 # TRUNCATED NORMAL VERSION - Adapted for truncated normal model outputs
+# Run before 03_summarizeModelOutputs_truncNorm.r (step 02 in the truncnorm pipeline).
 source("../../source.R")
 
 # Define model types and time periods for truncated normal models
