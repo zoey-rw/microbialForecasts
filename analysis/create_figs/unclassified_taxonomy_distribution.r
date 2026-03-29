@@ -15,12 +15,14 @@ library(here)
 path_16S <- getOption("phyloseq_16S_path", here("data", "clean", "phyloseq_16S.rds"))
 path_ITS <- getOption("phyloseq_ITS_path", here("data", "clean", "phyloseq_ITS.rds"))
 
-if (!file.exists(path_16S) || !file.exists(path_ITS)) {
+if (!file.exists(path_16S) && !file.exists(path_ITS)) {
   stop(
-    "Phyloseq RDS files not found. Place phyloseq_16S.rds and phyloseq_ITS.rds in data/clean/ ",
+    "No phyloseq RDS files found. Place phyloseq_16S.rds and/or phyloseq_ITS.rds in data/clean/ ",
     "or set options(phyloseq_16S_path = ..., phyloseq_ITS_path = ...)."
   )
 }
+if (!file.exists(path_16S)) message("phyloseq_16S.rds not found; skipping bacteria.")
+if (!file.exists(path_ITS)) message("phyloseq_ITS.rds not found; skipping fungi.")
 
 # Taxonomy column names (lowercase as in prep scripts)
 tax_cols_16S <- c("kingdom", "phylum", "class", "order", "family", "genus")
@@ -70,25 +72,19 @@ process_phyloseq <- function(path, tax_cols, kingdom_label) {
   list(tax_df = tax_df, tax_cols = tax_cols, kingdom_label = kingdom_label, fg_cols = fg_cols)
 }
 
-# Load and process both kingdoms
-proc_16S <- process_phyloseq(path_16S, tax_cols_16S, "Bacteria")
-proc_ITS <- process_phyloseq(path_ITS, tax_cols_ITS, "Fungi")
-
-# Summary stats for reporting
-n_unclass_16S <- sum(proc_16S$tax_df$unclassified, na.rm = TRUE)
-n_total_16S <- nrow(proc_16S$tax_df)
-n_unclass_ITS <- sum(proc_ITS$tax_df$unclassified, na.rm = TRUE)
-n_total_ITS <- nrow(proc_ITS$tax_df)
+# Load and process available kingdoms
+proc_16S <- if (file.exists(path_16S)) process_phyloseq(path_16S, tax_cols_16S, "Bacteria") else NULL
+proc_ITS <- if (file.exists(path_ITS)) process_phyloseq(path_ITS, tax_cols_ITS, "Fungi") else NULL
 
 # By phylum (main test: broad vs concentrated)
-by_phylum_16S <- summarize_by_rank(proc_16S$tax_df, "phylum", "Bacteria")
-by_phylum_ITS <- summarize_by_rank(proc_ITS$tax_df, "phylum", "Fungi")
+by_phylum_16S <- if (!is.null(proc_16S)) summarize_by_rank(proc_16S$tax_df, "phylum", "Bacteria") else NULL
+by_phylum_ITS <- if (!is.null(proc_ITS)) summarize_by_rank(proc_ITS$tax_df, "phylum", "Fungi") else NULL
 by_phylum <- bind_rows(by_phylum_16S, by_phylum_ITS) %>%
   rename(phylum = rank_val)
 
 # By class (finer resolution)
-by_class_16S <- summarize_by_rank(proc_16S$tax_df, "class", "Bacteria")
-by_class_ITS <- summarize_by_rank(proc_ITS$tax_df, "class", "Fungi")
+by_class_16S <- if (!is.null(proc_16S)) summarize_by_rank(proc_16S$tax_df, "class", "Bacteria") else NULL
+by_class_ITS <- if (!is.null(proc_ITS)) summarize_by_rank(proc_ITS$tax_df, "class", "Fungi") else NULL
 by_class <- bind_rows(by_class_16S, by_class_ITS) %>%
   rename(class = rank_val)
 
@@ -103,15 +99,17 @@ out_table_path <- here("figures", "unclassified_by_taxonomy.csv")
 readr::write_csv(tab_phylum, out_table_path)
 cat("Table saved:", out_table_path, "\n")
 
-# How many phyla contain unclassified ASVs? (broad = many phyla)
-n_phyla_with_unclass_16S <- sum(by_phylum_16S$n_unclassified > 0)
-n_phyla_with_unclass_ITS <- sum(by_phylum_ITS$n_unclassified > 0)
-n_phyla_total_16S <- nrow(by_phylum_16S)
-n_phyla_total_ITS <- nrow(by_phylum_ITS)
-cat("\nUnclassified ASVs present in", n_phyla_with_unclass_16S, "of", n_phyla_total_16S, "bacterial phyla\n")
-cat("Unclassified ASVs present in", n_phyla_with_unclass_ITS, "of", n_phyla_total_ITS, "fungal phyla\n")
-cat("Bacteria: ", round(100 * n_unclass_16S / n_total_16S, 1), "% unclassified (", n_unclass_16S, "/", n_total_16S, " ASVs)\n", sep = "")
-cat("Fungi:    ", round(100 * n_unclass_ITS / n_total_ITS, 1), "% unclassified (", n_unclass_ITS, "/", n_total_ITS, " ASVs)\n", sep = "")
+# Summary stats
+for (proc in list(proc_16S, proc_ITS)) {
+  if (is.null(proc)) next
+  n_unclass <- sum(proc$tax_df$unclassified, na.rm = TRUE)
+  n_total <- nrow(proc$tax_df)
+  by_phy <- by_phylum %>% filter(kingdom == proc$kingdom_label)
+  n_phyla_with <- sum(by_phy$n_unclassified > 0)
+  n_phyla_total <- nrow(by_phy)
+  cat(proc$kingdom_label, ": unclassified ASVs in ", n_phyla_with, " of ", n_phyla_total, " phyla (",
+      round(100 * n_unclass / n_total, 1), "%, ", n_unclass, "/", n_total, " ASVs)\n", sep = "")
+}
 
 # Figure: unclassified vs classified counts by phylum (shows spread across clades)
 plot_df <- by_phylum %>%
