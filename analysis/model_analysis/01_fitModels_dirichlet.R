@@ -213,6 +213,10 @@ if (nzchar(Sys.getenv("RHO_PRIOR_UNIF", ""))) {
   base_dir_name <- paste0(base_dir_name, "_rho_unif")
   cat("RHO_PRIOR_UNIF set: writing to", base_dir_name, "\n")
 }
+if (nzchar(Sys.getenv("OUTPUT_SUFFIX", ""))) {
+  base_dir_name <- paste0(base_dir_name, "_", Sys.getenv("OUTPUT_SUFFIX"))
+  cat("OUTPUT_SUFFIX set: writing to", base_dir_name, "\n")
+}
 model_output_dir <- here("data", "model_outputs", base_dir_name)
 dir.create(model_output_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -540,31 +544,33 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
     if (model_name == "env_cycl" && use_legacy_covariate) {
         modelCode <- nimble::nimbleCode({
             # 1. PRIORS (Vectorized across N.spp)
+            # --- Centered parameterization: site_effect absorbs the intercept ---
             for (s in 1:N.spp) {
                 rho[s] ~ dunif(-0.99, 0.99)
-                intercept[s] ~ dnorm(0, sd = 10)
                 legacy_effect[s] ~ dnorm(0, sd = 10)
 
+                # Centered site effects: intercept is the grand mean (replaces intercept)
+                intercept[s] ~ dnorm(0, sd = 10)
                 site_effect_sd[s] ~ dgamma(2, 20)
                 for (k in 1:N.site) {
-                    site_effect[k, s] ~ dnorm(0, sd = site_effect_sd[s])
+                    site_effect[k, s] ~ dnorm(intercept[s], sd = site_effect_sd[s])
                 }
 
-                for (b in 1:8) {
-                    beta[s, b] ~ dnorm(0, sd = 10)
-                }
+                # Multivariate normal prior on beta vector (pools information across covariates)
+                beta[s, 1:8] ~ dmnorm(zeros[1:8], omega[1:8, 1:8])
 
-                sigma_proc[s] ~ dunif(0, 0.5)
-                tau_proc[s] <- pow(sigma_proc[s], -2)
+                # Gamma concentration for process error (conjugate-friendly)
+                sigma_proc[s] ~ dgamma(2, 0.5)   # concentration; higher = less process noise
+
                 sigma_init[s] ~ dunif(0, 1)
                 tau_init[s] <- pow(sigma_init[s], -2)
             }
 
-            # 2. PROCESS MODEL - AR(1) on eta, map to alpha (seasonal + env)
+            # 2. PROCESS MODEL - AR(1) on log-scale, Gamma-distributed alpha
             for (s in 1:N.spp) {
                 for (p in 1:N.plot) {
-                    eta[p, s, plot_start[p]] ~ dnorm(
-                        intercept[s] +
+                    # Initial timepoint: log-linear predictor -> Gamma alpha
+                    log_mu[p, s, plot_start[p]] <-
                         site_effect[plot_site_num[p], s] +
                         beta[s, 1] * sin_mo[plot_start[p]] + beta[s, 2] * cos_mo[plot_start[p]] +
                         beta[s, 3] * temp_est[plot_site_num[p], plot_start[p]] +
@@ -572,15 +578,18 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
                         beta[s, 5] * pH_est[p, plot_start[p]] + beta[s, 6] * pC_est[p, plot_start[p]] +
                         beta[s, 7] * relEM[p, plot_start[p]] +
                         beta[s, 8] * LAI[plot_site_num[p], plot_start[p]] +
-                        legacy_effect[s] * legacy[p, plot_start[p]],
-                        tau_init[s]
-                    )
-                    alpha[p, s, plot_start[p]] <- exp(eta[p, s, plot_start[p]])
+                        legacy_effect[s] * legacy[p, plot_start[p]]
+
+                    # Gamma-distributed alpha (conjugate with Dirichlet)
+                    # E[alpha] = exp(log_mu), Var[alpha] = exp(log_mu) / sigma_proc
+                    alpha[p, s, plot_start[p]] ~ dgamma(
+                        shape = exp(log_mu[p, s, plot_start[p]]) * sigma_proc[s],
+                        rate = sigma_proc[s])
 
                     for (t in (plot_start[p] + 1):N.date) {
-                        eta[p, s, t] ~ dnorm(
-                            rho[s] * eta[p, s, t - 1] +
-                            intercept[s] +
+                        # AR(1) on log scale with covariates
+                        log_mu[p, s, t] <-
+                            rho[s] * log(max(alpha[p, s, t - 1], 0.001)) +
                             site_effect[plot_site_num[p], s] +
                             beta[s, 1] * sin_mo[t] + beta[s, 2] * cos_mo[t] +
                             beta[s, 3] * temp_est[plot_site_num[p], t] +
@@ -588,10 +597,11 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
                             beta[s, 5] * pH_est[p, t] + beta[s, 6] * pC_est[p, t] +
                             beta[s, 7] * relEM[p, t] +
                             beta[s, 8] * LAI[plot_site_num[p], t] +
-                            legacy_effect[s] * legacy[p, t],
-                            tau_proc[s]
-                        )
-                        alpha[p, s, t] <- exp(eta[p, s, t])
+                            legacy_effect[s] * legacy[p, t]
+
+                        alpha[p, s, t] ~ dgamma(
+                            shape = exp(log_mu[p, s, t]) * sigma_proc[s],
+                            rate = sigma_proc[s])
                     }
                 }
             }
@@ -623,7 +633,7 @@ create_nimble_model_with_uncertainty <- function(model_name, use_legacy_covariat
                 }
             }
 
-            # DRIVER UNCERTAINTY - Spatial (pH/pC are plot-level, constant over time; _est_p = per-plot latent)
+            # DRIVER UNCERTAINTY - Spatial
             if (spatialDriverUncertainty) {
                 for (p in 1:N.plot) {
                     pH_est_p[p] ~ dnorm(pH[p, plot_start[p]], sd = pH_sd[p, plot_start[p]])
@@ -975,9 +985,9 @@ assert_vector_len <- function(x, n, name) {
   invisible(TRUE)
 }
 
-create_inits_with_uncertainty <- function(constants, model_name, model_data = NULL) {
+create_inits_with_uncertainty <- function(constants, model_name, model_data = NULL, chain_no = 1) {
     info("Creating initial values with driver uncertainty for %s...", model_name)
-    
+
     # Determine number of beta parameters based on model type
     if (model_name == "env_cycl") {
         n_beta <- 8
@@ -986,21 +996,63 @@ create_inits_with_uncertainty <- function(constants, model_name, model_data = NU
     } else {
         n_beta <- 2  # cycl_only
     }
-    
-    # Base initial values that Dirichlet models need (vectorized across N.spp)
-    inits <- list(
-        rho = rep(0.3, constants$N.spp),
-        beta = matrix(0.01, nrow = constants$N.spp, ncol = n_beta),
-        site_effect_sd = rep(0.5, constants$N.spp),
-        site_effect = matrix(rnorm(constants$N.site * constants$N.spp, 0, 0.1),
-                             nrow = constants$N.site, ncol = constants$N.spp),
-        intercept = rep(-2, constants$N.spp),
-        sigma_proc = rep(0.1, constants$N.spp),
-        sigma_init = rep(0.5, constants$N.spp),
-        eta = array(-1, dim = c(constants$N.plot, constants$N.spp, constants$N.date))
-    )
-    if (model_name %in% c("env_cycl", "env_cov")) {
-        inits$legacy_effect <- rep(0, constants$N.spp)
+
+    # Check for warm-start file
+    warmstart_file <- Sys.getenv("WARMSTART_FILE", "")
+    if (warmstart_file != "" && file.exists(warmstart_file)) {
+        info("  Loading warm-start initial values from: %s", warmstart_file)
+        ws <- readRDS(warmstart_file)
+        pm <- ws$param_means
+
+        # Map flat MCMC parameter names back into structured inits
+        # Add small per-chain jitter to break symmetry
+        set.seed(chain_no * 42)
+        jitter_sd <- 0.05
+
+        inits <- list(
+            rho = sapply(1:constants$N.spp, function(s) pm[paste0("rho[", s, "]")] + rnorm(1, 0, jitter_sd)),
+            beta = matrix(sapply(1:n_beta, function(b) sapply(1:constants$N.spp, function(s)
+                pm[paste0("beta[", s, ", ", b, "]")] + rnorm(1, 0, jitter_sd))),
+                nrow = constants$N.spp, ncol = n_beta),
+            site_effect_sd = sapply(1:constants$N.spp, function(s)
+                abs(pm[paste0("site_effect_sd[", s, "]")] + rnorm(1, 0, jitter_sd * 0.5))),
+            site_effect = matrix(sapply(1:constants$N.spp, function(s) sapply(1:constants$N.site, function(k)
+                pm[paste0("site_effect[", k, ", ", s, "]")] + rnorm(1, 0, jitter_sd))),
+                nrow = constants$N.site, ncol = constants$N.spp),
+            intercept = sapply(1:constants$N.spp, function(s) pm[paste0("intercept[", s, "]")] + rnorm(1, 0, jitter_sd)),
+            sigma_proc = sapply(1:constants$N.spp, function(s) {
+                v <- pm[paste0("sigma_proc[", s, "]")]
+                if (is.na(v)) v <- pm[paste0("sigma[", s, ", 1]")]  # try alternative naming
+                abs(v + rnorm(1, 0, jitter_sd * 0.2))
+            }),
+            sigma_init = sapply(1:constants$N.spp, function(s) {
+                v <- pm[paste0("sigma_init[", s, "]")]
+                if (is.na(v)) v <- pm[paste0("sigma[", s, ", 2]")]
+                abs(v + rnorm(1, 0, jitter_sd * 0.2))
+            }),
+            eta = array(-1, dim = c(constants$N.plot, constants$N.spp, constants$N.date))
+        )
+        if (model_name %in% c("env_cycl", "env_cov")) {
+            inits$legacy_effect <- sapply(1:constants$N.spp, function(s)
+                pm[paste0("legacy_effect[", s, "]")] + rnorm(1, 0, jitter_sd))
+        }
+        info("  Warm-start loaded from %d-iteration run, jitter_sd=%.3f for chain %d", ws$source_iterations, jitter_sd, chain_no)
+    } else {
+        # Default cold-start initial values (reparameterized model)
+        inits <- list(
+            rho = rep(0.3, constants$N.spp),
+            beta = matrix(0.01, nrow = constants$N.spp, ncol = n_beta),
+            site_effect_sd = rep(0.5, constants$N.spp),
+            intercept = rep(-1, constants$N.spp),  # centered parameterization (replaces intercept)
+            site_effect = matrix(rnorm(constants$N.site * constants$N.spp, -1, 0.1),
+                                 nrow = constants$N.site, ncol = constants$N.spp),
+            sigma_proc = rep(4, constants$N.spp),  # Gamma concentration (replaces sigma_proc)
+            sigma_init = rep(0.5, constants$N.spp),
+            alpha = array(1, dim = c(constants$N.plot, constants$N.spp, constants$N.date))
+        )
+        if (model_name %in% c("env_cycl", "env_cov")) {
+            inits$legacy_effect <- rep(0, constants$N.spp)
+        }
     }
 
     info("  ✓ Dirichlet inits (N.spp = %d, n_beta = %d)", constants$N.spp, n_beta)
@@ -1432,10 +1484,16 @@ run_scenarios_fixed <- function(j, chain_no) {
         info("Setting model hyperparameters...")
         if (model_name == "env_cycl") {
             constants$N.beta = 8
+            constants$zeros <- rep(0, 8)
+            constants$omega <- 0.01 * diag(8)  # precision matrix: SD = 10 per beta
         } else if (model_name == "env_cov") {
             constants$N.beta = 6
+            constants$zeros <- rep(0, 6)
+            constants$omega <- 0.01 * diag(6)
         } else {
             constants$N.beta = 2
+            constants$zeros <- rep(0, 2)
+            constants$omega <- 0.01 * diag(2)
         }
         
         info("Constants prepared successfully")
@@ -1450,7 +1508,7 @@ run_scenarios_fixed <- function(j, chain_no) {
                                                          spatialDriverUncertainty = driver_uncertainty_mode)
         
         # Create initial values with drivers
-        inits <- create_inits_with_uncertainty(constants, model_name, model_data = model.dat)
+        inits <- create_inits_with_uncertainty(constants, model_name, model_data = model.dat, chain_no = chain_no)
         
         info("Model built successfully")
         
@@ -1582,17 +1640,18 @@ run_scenarios_fixed <- function(j, chain_no) {
             }
         }
         
-        # Use monitors2 for latent variables (Dirichlet: eta and plot_rel)
-        monitored_latent_params <- c("eta", "plot_rel")
+        # Use monitors2 for latent variables (Dirichlet: alpha and plot_rel)
+        monitored_latent_params <- c("alpha", "plot_rel")
         
         info("Monitoring parameters for convergence analysis:")
         info("  Core parameters: %s", paste(monitored_params, collapse = ", "))
         info("  Latent variables: %s", paste(monitored_latent_params, collapse = ", "))
         info("  Total beta parameters: %d", constants$N.beta)
         
-        # Choose small thins for local tests to ensure mvSamples2 gets rows
-        thin  <- 5   # for parameters
-        thin2 <- 10  # for latent (eta/mu) - must be <= total_iterations - burnin
+        # Thinning: configurable via env vars to manage memory for long runs
+        thin  <- as.integer(Sys.getenv("THIN",  unset = "5"))
+        thin2 <- as.integer(Sys.getenv("THIN2", unset = "10"))
+        info("Thinning: thin=%d (parameters), thin2=%d (latent states)", thin, thin2)
         
         mcmcConf <- configureMCMC(
             model = Rmodel,
@@ -1608,14 +1667,15 @@ run_scenarios_fixed <- function(j, chain_no) {
         
         # 1. FIRST remove default samplers to prevent conflicts
         info("  Removing default samplers...")
-        samplers_to_remove <- c("rho", "beta", "site_effect_sd", "site_effect", "intercept", "sigma_proc", "sigma_init")
+        samplers_to_remove <- c("rho", "beta", "site_effect_sd", "site_effect",
+                                "intercept", "sigma_proc", "sigma_init")
         if (use_legacy_covariate && model_name %in% c("env_cycl", "env_cov")) {
             samplers_to_remove <- c(samplers_to_remove, "legacy_effect")
         }
         mcmcConf$removeSamplers(samplers_to_remove)
 
-        # 2. Add specialized samplers for Dirichlet (vectorized across N.spp)
-        info("  Adding slice samplers for rho, intercept, scales...")
+        # 2. Add specialized samplers for reparameterized Dirichlet
+        info("  Adding samplers for reparameterized model...")
         for (s in 1:constants$N.spp) {
             mcmcConf$addSampler(target = paste0("rho[", s, "]"), type = "slice")
             mcmcConf$addSampler(target = paste0("intercept[", s, "]"), type = "slice")
@@ -1627,14 +1687,23 @@ run_scenarios_fixed <- function(j, chain_no) {
             }
         }
 
-        # Add slice samplers for beta matrix
+        # Block sampler for beta vector per species (dmnorm prior enables joint updates)
         for (s in 1:constants$N.spp) {
-            for (i in 1:constants$N.beta) {
-                mcmcConf$addSampler(target = paste0("beta[", s, ", ", i, "]"), type = "slice")
-            }
+            tryCatch({
+                mcmcConf$addSampler(
+                    target = paste0("beta[", s, ", 1:", constants$N.beta, "]"),
+                    type = "AF_slice")
+                info("  Added AF_slice block sampler for beta[%d, 1:%d]", s, constants$N.beta)
+            }, error = function(e) {
+                # Fallback to element-wise slice if AF_slice fails
+                for (i in 1:constants$N.beta) {
+                    mcmcConf$addSampler(target = paste0("beta[", s, ", ", i, "]"), type = "slice")
+                }
+                info("  Fallback: element-wise slice for beta[%d, *]", s)
+            })
         }
 
-        # 3. Site effects sampling (per species)
+        # 3. Site effects sampling (per species) - AF_slice for block updates
         for (s in 1:constants$N.spp) {
             if (constants$N.site > 1) {
                 tryCatch({

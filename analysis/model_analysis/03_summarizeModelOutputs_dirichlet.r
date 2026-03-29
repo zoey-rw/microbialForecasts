@@ -4,9 +4,9 @@
 source("../../source.R")
 
 # Find all Dirichlet model output files
-file.list = intersect(list.files(here("data/model_outputs/dirichlet_driver_uncertainty/"), recursive = T,
+file.list = intersect(list.files(here("data/model_outputs/dirichlet_driver_uncertainty_reparam_75k/"), recursive = T,
                                 pattern = "20130601_20180101", full.names = T),
-                     list.files(here("data/model_outputs/dirichlet_driver_uncertainty/"), recursive = T,
+                     list.files(here("data/model_outputs/dirichlet_driver_uncertainty_reparam_75k/"), recursive = T,
                                pattern = "samples", full.names = T))
 
 # Remove any files with only one chain
@@ -34,7 +34,7 @@ file_summaries = foreach(f=file.list, .errorhandling = "pass") %dopar% {
 stopCluster(cl)
 
 # Find all summary files
-summary_file_list = list.files(here("data/model_outputs/dirichlet_driver_uncertainty/"), recursive = T,
+summary_file_list = list.files(here("data/model_outputs/dirichlet_driver_uncertainty_reparam_75k/"), recursive = T,
                               pattern = "summary", full.names = T)
 
 # Subset to newest output files

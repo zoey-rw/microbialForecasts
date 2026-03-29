@@ -2,105 +2,128 @@
 source("../../source.R")
 source(here::here("analysis/model_analysis/dirichlet_covariance/dirichlet_helper_functions.r"))
 
-# Function to combine Dirichlet chains and create summary structure
-combine_dirichlet_chains <- function(chain_paths, model_id) {
-  message("Combining ", length(chain_paths), " chains for ", model_id)
-  
-  # All chain files contain both samples and samples2 in a list
-  param_chains <- chain_paths
-
-  # Read parameter chains and plot chains from the unified files
-  param_samples <- list()
-  plot_samples <- list()
-  metadata_list <- list()
-
-  for (i in 1:length(param_chains)) {
-    chain_data <- readRDS(param_chains[[i]])
-    message("Parameter chain ", i, " dimensions: ", nrow(chain_data$samples), " x ", ncol(chain_data$samples))
-
-    if (is.list(chain_data)) {
-      param_samples[[i]] <- chain_data$samples
-
-      # FIX: Extract samples2 natively from the chain list
-      if ("samples2" %in% names(chain_data)) {
-        plot_samples[[i]] <- chain_data$samples2
-      }
-      if ("metadata" %in% names(chain_data)) {
-        metadata_list[[i]] <- chain_data$metadata
-      }
-    } else {
-      # Fallback
-      param_samples[[i]] <- chain_data
-      metadata_list[[i]] <- list(model_id = model_id)
-    }
-  }
-
-  # Combine parameter chains
+# Memory-efficient chain combination: loads one chain at a time,
+# keeps only the second half (post-warmup), thins, then computes summary stats.
+# This avoids holding all raw samples in memory at once.
+combine_dirichlet_chains_lowmem <- function(chain_paths, model_id,
+                                            keep_frac = 0.5, thin_by = 5) {
   library(coda)
-  param_mcmc_chains <- lapply(param_samples, mcmc)
-  combined_param_chains <- mcmc.list(param_mcmc_chains)
+  message("Combining ", length(chain_paths), " chains for ", model_id,
+          " (keep_frac=", keep_frac, ", thin_by=", thin_by, ")")
 
-  # Combine plot chains if they exist
-  if (length(plot_samples) > 0 && !is.null(plot_samples[[1]])) {
-    plot_mcmc_chains <- lapply(plot_samples, mcmc)
-    combined_plot_chains <- mcmc.list(plot_mcmc_chains)
-  } else {
-    combined_plot_chains <- NULL
+  param_chains <- list()
+  plot_chains <- list()
+  metadata <- NULL
+
+  for (i in seq_along(chain_paths)) {
+    message("  Loading chain ", i, ": ", basename(chain_paths[i]))
+    chain_data <- readRDS(chain_paths[i])
+
+    samp <- chain_data$samples
+    n_total <- nrow(samp)
+    start_row <- floor(n_total * (1 - keep_frac)) + 1
+    keep_idx <- seq(start_row, n_total, by = thin_by)
+    message("    samples: ", n_total, " rows -> keeping ", length(keep_idx),
+            " (rows ", start_row, "-", n_total, ", thin=", thin_by, ")")
+    param_chains[[i]] <- mcmc(samp[keep_idx, , drop = FALSE])
+    rm(samp)
+
+    if (!is.null(chain_data$samples2)) {
+      s2 <- chain_data$samples2
+      n2 <- nrow(s2)
+      # samples2 may have different thinning; use same fraction
+      start2 <- floor(n2 * (1 - keep_frac)) + 1
+      thin2 <- max(1, round(thin_by * n2 / n_total))
+      keep2 <- seq(start2, n2, by = thin2)
+      message("    samples2: ", n2, " rows -> keeping ", length(keep2))
+      plot_chains[[i]] <- mcmc(s2[keep2, , drop = FALSE])
+      rm(s2)
+    }
+
+    if (is.null(metadata) && !is.null(chain_data$metadata)) {
+      metadata <- chain_data$metadata
+    }
+
+    rm(chain_data); gc()
   }
-  
-  # Calculate parameter summaries (use fast.summary.mcmc to tolerate NA/NaN in chains)
-  param_sum <- fast.summary.mcmc(combined_param_chains)
+
+  # Trim all chains to the length of the shortest so mcmc.list() works
+  # (required for Gelman-Rubin Rhat across chains)
+  min_param <- min(sapply(param_chains, nrow))
+  param_chains <- lapply(param_chains, function(ch) mcmc(ch[(nrow(ch) - min_param + 1):nrow(ch), , drop = FALSE]))
+  message("  Trimmed param chains to ", min_param, " rows each")
+  combined_params <- mcmc.list(param_chains)
+
+  if (length(plot_chains) > 0) {
+    min_plot <- min(sapply(plot_chains, nrow))
+    plot_chains <- lapply(plot_chains, function(ch) mcmc(ch[(nrow(ch) - min_plot + 1):nrow(ch), , drop = FALSE]))
+    message("  Trimmed plot chains to ", min_plot, " rows each")
+    combined_plots <- mcmc.list(plot_chains)
+  } else {
+    combined_plots <- NULL
+  }
+
+  param_sum <- fast.summary.mcmc(combined_params)
   param_summary <- list(param_sum$statistics, param_sum$quantiles)
 
-  # Calculate plot summaries if available
-  plot_summary <- list()
-  if (!is.null(combined_plot_chains)) {
-    plot_sum <- fast.summary.mcmc(combined_plot_chains)
-    plot_summary[[1]] <- plot_sum$statistics
-    plot_summary[[2]] <- plot_sum$quantiles
+  if (!is.null(combined_plots)) {
+    plot_sum <- fast.summary.mcmc(combined_plots)
+    plot_summary <- list(plot_sum$statistics, plot_sum$quantiles)
   } else {
-    # Create minimal plot summaries for Dirichlet models
-    plot_summary[[1]] <- data.frame()  # Placeholder for means
-    plot_summary[[2]] <- data.frame()  # Placeholder for quantiles
+    plot_summary <- list(data.frame(), data.frame())
   }
-  
-  # Extract real metadata from the first chain
-  metadata <- metadata_list[[1]]
-  if (is.null(metadata)) {
-    metadata <- list(model_id = model_id)
-  }
-  
-  # Ensure metadata has required fields
-  if (is.null(metadata$niteration)) {
-    metadata$niteration <- nrow(param_samples[[1]])
-  }
-  
-  # Create the combined output structure (samples2 needed for post-combine plot_summary/gelman)
-  out <- list(
-    samples = combined_param_chains,
-    samples2 = combined_plot_chains,
+
+  if (is.null(metadata)) metadata <- list(model_id = model_id)
+
+  return(list(
+    samples = combined_params,
+    samples2 = combined_plots,
     param_summary = param_summary,
     plot_summary = plot_summary,
     metadata = metadata
-  )
-
-  return(out)
+  ))
 }
 
-# For Dirichlet models: focus on driver uncertainty outputs
-target_dir <- here("data/model_outputs/dirichlet_driver_uncertainty/")
+# For Dirichlet models: use the reparameterized 75k warm-started outputs
+target_dir <- here("data/model_outputs/dirichlet_driver_uncertainty_reparam_75k/")
 
 cat("Processing Dirichlet regression models in:", target_dir, "\n")
 
-# Dynamically find all sample chain files (exclude checkpoints and progress files)
-file.list <- list.files(path = target_dir,
-                        pattern = "_chain[0-9]+\\.rds$",
-                        recursive = TRUE,
-                        full.names = TRUE)
-file.list <- file.list[grepl("^samples_", basename(file.list))]
+# Find all chain files: final samples_* AND checkpoint files
+all_rds <- list.files(path = target_dir,
+                      pattern = "\\.rds$",
+                      recursive = TRUE,
+                      full.names = TRUE)
+all_rds <- all_rds[!grepl("progress_|warmstart_", basename(all_rds))]
 
-# Extract unique model IDs directly from the file names
-model_id_list <- unique(gsub("_chain[0-9]+.rds$", "", gsub("^samples_", "", basename(file.list))))
+# For each chain, prefer the final samples file; fall back to the latest checkpoint.
+# Extract (model_id, chain_num) from each file, then pick the best per chain.
+parse_chain_info <- function(f) {
+  bn <- basename(f)
+  is_final <- grepl("^samples_", bn)
+  # Extract chain number
+  chain_num <- as.integer(sub(".*chain(\\d+).*", "\\1", bn))
+  # Extract model_id: strip prefix, chain suffix, and checkpoint suffix
+  model_id <- bn
+  model_id <- sub("^(samples|checkpoint)_", "", model_id)
+  model_id <- sub("_chain\\d+.*\\.rds$", "", model_id)
+  # For checkpoints, extract loop number for sorting
+  loop_num <- if (grepl("_loop(\\d+)", bn)) as.integer(sub(".*_loop(\\d+).*", "\\1", bn)) else NA
+  data.frame(file = f, model_id = model_id, chain_num = chain_num,
+             is_final = is_final, loop_num = loop_num, stringsAsFactors = FALSE)
+}
+
+file_info <- do.call(rbind, lapply(all_rds, parse_chain_info))
+
+# For each (model_id, chain_num), pick: final samples if available, else latest checkpoint
+best_per_chain <- file_info %>%
+  group_by(model_id, chain_num) %>%
+  arrange(desc(is_final), desc(loop_num)) %>%
+  slice(1) %>%
+  ungroup()
+
+file.list <- best_per_chain$file
+model_id_list <- unique(best_per_chain$model_id)
 
 cat("Total models to process:", length(model_id_list), "\n\n")
 cat("Model IDs:", paste(model_id_list, collapse = ", "), "\n")
@@ -112,8 +135,8 @@ for(model_id in model_id_list) {
   # Do we want to keep all the chain files separately? Deleting them will save space
   delete_samples_files = F
 
-  # Subset to chain files for this model_id
-  chain_paths <- file.list[grepl(model_id, file.list, fixed = T)]
+  # Subset to chain files for this model_id (already filtered to best per chain)
+  chain_paths <- best_per_chain$file[best_per_chain$model_id == model_id]
 
   message("Searching model outputs for ", model_id)
   message("Total files in file.list: ", length(file.list))
@@ -130,16 +153,18 @@ for(model_id in model_id_list) {
     message("Skipping ", model_id, "; only one chain found (need multiple chains to combine)")
     next
   }
-  savepath <- gsub("_chain[1234567]", "", chain_paths[[1]])
-  
-  # Don't run loop if the samples file is already newer than the chain files
-  if (samples_exists(chain_paths[[1]])) {
+  # Build savepath from model_id in the parent directory of the chain files
+  savepath <- file.path(dirname(chain_paths[[1]]),
+                        paste0("samples_", model_id, ".rds"))
+
+  # Don't run loop if the combined samples file already exists
+  if (file.exists(savepath)) {
     message("Summary samples file already exists")
   } else {
     # Calculate summary on each output subset, using custom summary function
     message("Combining chains for ", model_id, " with ", length(chain_paths), " chains...")
     out <- tryCatch({
-      combine_dirichlet_chains(chain_paths, model_id)
+      combine_dirichlet_chains_lowmem(chain_paths, model_id)
     }, error = function(e) {
       message("Error combining chains for ", model_id, ": ", e$message)
       return(NULL)
