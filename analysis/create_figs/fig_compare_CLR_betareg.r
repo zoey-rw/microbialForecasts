@@ -37,64 +37,97 @@ model_shapes <- c(
   "Dirichlet"      = 15    # filled square
 )
 
-# ---- Load predictor-effect summaries ----
+# ---- Extract betas directly from chain files (correct NIMBLE ordering) ----
 
-clr_eff      <- readRDS(here("data/summary/clr_predictor_effects.rds"))
-cloglog_eff  <- readRDS(here("data/summary/predictor_effects.rds"))
-truncnorm_eff <- readRDS(here("data/summary/truncated_normal_predictor_effects.rds"))
-dirich_eff   <- readRDS(here("data/summary/dirichlet_predictor_effects.rds"))
+# env_cycl NIMBLE ordering (same across all four model types):
+# beta[1]=sin, beta[2]=cos, beta[3]=temp, beta[4]=mois,
+# beta[5]=pH, beta[6]=pC, beta[7]=relEM, beta[8]=LAI
+env_cycl_beta_names <- c("sin", "cos", "Temperature", "Moisture",
+                         "pH", "pC", "EM trees", "LAI")
 
-mk_forest_df <- function(df, model_label) {
-  df %>%
-    filter(model_name == "env_cycl") %>%
-    mutate(beta = clean_beta(as.character(beta))) %>%
-    filter(beta %in% names(beta_labels)) %>%
-    transmute(
-      beta,
-      beta_label = beta_labels[beta],
-      Mean,
-      lo         = Mean - 1.96 * SD,
-      hi         = Mean + 1.96 * SD,
-      model_type = model_label
-    )
+# Extract beta means/SDs from chain files, averaging across chains
+extract_betas_from_chains <- function(chain_files, model_label,
+                                      beta_names = env_cycl_beta_names,
+                                      beta_pattern = "^beta\\[",
+                                      species_idx = NULL) {
+  chain_stats <- lapply(chain_files, function(f) {
+    s <- readRDS(f)
+    samp <- s$samples
+    bcols <- grep(beta_pattern, colnames(samp), value = TRUE)
+    # For Dirichlet: filter to species_idx (e.g. ascomycota = 1)
+    if (!is.null(species_idx)) {
+      nums <- regmatches(bcols, gregexpr("[0-9]+", bcols))
+      spp <- as.integer(sapply(nums, `[`, 1))
+      bcols <- bcols[spp == species_idx]
+    }
+    data.frame(param = bcols,
+               mean  = colMeans(samp[, bcols, drop = FALSE]),
+               sd    = apply(samp[, bcols, drop = FALSE], 2, sd))
+  })
+  all_stats <- do.call(rbind, chain_stats)
+  multi <- aggregate(cbind(mean, sd) ~ param, data = all_stats, FUN = function(x) x)
+  # Pooled: mean of means, sqrt(mean(var_within) + var(means))
+  result <- data.frame(
+    param = unique(all_stats$param),
+    Mean  = tapply(all_stats$mean, all_stats$param, mean),
+    SD    = tapply(all_stats$mean, all_stats$param, function(m) {
+      sds <- all_stats$sd[all_stats$param == all_stats$param[1]]  # placeholder
+      sqrt(mean(tapply(all_stats$sd[all_stats$param == unique(all_stats$param)[1]],
+                       seq_along(sds), function(x) x^2)) + var(m))
+    })
+  )
+  # Simpler: recompute properly
+  result <- do.call(rbind, lapply(unique(all_stats$param), function(p) {
+    rows <- all_stats[all_stats$param == p, ]
+    data.frame(param = p,
+               Mean = mean(rows$mean),
+               SD = sqrt(mean(rows$sd^2) + var(rows$mean)))
+  }))
+  # Parse covariate index and assign names
+  nums <- regmatches(result$param, gregexpr("[0-9]+", result$param))
+  if (!is.null(species_idx)) {
+    cov_idx <- as.integer(sapply(nums, `[`, 2))  # beta[species, covariate]
+  } else {
+    cov_idx <- as.integer(sapply(nums, `[`, 1))  # beta[covariate]
+  }
+  result$beta <- beta_names[cov_idx]
+  result %>%
+    filter(!is.na(beta)) %>%
+    transmute(beta,
+              beta_label = beta_labels[beta],
+              Mean, lo = Mean - 1.96 * SD, hi = Mean + 1.96 * SD,
+              model_type = model_label)
 }
 
-# All three models: ascomycota only
-clr_f <- clr_eff %>%
-  filter(model_name == "env_cycl",
-         taxon       == "ascomycota",
-         time_period == "20130601_20180101") %>%
-  mutate(beta = as.character(beta)) %>%
-  group_by(model_name, beta) %>% slice(1) %>% ungroup() %>%
-  mk_forest_df("CLR")
+# Cloglog: all env_cycl ascomycota chain files
+clog_chains <- list.files(here("data/model_outputs/cloglog_beta_driver_uncertainty/env_cycl/ascomycota"),
+                          pattern = "^samples_env_cycl.*chain[0-9]\\.rds$", full.names = TRUE)
+clog_f <- extract_betas_from_chains(clog_chains, "Cloglog")
 
-clog_f <- cloglog_eff %>%
-  filter(model_name == "env_cycl",
-         taxon       == "ascomycota",
-         time_period == "20130601_20180101") %>%
-  mutate(beta = as.character(beta)) %>%
-  mk_forest_df("Cloglog")
+# CLR: non-duplicate chain files
+clr_chains <- list.files(here("data/model_outputs/CLR_regression/env_cycl/ascomycota"),
+                         pattern = "^samples_env_cycl_ascomycota.*chain[0-9]\\.rds$", full.names = TRUE)
+clr_chains <- clr_chains[!grepl("_clr_chain", clr_chains)]
+clr_f <- extract_betas_from_chains(clr_chains, "CLR")
 
-tn_f <- truncnorm_eff %>%
-  filter(taxon == "ascomycota") %>%
-  mutate(beta = clean_beta(as.character(beta))) %>%
-  filter(beta %in% names(beta_labels)) %>%
-  mk_forest_df("Trunc. normal")
+# Truncated normal: latest chain files (new warm-started + old)
+tn_chains <- list.files(here("data/model_outputs/truncated_normal/env_cycl/ascomycota"),
+                        pattern = "^samples_env_cycl_ascomycota_20130601.*chain[0-9]\\.rds$", full.names = TRUE)
+tn_f <- extract_betas_from_chains(tn_chains, "Trunc. normal")
 
-dir_f <- dirich_eff %>%
-  filter(model_name == "env_cycl", taxon == "ascomycota") %>%
-  mutate(beta = clean_beta(as.character(beta))) %>%
-  filter(beta %in% names(beta_labels)) %>%
-  transmute(
-    beta,
-    beta_label = beta_labels[beta],
-    Mean,
-    lo         = Mean - 1.96 * SD,
-    hi         = Mean + 1.96 * SD,
-    model_type = "Dirichlet"
-  )
+# Dirichlet: read from pipeline summary (03_summarizeModelOutputs_dirichlet.r)
+dir_summary <- readRDS(here("data/summary/dirichlet_regression_summaries.rds"))
+dir_betas <- dir_summary$summary_df %>%
+  filter(taxon == "ascomycota", !is.na(beta), beta != "UNKNOWN") %>%
+  mutate(beta = clean_beta(beta),
+         beta_label = beta_labels[beta]) %>%
+  filter(!is.na(beta_label)) %>%
+  transmute(beta, beta_label,
+            Mean, lo = Mean - 1.96 * SD, hi = Mean + 1.96 * SD,
+            model_type = "Dirichlet")
+dir_f <- dir_betas
 
-forest_df <- bind_rows(clr_f, clog_f, tn_f, dir_f) %>%
+forest_df <- bind_rows(clog_f, clr_f, tn_f, dir_f) %>%
   mutate(
     beta_label = factor(beta_label, levels = beta_display_order),
     model_type = factor(model_type, levels = names(model_colors))
@@ -127,43 +160,111 @@ fig_a <- ggplot(forest_df, aes(x = Mean, y = beta_label,
   xlab("Posterior mean \u00b1 1.96 SD")
 
 # ---- Panel B: Observed vs Estimated (calibration) ----
+# Extract plot-level predicted vs observed from chain files directly
 
-# Load cloglog plot estimates
-plot_est <- readRDS(here("data/summary/plot_estimates.rds"))
+# Helper: extract plot_mu means from samples2, match to truth
+extract_plot_ove <- function(chain_files, model_data, model_label, var_prefix = "plot_mu") {
+  samples2_list <- lapply(chain_files, function(f) {
+    s <- readRDS(f)
+    if (!is.null(s$samples2)) s$samples2 else NULL
+  })
+  samples2_list <- samples2_list[!sapply(samples2_list, is.null)]
+  if (length(samples2_list) == 0) return(data.frame())
 
-# CLR plot estimates: use CLR-scale obs vs est if predictions are available
-clr_sum <- readRDS(here("data/summary/clr_regression_summaries.rds"))
-clr_pe  <- clr_sum$plot_est
-clr_ove <- clr_pe %>%
-  filter(species == "ascomycota",
-         !is.na(model_name), model_name == "env_cycl",
-         !is.na(Mean), Mean != 0, !is.na(truth)) %>%
-  transmute(estimated = Mean, observed = truth, model_type = "CLR")
-has_clr_panel <- nrow(clr_ove) > 10
+  s2 <- do.call(rbind, samples2_list)
+  mu_cols <- grep(paste0("^", var_prefix), colnames(s2))
+  if (length(mu_cols) == 0) return(data.frame())
 
-# Dirichlet plot estimates from summary file
-dirich_sum <- readRDS(here("data/summary/dirichlet_regression_summaries.rds"))
-dirich_pe <- dirich_sum$plot_est
+  mu_means <- colMeans(s2[, mu_cols, drop = FALSE])
 
-# Subset to env_cycl ascomycota for comparable obs vs est
-clog_ove <- plot_est %>%
-  filter(species == "ascomycota", model_name == "env_cycl") %>%
-  transmute(estimated = Mean, observed = truth, model_type = "Cloglog")
+  # Parse plot_mu[p, t] indices
+  nums <- regmatches(names(mu_means), gregexpr("[0-9]+", names(mu_means)))
+  plot_idx <- as.integer(sapply(nums, `[`, 1))
+  time_idx <- as.integer(sapply(nums, `[`, 2))
 
-dir_ove <- dirich_pe %>%
-  filter(taxon == "ascomycota",
-         !is.na(model_name), model_name == "env_cycl") %>%
-  transmute(estimated = Mean, observed = truth, model_type = "Dirichlet")
+  # Match to observed truth
+  truth <- model_data$y
+  plot_num <- model_data$plot_num
+  timepoint <- model_data$timepoint
 
-# Sample to reasonable size for plotting
-set.seed(42)
-ove_parts <- list(
-  clog_ove %>% sample_n(min(2000, n())),
-  dir_ove  %>% sample_n(min(2000, n()))
-)
-if (has_clr_panel) {
-  ove_parts <- c(ove_parts, list(clr_ove %>% sample_n(min(2000, n()))))
+  est_df <- data.frame(plot_idx = plot_idx, time_idx = time_idx, estimated = as.numeric(mu_means))
+
+  # Build truth lookup from core observations
+  if (is.matrix(truth)) {
+    obs_val <- truth[, 1]
+  } else {
+    obs_val <- truth
+  }
+  truth_df <- data.frame(plot_idx = plot_num, time_idx = timepoint, observed = obs_val) %>%
+    group_by(plot_idx, time_idx) %>%
+    summarize(observed = mean(observed, na.rm = TRUE), .groups = "drop")
+
+  merged <- inner_join(est_df, truth_df, by = c("plot_idx", "time_idx")) %>%
+    filter(!is.na(estimated), !is.na(observed)) %>%
+    mutate(model_type = model_label)
+
+  return(merged[, c("estimated", "observed", "model_type")])
 }
+
+# Cloglog: extract from chain samples2 for fair comparison (same method as other models)
+clog_chain1 <- list.files(here("data/model_outputs/cloglog_beta_driver_uncertainty/env_cycl/ascomycota"),
+                          pattern = "samples_env_cycl.*chain1.rds", full.names = TRUE)[1]
+if (!is.na(clog_chain1) && file.exists(clog_chain1)) {
+  clog_s1 <- readRDS(clog_chain1)
+  clog_ove <- extract_plot_ove(clog_chain1, clog_s1$metadata$model_data, "Cloglog", var_prefix = "plot_mu")
+  rm(clog_s1); gc()
+} else {
+  # Fallback to summary
+  plot_est <- readRDS(here("data/summary/plot_estimates.rds"))
+  clog_ove <- plot_est %>%
+    filter(species == "ascomycota", model_name == "env_cycl") %>%
+    group_by(plot_num, timepoint) %>%
+    summarize(estimated = mean(Mean, na.rm = TRUE),
+              observed = mean(truth, na.rm = TRUE), .groups = "drop") %>%
+    mutate(model_type = "Cloglog")
+}
+
+# CLR: extract from single chain samples2 (mu = CLR scale) — too large for all chains
+clr_chain1 <- here("data/model_outputs/CLR_regression/env_cycl/ascomycota",
+                    "samples_env_cycl_ascomycota_20130601_20180101_with_legacy_covariate_clr_chain1.rds")
+if (file.exists(clr_chain1)) {
+  clr_s1 <- readRDS(clr_chain1)
+  clr_ove <- extract_plot_ove(clr_chain1, clr_s1$metadata$model_data, "CLR", var_prefix = "mu")
+  rm(clr_s1); gc()
+} else {
+  clr_ove <- data.frame()
+}
+
+# Truncated normal: extract from chain samples2 (plot_mu = proportion scale)
+tn_chains <- list.files(here("data/model_outputs/truncated_normal/env_cycl/ascomycota"),
+                        pattern = "samples_env_cycl.*20130601.*chain[0-9].rds", full.names = TRUE)
+if (length(tn_chains) > 0) {
+  tn_s1 <- readRDS(tn_chains[1])
+  tn_ove <- extract_plot_ove(tn_chains[1], tn_s1$metadata$model_data, "Trunc. normal", var_prefix = "plot_mu")
+  rm(tn_s1); gc()
+} else {
+  tn_ove <- data.frame()
+}
+
+# Dirichlet: use pipeline summary for obs vs estimated (Panel B)
+dir_plot_est <- dir_summary$plot_est
+if (!is.null(dir_plot_est) && nrow(dir_plot_est) > 0) {
+  dir_ove <- dir_plot_est %>%
+    filter(taxon == "ascomycota",
+           !is.na(Mean), !is.na(truth)) %>%
+    transmute(estimated = Mean, observed = truth,
+              model_type = "Dirichlet")
+} else {
+  dir_ove <- data.frame()
+}
+
+# Combine all plot x time means (no subsampling)
+ove_parts <- list()
+if (nrow(clog_ove) > 0) ove_parts <- c(ove_parts, list(clog_ove))
+if (nrow(clr_ove) > 0)  ove_parts <- c(ove_parts, list(clr_ove))
+if (nrow(tn_ove) > 0)   ove_parts <- c(ove_parts, list(tn_ove))
+if (nrow(dir_ove) > 0)  ove_parts <- c(ove_parts, list(dir_ove))
+
 ove_df <- bind_rows(ove_parts) %>%
   filter(!is.na(estimated), !is.na(observed)) %>%
   mutate(model_type = factor(model_type, levels = names(model_colors)))
@@ -185,9 +286,8 @@ fig_b <- ggplot(ove_df, aes(x = observed, y = estimated, color = model_type)) +
   geom_text(data = rsq, aes(label = label),
             x = -Inf, y = Inf, hjust = -0.1, vjust = 1.3,
             size = 3.2, show.legend = FALSE) +
-  facet_wrap(~model_type, scales = if (has_clr_panel) "free" else "fixed") +
+  facet_wrap(~model_type, scales = "free") +
   scale_color_manual(values = model_colors, guide = "none") +
-  { if (!has_clr_panel) coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) } +
   theme_bw(base_size = 12) +
   theme(
     strip.background = element_rect(fill = "grey95"),
