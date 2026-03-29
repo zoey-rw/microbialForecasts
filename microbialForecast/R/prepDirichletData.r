@@ -189,7 +189,10 @@ prepDirichletData <- function(rank.df,
 	
 	# Ensure all values are between 0 and 1 (proportions)
 	y <- pmin(pmax(y, 0), 1)
-	
+
+	# Add pseudocount to prevent exact zeros (Dirichlet density is -Inf at zero)
+	y[y == 0] <- 1e-6
+
 	# Normalize to sum to 1 for each row (Dirichlet requirement)
 	y_sums <- rowSums(y)
 
