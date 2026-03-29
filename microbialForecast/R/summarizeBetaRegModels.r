@@ -61,12 +61,7 @@ calculate_plot_summary_from_samples <- function(samples2) {
          "Available columns (first 20): ", paste(head(colnames(combined_samples), 20), collapse=", "))
   }
   
-  calc_time <- Sys.time()
-  message("  TIMING: Starting quantile calculations on ", ncol(combined_samples), " columns, ", nrow(combined_samples), " rows")
-  
   means  <- colMeans(combined_samples, na.rm = TRUE)
-  means_time <- Sys.time()
-  message("  TIMING: Means calculated (", round(as.numeric(means_time - calc_time, units="secs"), 2), "s)")
   
   if (requireNamespace("matrixStats", quietly = TRUE)) {
     sds <- matrixStats::colSds(combined_samples, na.rm = TRUE)
@@ -76,16 +71,12 @@ calculate_plot_summary_from_samples <- function(samples2) {
     means_mat <- matrix(means, nrow = nrow(combined_samples), ncol = ncol(combined_samples), byrow = TRUE)
     sds <- sqrt(colMeans((combined_samples - means_mat)^2, na.rm = TRUE))
   }
-  sds_time <- Sys.time()
-  message("  TIMING: SDs calculated (", round(as.numeric(sds_time - means_time, units="secs"), 2), "s)")
-  
   probs <- c(0.025, 0.25, 0.5, 0.75, 0.975)
   n_cols <- ncol(combined_samples)
   
   # For large matrices, process quantiles in chunks to avoid memory issues
   chunk_size <- 1000
   if (n_cols > chunk_size) {
-    message("  TIMING: Processing quantiles in chunks of ", chunk_size, " columns")
     n_chunks <- ceiling(n_cols / chunk_size)
     quants_list <- vector("list", n_chunks)
     
@@ -103,9 +94,6 @@ calculate_plot_summary_from_samples <- function(samples2) {
     # For smaller matrices, use standard apply
     quants <- apply(combined_samples, 2, quantile, probs = probs, na.rm = TRUE)
   }
-  
-  quants_time <- Sys.time()
-  message("  TIMING: Quantiles calculated (", round(as.numeric(quants_time - sds_time, units="secs"), 2), "s)")
   
   # Validate that quantiles are not all NA
   all_na_cols <- sapply(1:ncol(quants), function(i) all(is.na(quants[, i])))
@@ -134,22 +122,14 @@ calculate_plot_summary_from_samples <- function(samples2) {
 #'	@param overwrite want to save new summary files even if there's an existing, recent summary file
 #' @export
 summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL, drop_other = TRUE){
-	start_time <- Sys.time()
-	message("=== SUMMARIZE_BETA_MODEL FUNCTION CALLED ===")
 	require(stringr)
 	require(tidyr)
-	# Helper functions (helperFunctions.r, summarizeModels.r) are loaded via package namespace
-	if(summary_exists(file_path)) { # checks that a summary is needed (samples files are new)
+	if(summary_exists(file_path)) {
 		if (is.null(overwrite) || overwrite == FALSE) {
 			return("Summary file already exists")
 		}
 	}
-	# Read in file, assign named contents to global environment
-	read_time <- Sys.time()
 	read_in <- readRDS(file_path)
-	message("File loaded successfully (", round(as.numeric(Sys.time() - read_time, units="secs"), 2), "s)")
-	message("  DEBUG: File loaded, checking structure...")
-	#list2env(read_in,globalenv())
 
 	# Read in samples
 	samples <- read_in$samples
@@ -157,20 +137,8 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	param_summary <- read_in$param_summary
 	plot_summary <- read_in$plot_summary
 	
-	# Debug: Check initial param_summary
-	message("  DEBUG: Initial param_summary names: ", paste(names(param_summary), collapse = ", "))
-	
-	# Handle different param_summary structures for driver uncertainty models
-	# Driver uncertainty models have deeply nested structures, so we'll skip the nested handling
-	# and let the function recalculate param_summary from samples
-	message("  DEBUG: Driver uncertainty model detected, will recalculate param_summary from samples")
-	
-	message("  DEBUG: Final param_summary names: ", paste(names(param_summary), collapse = ", "))
-	message("  DEBUG: Data extracted successfully, proceeding to model ID parsing...")
-	
 	# Convert summary.mcmc to list format if needed (plot_summary created by step 02)
 	if (inherits(plot_summary, "summary.mcmc")) {
-		message("  Converting summary.mcmc plot_summary to list format")
 		plot_summary <- list(
 			plot_summary$statistics,
 			plot_summary$quantiles
@@ -178,39 +146,28 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 		names(plot_summary) <- c("statistics", "quantiles")
 	}
 	
-	# Check if plot_summary exists but is invalid (all NA quantiles or wrong structure)
+	# Check if plot_summary has valid quantile data (matrix or data.frame)
 	plot_summary_valid <- FALSE
 	if (!is.null(plot_summary) && is.list(plot_summary) && length(plot_summary) >= 2) {
-		# Check if plot_summary has valid quantile data
-		if (is.data.frame(plot_summary[[2]]) && nrow(plot_summary[[2]]) > 0) {
-			# Check if quantile columns exist and have non-NA values
+		quant_data <- plot_summary[[2]]
+		if ((is.data.frame(quant_data) || is.matrix(quant_data)) && nrow(quant_data) > 0) {
 			quant_cols <- c("2.5%", "25%", "50%", "75%", "97.5%")
-			has_quant_cols <- any(quant_cols %in% names(plot_summary[[2]]))
-			if (has_quant_cols) {
-				# Check if any quantiles are non-NA
-				med_col <- if("50%" %in% names(plot_summary[[2]])) plot_summary[[2]][["50%"]] else NULL
+			if (any(quant_cols %in% colnames(quant_data))) {
+				med_col <- if ("50%" %in% colnames(quant_data)) quant_data[, "50%"] else NULL
 				if (!is.null(med_col) && sum(is.finite(med_col)) > 0) {
 					plot_summary_valid <- TRUE
-					message("  plot_summary is valid with", sum(is.finite(med_col)), "finite median values")
-				} else {
-					message("  WARNING: plot_summary exists but all quantiles are NA - will try to regenerate from samples2")
 				}
-			} else {
-				message("  WARNING: plot_summary exists but missing quantile columns - will try to regenerate from samples2")
 			}
 		}
 	}
 	
 	# If plot_summary is invalid or missing, try to create it from samples2
 	if (!plot_summary_valid && !is.null(samples2)) {
-		message("  Attempting to regenerate plot_summary from samples2...")
 		tryCatch({
-			# Check if samples2 has plot_mu columns
 			samples2_matrix <- NULL
 			if (is.matrix(samples2)) {
 				samples2_matrix <- samples2
 			} else if (is.list(samples2) && length(samples2) > 0) {
-				# Try to extract matrix from list (could be mcmc.list or list of matrices)
 				if (inherits(samples2, "mcmc.list")) {
 					samples2_matrix <- as.matrix(do.call(rbind, samples2))
 				} else if (is.matrix(samples2[[1]])) {
@@ -221,31 +178,20 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 			if (!is.null(samples2_matrix) && ncol(samples2_matrix) > 0) {
 				col_names <- colnames(samples2_matrix)
 				if (!is.null(col_names)) {
-					# Check for plot_mu or mu columns
 					has_plot_mu <- any(grepl("^plot_mu\\[", col_names)) || any(grepl("^mu\\[", col_names))
 					if (has_plot_mu) {
-						message("  Found plot_mu/mu columns in samples2 - generating plot_summary")
 						plot_summary <- calculate_plot_summary_from_samples(samples2_matrix)
 						plot_summary_valid <- TRUE
-						message("  Successfully regenerated plot_summary from samples2")
-					} else {
-						message("  WARNING: samples2 does not contain plot_mu or mu columns")
-						message("    samples2 columns (first 20):", paste(head(col_names, 20), collapse=", "))
-						message("    Cannot regenerate plot_summary - will use empty structure")
 					}
 				}
 			}
 		}, error = function(e) {
-			message("  ERROR regenerating plot_summary from samples2:", e$message)
+			message("  ERROR regenerating plot_summary from samples2: ", e$message)
 		})
 	}
 	
-	# Always recalculate param_summary from samples to ensure correct format
-	message("  Recalculating param_summary from samples to ensure correct format...")
-	
-	# Check if samples exist and are valid
+	# Recalculate param_summary from samples to ensure correct format
 	if (is.null(samples) || length(samples) == 0) {
-		message("  ERROR: No samples found, cannot calculate param_summary")
 		# Create empty param_summary structure
 		means_df <- data.frame(Mean = numeric(0), rowname = character(0))
 		quantiles_df <- data.frame(rowname = character(0))
@@ -264,9 +210,7 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 			combined_samples <- as.matrix(samples)
 		}
 		
-		# Check if combined_samples is valid
 		if (is.null(combined_samples) || nrow(combined_samples) == 0 || ncol(combined_samples) == 0) {
-			message("  ERROR: Invalid samples data, cannot calculate param_summary")
 			# Create empty param_summary structure
 			means_df <- data.frame(Mean = numeric(0), rowname = character(0))
 			quantiles_df <- data.frame(rowname = character(0))
@@ -289,25 +233,15 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 			quantiles_df$param <- rownames(quantiles_df)
 			
 			param_summary <- list(means = means_df, quantiles = quantiles_df)
-			
-			message("  Successfully recalculated param_summary from samples")
-			message("  DEBUG: param_summary names: ", paste(names(param_summary), collapse = ", "))
-			message("  DEBUG: quantiles colnames: ", paste(colnames(param_summary[[2]]), collapse = ", "))
 		}
 	}
 	
-	# Handle different data structures
 	# Newer models have truth.plot.long nested under model_data
-	# Older models have the data directly in model_data
-	message("  DEBUG: Extracting truth.plot.long...")
 	if("truth.plot.long" %in% names(read_in$metadata$model_data)) {
 		truth.plot.long <- read_in$metadata$model_data$truth.plot.long
-		message("  DEBUG: Using nested truth.plot.long")
 	} else {
 		truth.plot.long <- read_in$metadata$model_data
-		message("  DEBUG: Using direct model_data")
 	}
-	message("  DEBUG: truth.plot.long extracted, class:", class(truth.plot.long))
 	
 	# Ensure truth.plot.long is a data frame
 	if (!is.data.frame(truth.plot.long)) {
@@ -319,14 +253,7 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	info <- basename(file_path) %>% str_split("_") %>% unlist()
 	model_id <- basename(file_path) %>%  str_replace("samples_", "") %>%  str_replace(".rds", "")
 
-	message("  DEBUG: About to parse model_id:", model_id)
-	tryCatch({
-		parsed_id = parse_model_id(model_id)
-		message("  DEBUG: Model ID parsed successfully")
-	}, error = function(e) {
-		message("  ERROR in parse_model_id:", e$message)
-		stop(e)
-	})
+	parsed_id = parse_model_id(model_id)
 	rank.name.eval <- parsed_id[[1]]
 	model_name <- parsed_id[[6]]
 	summary_type <- parsed_id[[8]]  # Fixed: should be index 8, not 3
@@ -359,7 +286,6 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	taxon.name = species
 
 	message("Summarizing ", species, ", ", rank.name, ", ", time_period, ", ", model_name)
-	message("  DEBUG: Starting parameter extraction...")
 
 
 	cov_key <- switch(model_name,
@@ -367,7 +293,6 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 										"env_cov" = microbialForecast:::env_cov_covariates_key,
 										"env_cycl" = microbialForecast:::env_cycl_covariates_key,
 										"cycl_only" = microbialForecast:::cycl_only_key)
-	message("  DEBUG: cov_key assigned, length:", length(cov_key))
 
 	sites <- truth.plot.long %>% select(site_num, siteID) %>% unique()
 	site_key <- sites[["siteID"]]
@@ -468,7 +393,6 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 		# Handle mu[...] parameters by renaming to plot_mu[...] if needed
 		rownms <- rownames(plot_summary[[2]])
 		if (any(grepl("^mu\\[", rownms)) && !any(grepl("^plot_mu\\[", rownms))) {
-			message("  Renaming mu[...] parameters to plot_mu[...] for compatibility")
 			rownames(plot_summary[[1]]) <- sub("^mu\\[", "plot_mu[", rownames(plot_summary[[1]]))
 			rownames(plot_summary[[2]]) <- sub("^mu\\[", "plot_mu[", rownames(plot_summary[[2]]))
 		}
@@ -508,18 +432,11 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 			}
 		}
 		
-		# Merge with truth data, being careful about column name conflicts
-		merge_time <- Sys.time()
-		message("  TIMING: Starting merge - plot_quantiles: ", nrow(plot_quantiles), " rows, truth.plot.long: ", nrow(truth.plot.long), " rows")
 		pred.quantiles <- plot_quantiles %>%
 			merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T, suffixes = c("", "_truth"))
-		merge1_time <- Sys.time()
-		message("  TIMING: pred.quantiles merge complete (", round(as.numeric(merge1_time - merge_time, units="secs"), 2), "s)")
 		
 		pred.means <- plot_means %>%
 			merge(truth.plot.long, by = c("plot_num", "timepoint"), all = T, suffixes = c("", "_truth"))
-		merge2_time <- Sys.time()
-		message("  TIMING: pred.means merge complete (", round(as.numeric(merge2_time - merge1_time, units="secs"), 2), "s)")
 
 		# CRITICAL FIX: Ensure we use the correct truth column (not dateID values)
 		# If there are duplicate columns, prefer the one from truth.plot.long
@@ -563,56 +480,17 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 		# timepoint is GLOBAL (from prepBetaRegData) and should map 1:1 to dateID
 		# If we have multiple dateID values for the same timepoint, this indicates a data integrity issue
 		# We should STOP and investigate, not silently fix it
-		validation_time <- Sys.time()
 		if ("timepoint" %in% names(pred.quantiles) && "dateID" %in% names(pred.quantiles)) {
-			message("  TIMING: Starting dateID validation on ", nrow(pred.quantiles), " rows")
 			timepoint_dateid_check <- pred.quantiles %>%
 				filter(!is.na(timepoint) & !is.na(dateID)) %>%
 				group_by(timepoint) %>%
 				summarise(n_dateids = n_distinct(dateID), .groups = "drop") %>%
 				filter(n_dateids > 1)
-			validation_done <- Sys.time()
-			message("  TIMING: dateID validation complete (", round(as.numeric(validation_done - validation_time, units="secs"), 2), "s)")
 			
 			if (nrow(timepoint_dateid_check) > 0) {
-				# Multiple dateIDs for same timepoint - this is a critical data integrity issue
-				# Show which timepoints are affected with detailed diagnostics
-				problematic_timepoints <- timepoint_dateid_check$timepoint
-				dup_details <- pred.quantiles %>%
-					filter(timepoint %in% problematic_timepoints & !is.na(dateID)) %>%
-					select(timepoint, dateID, plot_num) %>%
-					distinct() %>%
-					arrange(timepoint, dateID)
-				
-				# Check if this came from plot_quantiles or truth.plot.long
-				plot_quantiles_has_dateid <- "dateID" %in% names(plot_quantiles)
-				truth_has_dateid <- "dateID" %in% names(truth.plot.long)
-				
-				# Print detailed diagnostic information
-				message("CRITICAL DATA INTEGRITY ERROR: Found ", nrow(timepoint_dateid_check), 
-				        " timepoint(s) with multiple dateID values.")
-				message("  timepoint should map 1:1 to dateID (timepoint is GLOBAL from prepBetaRegData).")
-				message("  This indicates the merge between plot_quantiles and truth.plot.long created incorrect mappings.")
-				message("  Problematic timepoints: ", paste(head(problematic_timepoints, 10), collapse=", "))
-				message("  Detailed mappings (timepoint -> dateID):")
-				print(head(dup_details, 20))
-				message("  plot_quantiles has dateID column: ", plot_quantiles_has_dateid)
-				message("  truth.plot.long has dateID column: ", truth_has_dateid)
-				message("  Number of rows in plot_quantiles: ", nrow(plot_quantiles))
-				message("  Number of rows in truth.plot.long: ", nrow(truth.plot.long))
-				message("  Number of unique (plot_num, timepoint) in plot_quantiles: ", 
-				        ifelse("plot_num" %in% names(plot_quantiles) && "timepoint" %in% names(plot_quantiles),
-				               nrow(plot_quantiles %>% select(plot_num, timepoint) %>% distinct()),
-				               "N/A"))
-				message("  Number of unique (plot_num, timepoint) in truth.plot.long: ",
-				        ifelse("plot_num" %in% names(truth.plot.long) && "timepoint" %in% names(truth.plot.long),
-				               nrow(truth.plot.long %>% select(plot_num, timepoint) %>% distinct()),
-				               "N/A"))
-				
-				stop("CRITICAL DATA INTEGRITY ERROR: timepoint maps to multiple dateID values. ",
-				     "This must be investigated and fixed upstream. ",
-				     "Do not silently fix this - it indicates a serious problem with the merge or data structure. ",
-				     "See diagnostic output above for details.")
+				stop("DATA INTEGRITY ERROR: ", nrow(timepoint_dateid_check),
+				     " timepoint(s) map to multiple dateID values. ",
+				     "This indicates a merge problem between plot_quantiles and truth.plot.long.")
 			}
 		}
 		
@@ -845,14 +723,8 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 		pred.means <- pred.quantiles
 	}
 
-	# Get mean values for parameters
 	means <- param_summary[[1]]
 	quantiles <- param_summary[[2]]
-	
-	# Debug: Check param_summary structure
-	message("  DEBUG: param_summary names: ", paste(names(param_summary), collapse = ", "))
-	message("  DEBUG: means colnames: ", paste(colnames(means), collapse = ", "))
-	message("  DEBUG: quantiles colnames: ", paste(colnames(quantiles), collapse = ", "))
 	
 	# Check if param_summary has any data
 	if (nrow(means) == 0 || nrow(quantiles) == 0) {
@@ -1008,19 +880,12 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 	}
 
 	out <- list(summary_df, pred.means, pred.quantiles, gd)
-	message("  DEBUG: Created output list with", length(out), "elements")
 	if (!is.null(save_summary) && save_summary == TRUE) {
 		savePath <- gsub("samples","summary",file_path)
-		save_time <- Sys.time()
-		message("  DEBUG: About to save to", savePath)
 		saveRDS(out, savePath)
-		save_done <- Sys.time()
-		message("Saved summary to ", savePath, " (", round(as.numeric(save_done - save_time, units="secs"), 2), "s)")
-		total_time <- Sys.time()
-		message("  TIMING: Total function time: ", round(as.numeric(total_time - start_time, units="secs"), 2), "s")
+		message("Saved: ", savePath)
 		return(TRUE)
 	} else {
-		message("  DEBUG: Not saving, returning output list")
 		return(out)
 	}
 }
