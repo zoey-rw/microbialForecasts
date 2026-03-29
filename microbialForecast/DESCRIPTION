@@ -44,7 +44,13 @@ Suggests:
     testthat,
     devtools,
     rstudioapi,
-    arrow
+    arrow,
+    pacman,
+    ggallin,
+    nanoparquet,
+    MuMIn,
+    pls,
+    foreach
 Depends:
     R (>= 4.0.0)
 SystemRequirements: NIMBLE requires a C++ compiler
