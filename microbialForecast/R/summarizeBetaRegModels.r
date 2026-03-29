@@ -363,9 +363,9 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 
 
 	cov_key <- switch(model_name,
-										"all_covariates" = microbialForecast:::all_covariates_key,
-										"env_cov" = microbialForecast:::all_covariates_key,
-										"env_cycl" = microbialForecast:::all_covariates_key,
+										"all_covariates" = microbialForecast:::env_cycl_covariates_key,
+										"env_cov" = microbialForecast:::env_cov_covariates_key,
+										"env_cycl" = microbialForecast:::env_cycl_covariates_key,
 										"cycl_only" = microbialForecast:::cycl_only_key)
 	message("  DEBUG: cov_key assigned, length:", length(cov_key))
 
@@ -860,12 +860,16 @@ summarize_beta_model <- function(file_path, save_summary = NULL, overwrite=NULL,
 		eff_list <- data.frame(taxon = species, stringsAsFactors = FALSE)
 		eff_list2 <- data.frame(taxon = species, stringsAsFactors = FALSE)
 	} else {
-		# Use correct parameter names for beta regression models
-		eff_list <- lapply(c("precision", "intercept", "rho", "legacy_effect", "site_effect_sd"),
+		# Use parameter names that cover both beta regression and truncated normal models:
+		# "precision" = cloglog beta precision; "core_sd" = truncnorm observation noise;
+		# "sigma$" = truncnorm process noise (anchored to avoid matching sigma_proc etc.)
+		eff_list <- lapply(c("precision", "core_sd", "sigma$", "intercept", "rho",
+		                     "legacy_effect", "site_effect_sd"),
 											 function(x) extract_summary_row(param_summary[[1]], var = x)) %>%
 			plyr::rbind.fill() %>%
 			mutate(taxon = !!species)
-		eff_list2 <- lapply(c("precision", "intercept", "rho", "legacy_effect", "site_effect_sd"),
+		eff_list2 <- lapply(c("precision", "core_sd", "sigma$", "intercept", "rho",
+		                      "legacy_effect", "site_effect_sd"),
 												function(x) extract_summary_row(param_summary[[2]], var = x)) %>%
 			plyr::rbind.fill() %>%
 			mutate(taxon = !!species)

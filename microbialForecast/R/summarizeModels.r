@@ -62,7 +62,18 @@ es <- tryCatch({
 })
 
 if ("gelman" %in% names(read_in) & !is.null(ncol(read_in$gelman))) {
-	gd <- read_in$gelman %>% cbind.data.frame(effSize = es)
+	gd <- as.data.frame(read_in$gelman)
+	# Use pre-computed es column if present; otherwise add effectiveSize
+	if (!"es" %in% colnames(gd) && !"effSize" %in% colnames(gd)) {
+		# Only add es if dimensions match
+		if (length(es) == nrow(gd)) {
+			gd$effSize <- es
+		} else {
+			gd$effSize <- NA
+		}
+	} else if ("es" %in% colnames(gd) && !"effSize" %in% colnames(gd)) {
+		gd$effSize <- gd$es
+	}
 } else {
 	if (length(samples) > 1) {
 		gelman_diag <- tryCatch({
@@ -113,7 +124,9 @@ summarize_fg_div_model <- function(file_path, drop_other = TRUE){
 	message("\nSummarizing ", rank.name, ", ", time_period, ", ", model_name)
 
 	cov_key <- switch(model_name,
-										"all_covariates" = all_covariates_key,
+										"all_covariates" = env_cycl_covariates_key,
+										"env_cov" = env_cov_covariates_key,
+										"env_cycl" = env_cycl_covariates_key,
 										"cycl_only" = cycl_only_key)
 
 
@@ -262,7 +275,9 @@ summarize_tax_model <- function(file_path, save_summary = NULL, drop_other = TRU
 
 
 	cov_key <- switch(model_name,
-										"all_covariates" = microbialForecast:::all_covariates_key,
+										"all_covariates" = microbialForecast:::env_cycl_covariates_key,
+										"env_cov" = microbialForecast:::env_cov_covariates_key,
+										"env_cycl" = microbialForecast:::env_cycl_covariates_key,
 										"cycl_only" = microbialForecast:::cycl_only_key)
 
 	taxon_key <- unique(truth.plot.long$species)
@@ -431,7 +446,9 @@ summarize_fg_beta_model <- function(file_path, save_summary = NULL, overwrite=NU
 
 
 	cov_key <- switch(model_name,
-										"all_covariates" = microbialForecast:::all_covariates_key,
+										"all_covariates" = microbialForecast:::env_cycl_covariates_key,
+										"env_cov" = microbialForecast:::env_cov_covariates_key,
+										"env_cycl" = microbialForecast:::env_cycl_covariates_key,
 										"cycl_only" = microbialForecast:::cycl_only_key)
 
 	taxon_key <- unique(truth.plot.long$species)

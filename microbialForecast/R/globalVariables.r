@@ -8,7 +8,9 @@ message("Loading global variables")
 #' @import dplyr
 #' @import tidyverse
 
-utils::globalVariables(c("keep_fg_names", "tax_names", "all_covariates_key","rank_spec_names","date_recode","rank_spec_names2"))
+utils::globalVariables(c("keep_fg_names", "tax_names", "all_covariates_key",
+												 "env_cycl_covariates_key", "env_cov_covariates_key",
+												 "rank_spec_names","date_recode","rank_spec_names2"))
 
 
 #### global variables ####
@@ -54,18 +56,31 @@ div_scenarios <- c("no_uncertainty_ITS", "spatial_uncertainty_ITS", "temporal_un
 									 "temporal_uncertainty_16S", "full_uncertainty_16S")
 
 
-all_covariates_key <- c("1" = "Temperature",
-												"2" = "Moisture",
-												"3" = "pH",
-												"4" = "pC",
-												"5" = "Ectomycorrhizal trees",
-												"6" = "LAI",
-												"7" = "sin",
-												"8" = "cos",
-												"NA" = "NA")
+# env_cycl models: beta[1]=sin, beta[2]=cos, then 6 environmental covariates
+env_cycl_covariates_key <- c("1" = "sin",
+														 "2" = "cos",
+														 "3" = "Temperature",
+														 "4" = "Moisture",
+														 "5" = "pH",
+														 "6" = "pC",
+														 "7" = "Ectomycorrhizal trees",
+														 "8" = "LAI",
+														 "NA" = "NA")
 
-cycl_only_key <- list("1" = "sin",
-											"2" = "cos")
+# env_cov models: 6 environmental covariates only (no sin/cos)
+env_cov_covariates_key <- c("1" = "Temperature",
+														"2" = "Moisture",
+														"3" = "pH",
+														"4" = "pC",
+														"5" = "Ectomycorrhizal trees",
+														"6" = "LAI",
+														"NA" = "NA")
+
+# Legacy alias — was wrong for env_cycl, now points to env_cov (correct for that model type)
+all_covariates_key <- env_cov_covariates_key
+
+cycl_only_key <- c("1" = "sin",
+									 "2" = "cos")
 
 var_list <- c("tau_obs","tau_proc","plot_var","site_var", "plot_effect", "time_var", "beta", "site_effect","plot_mean_hat","alpha")
 var_listSimple <- c("tau_obs","tau_proc","plot_var", "plot_effect",#"glob_mean",
