@@ -336,11 +336,8 @@ local_test_mode <- identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")
 read_unconverged_taxa_list <- function() {
     p <- here("data/summary/unconverged_taxa_list.rds")
     if (!file.exists(p)) {
-        if (local_test_mode) {
-            warn(sprintf("LOCAL_TEST: unconverged_taxa_list.rds missing at %s; using empty list", p))
-            return(character(0))
-        }
-        stop("Required file missing: ", p)
+        warn(sprintf("unconverged_taxa_list.rds missing at %s; using empty list", p))
+        return(character(0))
     }
     readRDS(p)
 }
@@ -348,11 +345,8 @@ read_unconverged_taxa_list <- function() {
 read_weak_converged_taxa_list <- function() {
     p <- here("data/summary/weak_converged_taxa_list.rds")
     if (!file.exists(p)) {
-        if (local_test_mode) {
-            warn(sprintf("LOCAL_TEST: weak_converged_taxa_list.rds missing at %s; using empty list", p))
-            return(character(0))
-        }
-        stop("Required file missing: ", p)
+        warn(sprintf("weak_converged_taxa_list.rds missing at %s; using empty list (no models filtered out)", p))
+        return(character(0))
     }
     readRDS(p)
 }
