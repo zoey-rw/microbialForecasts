@@ -1375,26 +1375,18 @@ run_truncated_normal_scenarios <- function(j, chain_no) {
       total_iterations <- total_iterations + iter_per_chunk
       
       # Get updated samples and accumulate them
+      # NIMBLE's mvSamples resets between runs, so current_samples contains ONLY the latest chunk
       current_samples <- as.matrix(compiled$mvSamples)
       current_samples2 <- as.matrix(compiled$mvSamples2)
-      cat("  Current total samples in compiled object:", nrow(current_samples), "\n")
-      cat("  Previous accumulated samples:", nrow(all_samples), "\n")
 
-      # Only take the new samples (skip the initial ones we already have)
-      if (nrow(current_samples) > nrow(initial_samples)) {
-        new_samples <- current_samples[(nrow(initial_samples) + 1):nrow(current_samples), , drop = FALSE]
-        all_samples <- rbind(all_samples, new_samples)
-        cat("  Updated samples collected:", nrow(new_samples), "new samples,", nrow(all_samples), "total accumulated\n")
+      if (nrow(current_samples) > 0) {
+        all_samples <- rbind(all_samples, current_samples)
+        cat("  Added", nrow(current_samples), "samples, total:", nrow(all_samples), "\n")
       } else {
-        cat("  WARNING: No new samples detected, using current samples\n")
-        all_samples <- current_samples
+        cat("  WARNING: No samples in current iteration\n")
       }
-      # Accumulate samples2 (plot_mu)
-      if (nrow(current_samples2) > nrow(initial_samples2)) {
-        new_s2 <- current_samples2[(nrow(initial_samples2) + 1):nrow(current_samples2), , drop = FALSE]
-        all_samples2 <- rbind(all_samples2, new_s2)
-      } else {
-        all_samples2 <- current_samples2
+      if (nrow(current_samples2) > 0) {
+        all_samples2 <- rbind(all_samples2, current_samples2)
       }
       
       # Save checkpoint after each loop

@@ -1982,12 +1982,13 @@ run_one_model <- function(row, project_root, required_sites, env_data=NULL, r16=
           mean  = if("Mean" %in% names(.)) as.numeric(Mean) else NA_real_,
           sd    = if("SD" %in% names(.)) as.numeric(SD) else NA_real_,
           fcast_period = "calibration",
-          model_name = if (length(row$model_name) == 1) row$model_name else row$model_name[1], 
+          model_name = if (length(row$model_name) == 1) row$model_name else row$model_name[1],
           time_period = paste0(if (length(row$min_date) == 1) row$min_date else row$min_date[1], "_", if (length(row$max_date) == 1) row$max_date else row$max_date[1]),
           species = taxon_name, taxon = taxon_name, rank_name = rank_name,
           predicted_site_effect = FALSE, newsite = "Observed site", model_id = if (length(row$model_id) == 1) row$model_id else row$model_id[1],
           site_prediction = "New time (observed site)", siteID = sid
-        )
+        ) %>%
+        select(-any_of(c("Mean", "SD")))  # drop uppercase to avoid duplicates in rbindlist
         
         # Ensure all timepoints have dateID and dates from time_train
         if ("timepoint" %in% names(pc)) {
@@ -2199,7 +2200,10 @@ run_one_model <- function(row, project_root, required_sites, env_data=NULL, r16=
           hp <- data.frame()
         } else {
           combine_list <- list()
-          if (nrow(pc) > 0) combine_list <- c(combine_list, list(pc))
+          if (nrow(pc) > 0) {
+            if (!"fcast_period" %in% names(pc)) pc$fcast_period <- "calibration"
+            combine_list <- c(combine_list, list(pc))
+          }
           if (nrow(hp) > 0) combine_list <- c(combine_list, list(hp))
           
           if (length(combine_list) > 0) {
@@ -2310,7 +2314,15 @@ run_one_model <- function(row, project_root, required_sites, env_data=NULL, r16=
           }
         }
       } else {
-        hp$fcast_period <- ifelse(is.na(hp$fcast_period), "hindcast", hp$fcast_period)
+        # Assign fcast_period based on dateID relative to calibration end, not blindly as "hindcast"
+        if ("dateID" %in% names(hp) && exists("cal_end_dateID")) {
+          hp$fcast_period <- ifelse(is.na(hp$fcast_period),
+            ifelse(!is.na(hp$dateID) & as.numeric(as.character(hp$dateID)) <= cal_end_dateID,
+                   "calibration", "hindcast"),
+            hp$fcast_period)
+        } else {
+          hp$fcast_period <- ifelse(is.na(hp$fcast_period), "hindcast", hp$fcast_period)
+        }
       }
       
       # Final deduplication before adding to out_list

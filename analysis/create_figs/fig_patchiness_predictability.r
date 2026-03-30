@@ -114,10 +114,20 @@ df_scaled <- df %>%
 
 # Predictor formula (organism traits + environmental sensitivities)
 # Using species as random intercept to account for multiple model_names per taxon
-base_formula <- nRMSE ~
-  `Temporal memory` + `Seasonal amplitude` + `Core variability` +
-  `Temporal variability` + `Spatial autocorrelation` +
-  Temperature + Moisture + pH + `Percent C` + `EcM trees` + LAI
+# Drop Temporal variability (cv) if coverage < 20% — it's often unavailable
+cv_coverage <- sum(!is.na(df_scaled$`Temporal variability`)) / nrow(df_scaled)
+if (cv_coverage < 0.2) {
+  cat("CV coverage", round(cv_coverage * 100, 1), "% — dropping Temporal variability from model\n")
+  base_formula <- nRMSE ~
+    `Temporal memory` + `Seasonal amplitude` + `Core variability` +
+    `Spatial autocorrelation` +
+    Temperature + Moisture + pH + `Percent C` + `EcM trees` + LAI
+} else {
+  base_formula <- nRMSE ~
+    `Temporal memory` + `Seasonal amplitude` + `Core variability` +
+    `Temporal variability` + `Spatial autocorrelation` +
+    Temperature + Moisture + pH + `Percent C` + `EcM trees` + LAI
+}
 
 # Try mixed model; fall back to lm if insufficient grouping
 fit_model <- function(data, group_label) {
@@ -165,13 +175,15 @@ extract_coefs <- function(mod, group_label) {
   } else {
     cc <- summary(mod)$coefficients
     ci <- confint(mod)
+    # Join by row name to handle dropped (NA) coefficients
+    shared <- intersect(rownames(cc), rownames(ci))
     est <- data.frame(
-      term     = rownames(cc),
-      estimate = cc[, "Estimate"],
-      se       = cc[, "Std. Error"],
-      ci_lo    = ci[, 1],
-      ci_hi    = ci[, 2],
-      pvalue   = cc[, "Pr(>|t|)"],
+      term     = shared,
+      estimate = cc[shared, "Estimate"],
+      se       = cc[shared, "Std. Error"],
+      ci_lo    = ci[shared, 1],
+      ci_hi    = ci[shared, 2],
+      pvalue   = cc[shared, "Pr(>|t|)"],
       stringsAsFactors = FALSE
     )
   }

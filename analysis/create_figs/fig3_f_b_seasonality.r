@@ -37,6 +37,8 @@ parquet_file <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
 rds_file     <- here("data/summary/all_hindcasts_plsr2.rds")
 if (file.exists(parquet_file) && requireNamespace("arrow", quietly = TRUE)) {
   hindcast_data <- arrow::read_parquet(parquet_file)
+} else if (file.exists(parquet_file) && requireNamespace("nanoparquet", quietly = TRUE)) {
+  hindcast_data <- nanoparquet::read_parquet(parquet_file)
 } else {
   hindcast_data <- readRDS(rds_file)
 }

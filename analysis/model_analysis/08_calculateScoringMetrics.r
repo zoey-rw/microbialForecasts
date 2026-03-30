@@ -144,6 +144,18 @@ if (!"rank_only" %in% names(hindcast_data) && "rank_name" %in% names(hindcast_da
   cat("Added rank_only column from rank_name\n")
 }
 
+# Handle nanoparquet column renaming: when the parquet has both uppercase (Mean, SD)
+# and lowercase (mean, sd) columns, nanoparquet appends _1 to the lowercase duplicates.
+# Standardize to lowercase (mean, sd) which is what run_hindcast.r produces.
+col_renames <- c("mean_1" = "mean", "sd_1" = "sd")
+for (old_name in names(col_renames)) {
+  new_name <- col_renames[[old_name]]
+  if (old_name %in% names(hindcast_data) && !new_name %in% names(hindcast_data)) {
+    setnames(hindcast_data, old_name, new_name)
+    cat(sprintf("Renamed '%s' -> '%s' (nanoparquet case-collision artifact)\n", old_name, new_name))
+  }
+}
+
 # Keep only needed columns
 needed_cols <- c("model_id","fcast_period","pretty_group","model_name",
                  "rank_name","rank_only","species","site_prediction","siteID","plotID",
@@ -153,7 +165,6 @@ if (length(drop_cols)) hindcast_data[, (drop_cols) := NULL]
 cat(sprintf("Trimmed to %d cols\n", ncol(hindcast_data)))
 
 # Convert truth column from character to numeric
-cat("Converting truth column from character to numeric...\n")
 hindcast_data[, truth := as.numeric(truth)]
 
 # Set indexes for fast subsetting/grouping
@@ -163,8 +174,8 @@ setindex(hindcast_data, species)
 setindex(hindcast_data, site_prediction)
 setindex(hindcast_data, siteID)
 
-hindcast_only <- hindcast_data[fcast_period == "hindcast" & !is.na(truth) & !is.na(mean)]
-calibration_only <- hindcast_data[fcast_period == "calibration" & !is.na(truth) & !is.na(mean)]
+hindcast_only <- hindcast_data[fcast_period == "hindcast" & !is.na(truth) & !is.na(med)]
+calibration_only <- hindcast_data[fcast_period == "calibration" & !is.na(truth) & !is.na(med)]
 
 # Filter calibration to exclude first dates if plot_start_date exists
 if ("plot_start_date" %chin% names(calibration_only)) {
