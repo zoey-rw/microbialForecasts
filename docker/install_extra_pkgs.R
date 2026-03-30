@@ -25,7 +25,7 @@ cran_pkgs <- c(
   "truncnorm"
 )
 
-install.packages(cran_pkgs, repos = "https://cloud.r-project.org", dependencies = FALSE)
+install.packages(cran_pkgs, repos = "https://cloud.r-project.org", dependencies = NA)
 
 # PLSR helpers used by microbialForecast/R/spectra_site_eff_permutation_fixed.r (not on CRAN)
 remotes::install_github("plantphys/spectratrait", upgrade = "never", dependencies = NA)

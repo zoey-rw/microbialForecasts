@@ -39,6 +39,8 @@ WORKDIR /opt/microbialForecasts
 
 COPY . /opt/microbialForecasts/
 
+RUN mkdir -p /opt/microbialForecasts/logs
+
 # R CMD INSTALL does not fetch CRAN dependencies; install_local(..., dependencies = TRUE) does.
 RUN Rscript -e 'options(Ncpus = max(1L, parallel::detectCores() - 1L)); install.packages("remotes", repos = "https://cloud.r-project.org", dependencies = FALSE)' \
  && Rscript -e 'options(Ncpus = max(1L, parallel::detectCores() - 1L)); remotes::install_local("/opt/microbialForecasts/microbialForecast", dependencies = TRUE, upgrade = "never")' \
