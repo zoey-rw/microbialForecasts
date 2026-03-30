@@ -1,0 +1,48 @@
+# Git and editor
+.git
+.cursor
+*.code-workspace
+
+# Machine-specific .libPaths(); image uses /usr/local/lib/R/site-library only
+.Rprofile
+
+# Vendored / local artifacts not used by containerized R scripts
+igraph
+
+# Local R library (image installs its own)
+R_library
+
+# --- Bulk data (always mount or generate locally) ---
+data/model_outputs
+data/hindcasts
+data/new_neon_microbe
+data/old_mcmc
+data/figures
+data/phylo_workspace.Rdata
+logs
+
+# --- data/clean: only include inputs used by 05–06 (see exceptions below) ---
+data/clean/*
+!data/clean/site_effect_predictors.rds
+!data/clean/dominantHorizonsSite.rds
+!data/clean/groupAbundances_16S_2023.rds
+!data/clean/groupAbundances_ITS_2023.rds
+!data/clean/all_predictor_data.rds
+!data/clean/model_input_df.csv
+data/clean/NEON_soil-megapit
+
+# --- data/summary: only include site-effects inputs/artifacts for 05–06 (not hindcast aggregates) ---
+data/summary/*
+!data/summary/site_effects.rds
+!data/summary/site_effects_dredged.rds
+!data/summary/site_effects_unobserved.rds
+!data/summary/site_effects_unobserved_env_cycl.rds
+!data/summary/site_effects_unobserved_env_cov.rds
+!data/summary/site_effects_unobserved_cycl_only.rds
+data/summary/driver_uncertainty
+data/summary/parquet
+
+# Figures at repo root (often huge)
+figures
+
+**/.DS_Store

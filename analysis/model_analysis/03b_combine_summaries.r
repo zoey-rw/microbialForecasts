@@ -11,20 +11,21 @@ cat("=== COMBINING EXISTING SUMMARY FILES ===\n")
 cat("Collecting summary files from cloglog_beta_driver_uncertainty directories...\n")
 
 # Base path
-base_path <- "data/model_outputs/cloglog_beta_driver_uncertainty"
+base_path <- here("data/model_outputs/cloglog_beta_driver_uncertainty")
 
 # Find all summary files in subdirectories (recursive search to handle subdirectories)
-env_cycl_files <- list.files(file.path(base_path, "env_cycl"), 
-                            pattern = "summary_env_cycl_.*_beta_regression\\.rds$", 
-                            recursive = TRUE,
+# Use recursive = FALSE to avoid picking up stale duplicates in per-taxon subdirectories
+env_cycl_files <- list.files(file.path(base_path, "env_cycl"),
+                            pattern = "summary_env_cycl_.*_beta_regression\\.rds$",
+                            recursive = FALSE,
                             full.names = TRUE)
-cycl_only_files <- list.files(file.path(base_path, "cycl_only"), 
-                             pattern = "summary_cycl_only_.*_beta_regression\\.rds$", 
-                             recursive = TRUE,
+cycl_only_files <- list.files(file.path(base_path, "cycl_only"),
+                             pattern = "summary_cycl_only_.*_beta_regression\\.rds$",
+                             recursive = FALSE,
                              full.names = TRUE)
-env_cov_files <- list.files(file.path(base_path, "env_cov"), 
-                           pattern = "summary_env_cov_.*_beta_regression\\.rds$", 
-                           recursive = TRUE,
+env_cov_files <- list.files(file.path(base_path, "env_cov"),
+                           pattern = "summary_env_cov_.*_beta_regression\\.rds$",
+                           recursive = FALSE,
                            full.names = TRUE)
 
 all_summary_files <- c(env_cycl_files, cycl_only_files, env_cov_files)

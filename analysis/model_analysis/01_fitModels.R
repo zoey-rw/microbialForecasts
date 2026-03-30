@@ -331,6 +331,32 @@ if (identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")) {
     info("   Filtered to %d models for testing", nrow(params_in))
 }
 
+local_test_mode <- identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")
+
+read_unconverged_taxa_list <- function() {
+    p <- here("data/summary/unconverged_taxa_list.rds")
+    if (!file.exists(p)) {
+        if (local_test_mode) {
+            warn(sprintf("LOCAL_TEST: unconverged_taxa_list.rds missing at %s; using empty list", p))
+            return(character(0))
+        }
+        stop("Required file missing: ", p)
+    }
+    readRDS(p)
+}
+
+read_weak_converged_taxa_list <- function() {
+    p <- here("data/summary/weak_converged_taxa_list.rds")
+    if (!file.exists(p)) {
+        if (local_test_mode) {
+            warn(sprintf("LOCAL_TEST: weak_converged_taxa_list.rds missing at %s; using empty list", p))
+            return(character(0))
+        }
+        stop("Required file missing: ", p)
+    }
+    readRDS(p)
+}
+
 # Priority mode is now handled in CLI parsing above
 
 if (use_priority == "true" || use_priority == "priority") {
@@ -341,15 +367,15 @@ if (use_priority == "true" || use_priority == "priority") {
         info("   Loaded %d priority models (have chain 1 completed)", length(rerun_list))
     } else {
         warn("   Priority list not found! Falling back to standard unconverged list...")
-        rerun_list <- readRDS(here("data/summary/unconverged_taxa_list.rds"))
+        rerun_list <- read_unconverged_taxa_list()
     }
 } else {
     info("📊 STANDARD MODE: Using all unconverged models")
-    rerun_list <- readRDS(here("data/summary/unconverged_taxa_list.rds"))
+    rerun_list <- read_unconverged_taxa_list()
     info("   Tip: Set USE_PRIORITY=true or add 'priority' argument to focus on models with existing progress")
 }
 
-converged_list = readRDS(here("data/summary/weak_converged_taxa_list.rds"))
+converged_list <- read_weak_converged_taxa_list()
 
 # HPC PRODUCTION CONFIGURATION: Run multiple models with driver uncertainty enabled
 # Note: params_in may already be filtered by LOCAL_TEST above
@@ -1017,6 +1043,167 @@ create_inits_with_uncertainty <- function(constants, model_name, model_data = NU
     return(inits)
 }
 
+# --- warmstart_helpers (also parsed by test_warmstart_inits.R) ---
+# Warm-start initial values (cloglog driver uncertainty).
+# Files from create_env_cycl_warmstart.R: list(inits, source_iterations, source_chains, taxon, model_name, ...).
+# Resolution order: WARMSTART_FILE (if set and exists), else
+#   {model_output_dir}/{model_name}/{species}/warmstart_inits.rds
+# Set SKIP_WARMSTART=true to force cold start even when a file exists.
+resolve_warmstart_rds_path <- function(model_output_dir, model_name, species) {
+    if (identical(tolower(Sys.getenv("SKIP_WARMSTART", "false")), "true")) {
+        return("")
+    }
+    env_path <- Sys.getenv("WARMSTART_FILE", "")
+    default_path <- file.path(model_output_dir, model_name, species, "warmstart_inits.rds")
+    if (nzchar(env_path)) {
+        if (file.exists(env_path)) {
+            return(normalizePath(env_path, winslash = "/", mustWork = FALSE))
+        }
+        warn(sprintf("WARMSTART_FILE is set but file not found (%s); trying default path %s",
+                     env_path, default_path))
+    }
+    if (file.exists(default_path)) {
+        return(normalizePath(default_path, winslash = "/", mustWork = FALSE))
+    }
+    ""
+}
+
+merge_warmstart_inits <- function(base_inits, warmstart_path, chain_no, constants, model_name) {
+    if (!nzchar(warmstart_path) || !file.exists(warmstart_path)) {
+        return(base_inits)
+    }
+    ws <- tryCatch(
+        readRDS(warmstart_path),
+        error = function(e) {
+            warn(sprintf("Could not read warm-start %s: %s", warmstart_path, conditionMessage(e)))
+            NULL
+        }
+    )
+    if (is.null(ws) || !is.list(ws$inits)) {
+        warn(sprintf("Warm-start %s: missing or invalid list component 'inits'", warmstart_path))
+        return(base_inits)
+    }
+    if (!is.null(ws$model_name) && nzchar(as.character(ws$model_name))) {
+        if (!identical(as.character(ws$model_name), as.character(model_name))) {
+            warn(sprintf(
+                "Warm-start built for model_name=%s but current run is %s (applying inits anyway)",
+                ws$model_name, model_name
+            ))
+        }
+    }
+    jitter_sd <- suppressWarnings(as.numeric(Sys.getenv("WARMSTART_JITTER_SD", "0.05")))
+    if (!is.finite(jitter_sd) || jitter_sd < 0) {
+        jitter_sd <- 0.05
+    }
+    cn <- as.integer(chain_no)
+    if (!is.finite(cn)) cn <- 1L
+    set.seed((abs(cn) %% 1000000L) * 1000L + 7919L)
+
+    wi <- ws$inits
+    out <- base_inits
+
+    info(sprintf(
+        "  Warm-start: %s | source_iterations=%s source_chains=%s",
+        warmstart_path,
+        if (!is.null(ws$source_iterations)) as.character(ws$source_iterations) else "?",
+        if (!is.null(ws$source_chains)) as.character(ws$source_chains) else "?"
+    ))
+
+    jitter_pos <- function(x, mult = 1) {
+        abs(as.numeric(x)[1] + stats::rnorm(1, 0, jitter_sd * mult))
+    }
+
+    if ("precision" %in% names(wi)) out$precision <- jitter_pos(wi$precision, mult = 5)
+    if ("rho" %in% names(wi)) {
+        rv <- as.numeric(wi$rho)[1] + stats::rnorm(1, 0, jitter_sd)
+        out$rho <- max(0.001, min(0.999, rv))
+    }
+    if ("intercept" %in% names(wi)) {
+        out$intercept <- as.numeric(wi$intercept)[1] + stats::rnorm(1, 0, jitter_sd)
+    }
+    if ("legacy_effect" %in% names(wi)) {
+        out$legacy_effect <- as.numeric(wi$legacy_effect)[1] + stats::rnorm(1, 0, jitter_sd)
+    }
+    if ("site_effect_sd" %in% names(wi)) {
+        out$site_effect_sd <- jitter_pos(wi$site_effect_sd, mult = 0.5)
+    }
+    if ("sigma_proc" %in% names(wi)) {
+        out$sigma_proc <- jitter_pos(wi$sigma_proc, mult = 0.2)
+    }
+    if ("sigma_init" %in% names(wi)) {
+        out$sigma_init <- jitter_pos(wi$sigma_init, mult = 0.2)
+    }
+
+    n_beta_expected <- if (model_name == "env_cycl") 8L else if (model_name == "env_cov") 6L else 2L
+    if ("beta" %in% names(wi)) {
+        b <- as.numeric(wi$beta)
+        if (length(b) == n_beta_expected) {
+            out$beta <- b + stats::rnorm(n_beta_expected, 0, jitter_sd)
+            names(out$beta) <- NULL
+        } else {
+            warn(sprintf(
+                "Warm-start beta length %d != expected %d for %s; keeping cold-start beta",
+                length(b), n_beta_expected, model_name
+            ))
+        }
+    }
+
+    if ("site_effect" %in% names(wi)) {
+        se <- as.numeric(wi$site_effect)
+        if (length(se) == constants$N.site) {
+            out$site_effect <- se + stats::rnorm(constants$N.site, 0, jitter_sd)
+            names(out$site_effect) <- NULL
+        } else {
+            warn(sprintf(
+                "Warm-start site_effect length %d != N.site=%d; keeping cold-start site_effect",
+                length(se), constants$N.site
+            ))
+        }
+    }
+
+    jitter_matrix <- function(nm, mult = 0.1) {
+        if (!nm %in% names(wi) || !is.matrix(wi[[nm]])) return(invisible(NULL))
+        W <- wi[[nm]]
+        if (!nm %in% names(out) || !is.matrix(out[[nm]])) return(invisible(NULL))
+        if (!identical(dim(W), dim(out[[nm]]))) {
+            warn(sprintf(
+                "Warm-start %s dims %s vs expected %s; skipping",
+                nm, paste(dim(W), collapse = "x"), paste(dim(out[[nm]]), collapse = "x")
+            ))
+            return(invisible(NULL))
+        }
+        B <- base_inits[[nm]]
+        W2 <- W
+        na_w <- is.na(W2)
+        if (any(na_w)) W2[na_w] <- B[na_w]
+        out[[nm]] <<- W2 + matrix(stats::rnorm(length(W2), 0, jitter_sd * mult),
+                                  nrow = nrow(W2), ncol = ncol(W2))
+        invisible(NULL)
+    }
+
+    jitter_matrix("eta", mult = 0.1)
+    jitter_matrix("temp_est", mult = 0.05)
+    jitter_matrix("mois_est", mult = 0.05)
+
+    for (nm in c("pH_est_p", "pC_est_p")) {
+        if (!nm %in% names(wi)) next
+        v <- as.numeric(wi[[nm]])
+        if (length(v) != constants$N.plot) {
+            warn(sprintf("Warm-start %s length %d != N.plot=%d; skipping", nm, length(v), constants$N.plot))
+            next
+        }
+        b <- base_inits[[nm]]
+        v2 <- v
+        na_v <- is.na(v2)
+        if (any(na_v)) v2[na_v] <- b[na_v]
+        out[[nm]] <- v2 + stats::rnorm(length(v2), 0, jitter_sd * 0.05)
+        names(out[[nm]]) <- NULL
+    }
+
+    out
+}
+# --- end warmstart_helpers ---
+
 # Function to create visualization of plot_mu over time
 create_plot_mu_visualization <- function(samples, samples2, model_data, metadata, output_dir) {
     
@@ -1480,8 +1667,13 @@ run_scenarios_fixed <- function(j, chain_no) {
                                                          temporalDriverUncertainty = driver_uncertainty_mode, 
                                                          spatialDriverUncertainty = driver_uncertainty_mode)
         
-        # Create initial values with drivers
+        # Create initial values with drivers; overlay warm-start if present
         inits <- create_inits_with_uncertainty(constants, model_name, model_data = model.dat)
+        ws_path <- resolve_warmstart_rds_path(model_output_dir, model_name, species)
+        if (nzchar(ws_path)) {
+            info(sprintf("Warm-start path resolved for chain %d: %s", chain_no, ws_path))
+            inits <- merge_warmstart_inits(inits, ws_path, chain_no, constants, model_name)
+        }
         
         info("Model built successfully")
         
@@ -2513,6 +2705,7 @@ must_export <- c(
   "sanitize_driver_uncertainty",
   "assert_matrix_dims", "assert_vector_len",
   "create_inits_with_uncertainty",
+  "resolve_warmstart_rds_path", "merge_warmstart_inits",
   "check_continue",
   "atomic_saveRDS", "ensure_old_schema",  # Save utilities
 

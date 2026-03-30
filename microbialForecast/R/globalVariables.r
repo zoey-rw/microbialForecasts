@@ -7,6 +7,7 @@ message("Loading global variables")
 #' @import coda
 #' @import dplyr
 #' @import tidyverse
+#' @importFrom data.table rbindlist as.data.table setDTthreads data.table ":="
 
 utils::globalVariables(c("keep_fg_names", "tax_names", "all_covariates_key",
 												 "env_cycl_covariates_key", "env_cov_covariates_key",

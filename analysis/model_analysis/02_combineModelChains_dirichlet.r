@@ -6,7 +6,8 @@ source(here::here("analysis/model_analysis/dirichlet_covariance/dirichlet_helper
 # keeps only the second half (post-warmup), thins, then computes summary stats.
 # This avoids holding all raw samples in memory at once.
 combine_dirichlet_chains_lowmem <- function(chain_paths, model_id,
-                                            keep_frac = 0.5, thin_by = 5) {
+                                            keep_frac = 0.5, thin_by = 5,
+                                            metadata_file = NULL) {
   library(coda)
   message("Combining ", length(chain_paths), " chains for ", model_id,
           " (keep_frac=", keep_frac, ", thin_by=", thin_by, ")")
@@ -14,6 +15,8 @@ combine_dirichlet_chains_lowmem <- function(chain_paths, model_id,
   param_chains <- list()
   plot_chains <- list()
   metadata <- NULL
+  # Track the common samples2 columns across all chains (intersect by name)
+  common_s2_cols <- NULL
 
   for (i in seq_along(chain_paths)) {
     message("  Loading chain ", i, ": ", basename(chain_paths[i]))
@@ -31,12 +34,18 @@ combine_dirichlet_chains_lowmem <- function(chain_paths, model_id,
     if (!is.null(chain_data$samples2)) {
       s2 <- chain_data$samples2
       n2 <- nrow(s2)
-      # samples2 may have different thinning; use same fraction
       start2 <- floor(n2 * (1 - keep_frac)) + 1
       thin2 <- max(1, round(thin_by * n2 / n_total))
       keep2 <- seq(start2, n2, by = thin2)
-      message("    samples2: ", n2, " rows -> keeping ", length(keep2))
+      message("    samples2: ", n2, " rows -> keeping ", length(keep2),
+              " (", ncol(s2), " cols)")
       plot_chains[[i]] <- mcmc(s2[keep2, , drop = FALSE])
+      # Track common columns across chains
+      if (is.null(common_s2_cols)) {
+        common_s2_cols <- colnames(s2)
+      } else {
+        common_s2_cols <- intersect(common_s2_cols, colnames(s2))
+      }
       rm(s2)
     }
 
@@ -45,6 +54,17 @@ combine_dirichlet_chains_lowmem <- function(chain_paths, model_id,
     }
 
     rm(chain_data); gc()
+  }
+
+  # Subset all plot chains to the common columns so they can be combined
+  if (length(common_s2_cols) > 0 && length(plot_chains) > 0) {
+    for (i in seq_along(plot_chains)) {
+      if (ncol(plot_chains[[i]]) != length(common_s2_cols)) {
+        message("  Subsetting plot chain ", i, " from ", ncol(plot_chains[[i]]),
+                " to ", length(common_s2_cols), " common cols")
+        plot_chains[[i]] <- mcmc(plot_chains[[i]][, common_s2_cols, drop = FALSE])
+      }
+    }
   }
 
   # Trim all chains to the length of the shortest so mcmc.list() works
@@ -67,13 +87,54 @@ combine_dirichlet_chains_lowmem <- function(chain_paths, model_id,
   param_summary <- list(param_sum$statistics, param_sum$quantiles)
 
   if (!is.null(combined_plots)) {
-    plot_sum <- fast.summary.mcmc(combined_plots)
-    plot_summary <- list(plot_sum$statistics, plot_sum$quantiles)
+    # For 200k+ plot_rel columns, full quantiles need too much RAM.
+    # Compute Mean/SD (used by figure scripts), then quantiles only
+    # for the 50% (median) to keep the structure 03 expects.
+    message("  Computing plot summaries for ", ncol(combined_plots[[1]]),
+            " columns x ", sum(sapply(combined_plots, nrow)), " total rows...")
+    # Process one chain at a time to limit peak memory
+    cnames <- colnames(combined_plots[[1]])
+    n_cols <- length(cnames)
+    sum_x <- numeric(n_cols)
+    sum_x2 <- numeric(n_cols)
+    n_total <- 0
+    for (ch in combined_plots) {
+      m <- as.matrix(ch)
+      sum_x <- sum_x + colSums(m)
+      sum_x2 <- sum_x2 + colSums(m^2)
+      n_total <- n_total + nrow(m)
+    }
+    plot_means <- sum_x / n_total
+    plot_sds <- sqrt(sum_x2 / n_total - plot_means^2)
+    stats_df <- data.frame(Mean = plot_means, SD = plot_sds,
+                           row.names = cnames)
+    # Approximate quantiles from mean/sd (normal approximation)
+    quants_df <- data.frame(
+      `2.5%` = plot_means - 1.96 * plot_sds,
+      `25%` = plot_means - 0.674 * plot_sds,
+      `50%` = plot_means,
+      `75%` = plot_means + 0.674 * plot_sds,
+      `97.5%` = plot_means + 1.96 * plot_sds,
+      row.names = cnames, check.names = FALSE
+    )
+    plot_summary <- list(stats_df, quants_df)
+    rm(sum_x, sum_x2); gc()
   } else {
     plot_summary <- list(data.frame(), data.frame())
   }
 
-  if (is.null(metadata)) metadata <- list(model_id = model_id)
+  # If checkpoints had no metadata, load from a separate file
+  if (is.null(metadata) || !("model_data" %in% names(metadata))) {
+    if (!is.null(metadata_file) && file.exists(metadata_file)) {
+      message("  Loading metadata from: ", basename(metadata_file))
+      meta_src <- readRDS(metadata_file)
+      metadata <- meta_src$metadata
+      rm(meta_src); gc()
+    } else {
+      metadata <- list(model_id = model_id)
+      warning("No metadata found for ", model_id)
+    }
+  }
 
   return(list(
     samples = combined_params,
@@ -162,9 +223,16 @@ for(model_id in model_id_list) {
     message("Summary samples file already exists")
   } else {
     # Calculate summary on each output subset, using custom summary function
+    # Find a metadata source: prefer a final samples file (has full metadata)
+    # even if it was dropped for samples2 dimension mismatch
+    all_model_files <- file_info$file[file_info$model_id == model_id]
+    meta_file <- all_model_files[grepl("^samples_", basename(all_model_files))][1]
+    if (is.na(meta_file)) meta_file <- NULL
+
     message("Combining chains for ", model_id, " with ", length(chain_paths), " chains...")
     out <- tryCatch({
-      combine_dirichlet_chains_lowmem(chain_paths, model_id)
+      combine_dirichlet_chains_lowmem(chain_paths, model_id,
+                                      metadata_file = meta_file)
     }, error = function(e) {
       message("Error combining chains for ", model_id, ": ", e$message)
       return(NULL)
@@ -212,8 +280,10 @@ for(model_id in model_id_list) {
       }
     }
     
+    # Recompute param summary after potential outlier removal;
+    # plot_summary is already computed in the function (streaming, memory-safe)
     param_summary <- fast.summary.mcmc(out$samples)
-    plot_summary <- fast.summary.mcmc(out$samples2)
+    plot_summary <- out$plot_summary
     es <- effectiveSize(out$samples)
     if (length(out$samples) > 1) {
       gelman_out <- cbind(gelman.diag(out$samples, multivariate = F)[[1]], es)

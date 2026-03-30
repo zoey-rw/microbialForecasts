@@ -19,19 +19,12 @@ file.list <- file.list[file.list %in% rownames(info)]
 
 cat("Found", length(file.list), "Dirichlet model files to summarize\n")
 
-# Process all files in parallel
-cl <- makeCluster(4, outfile="")
-registerDoParallel(cl)
-
-# Run summary function for multiple groups, in parallel
-file_summaries = foreach(f=file.list, .errorhandling = "pass") %dopar% {
-  source("source.R")
-  # Use the Dirichlet-specific summary function
-  out <- summarize_dirichlet_model(f, save_summary=T, drop_other = T, overwrite = TRUE)
-  return(out)
+# Process sequentially (only 1 model; avoids parallel worker path issues)
+for (f in file.list) {
+  cat("Summarizing:", basename(f), "\n")
+  summarize_dirichlet_model(f, save_summary = TRUE,
+                            drop_other = TRUE, overwrite = TRUE)
 }
-
-stopCluster(cl)
 
 # Find all summary files
 summary_file_list = list.files(here("data/model_outputs/dirichlet_driver_uncertainty_reparam_75k/"), recursive = T,
