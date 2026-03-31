@@ -1298,7 +1298,7 @@ process_single_taxon <- function(taxon_config, all_ranks, env_data) {
     tax_output <- data.frame()
   }
 
-    # Ensure pretty_group is populated (canonical source: fill_pretty_group from package)
+    # Label each row as Bacteria or Fungi
     if (nrow(tax_output) > 0) {
       tax_output <- fill_pretty_group(as.data.table(tax_output))
     }
