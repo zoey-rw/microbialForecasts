@@ -2389,7 +2389,7 @@ run_one_model <- function(row, project_root, required_sites, env_data=NULL, r16=
     must_num <- c("lo","lo_25","med","hi_75","hi")
     for (nm in must_num) if (nm %in% names(tax_output)) tax_output[[nm]] <- suppressWarnings(as.numeric(tax_output[[nm]]))
 
-    # Ensure pretty_group is populated (canonical source: fill_pretty_group from package)
+    # Label each row as Bacteria or Fungi
     tax_output <- fill_pretty_group(data.table::as.data.table(tax_output))
     tax_output <- as.data.frame(tax_output)
 
