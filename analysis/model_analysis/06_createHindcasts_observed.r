@@ -257,9 +257,14 @@ sequential     <- identical(tolower(get_flag("sequential", "false")), "true")  #
 ## --- Constants ---
 
 # CRITICAL: Only use cloglog_beta_driver_uncertainty models (exclude logit, fixed_priors, fixed_drivers, and regression)
-MODEL_DIRS <- c(
-  "cloglog_beta_driver_uncertainty"
-)
+# Override with MODEL_DIRS env var to read from a different output directory (e.g., rerun)
+env_model_dirs <- Sys.getenv("MODEL_DIRS", "")
+if (nzchar(env_model_dirs)) {
+  MODEL_DIRS <- strsplit(env_model_dirs, ",")[[1]]
+  cat("MODEL_DIRS override:", paste(MODEL_DIRS, collapse=", "), "\n")
+} else {
+  MODEL_DIRS <- c("cloglog_beta_driver_uncertainty")
+}
 
 TRAIN_MIN <- "20130601"
 ACCEPT_MAX <- "20180101"  # Only 2018 is the accepted max
@@ -2383,7 +2388,11 @@ run_one_model <- function(row, project_root, required_sites, env_data=NULL, r16=
     # Numeric guarantees
     must_num <- c("lo","lo_25","med","hi_75","hi")
     for (nm in must_num) if (nm %in% names(tax_output)) tax_output[[nm]] <- suppressWarnings(as.numeric(tax_output[[nm]]))
-    
+
+    # Ensure pretty_group is populated (canonical source: fill_pretty_group from package)
+    tax_output <- fill_pretty_group(data.table::as.data.table(tax_output))
+    tax_output <- as.data.frame(tax_output)
+
     # Write outputs (defensive I/O)
     driver_flag <- is_driver_model(samples_path, row$model_id)
     hind_dir <- file.path(project_root, "data", "hindcasts", if (driver_flag) "driver_uncertainty" else "standard")
