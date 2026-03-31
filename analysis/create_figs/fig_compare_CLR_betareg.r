@@ -240,9 +240,9 @@ if (length(mu_cols) > 0) {
 }
 rm(clog_s); gc()
 
-# CLR: extract from single chain samples2 (mu = CLR scale) — too large for all chains
+# CLR: extract from chain1 samples2 (mu = CLR scale)
 clr_chain1 <- here("data/model_outputs/CLR_regression/env_cycl/ascomycota",
-                    "samples_env_cycl_ascomycota_20130601_20180101_with_legacy_covariate_clr_chain1.rds")
+                    "samples_env_cycl_ascomycota_20130601_20180101_with_legacy_covariate_chain1.rds")
 if (file.exists(clr_chain1)) {
   clr_s1 <- readRDS(clr_chain1)
   clr_ove <- extract_plot_ove(clr_chain1, clr_s1$metadata$model_data, "CLR", var_prefix = "mu")
