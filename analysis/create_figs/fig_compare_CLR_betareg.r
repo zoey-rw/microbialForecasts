@@ -99,15 +99,24 @@ extract_betas_from_chains <- function(chain_files, model_label,
               model_type = model_label)
 }
 
-# Cloglog: all env_cycl ascomycota chain files
-clog_chains <- list.files(here("data/model_outputs/cloglog_beta_driver_uncertainty/env_cycl/ascomycota"),
-                          pattern = "^samples_env_cycl.*chain[0-9]\\.rds$", full.names = TRUE)
-clog_f <- extract_betas_from_chains(clog_chains, "Cloglog")
+# Cloglog: combined mcmc.list file (2 chains × 7480 samples)
+clog_combined <- here("data/model_outputs/cloglog_beta_driver_uncertainty/env_cycl",
+                      "samples_env_cycl_ascomycota_20130601_20180101_with_legacy_covariate_beta_regression.rds")
+clog_s <- readRDS(clog_combined)
+clog_chain_files <- lapply(clog_s$samples, function(ch) {
+  tmp <- tempfile(fileext = ".rds")
+  saveRDS(list(samples = as.matrix(ch)), tmp)
+  tmp
+})
+clog_f <- extract_betas_from_chains(unlist(clog_chain_files), "Cloglog")
+unlink(unlist(clog_chain_files))
+rm(clog_s); gc()
 
 # CLR: non-duplicate chain files
 clr_chains <- list.files(here("data/model_outputs/CLR_regression/env_cycl/ascomycota"),
                          pattern = "^samples_env_cycl_ascomycota.*chain[0-9]\\.rds$", full.names = TRUE)
 clr_chains <- clr_chains[!grepl("_clr_chain", clr_chains)]
+clr_chains <- clr_chains[!grepl("chain3", clr_chains)]  # chain3 stuck in different pC mode
 clr_f <- extract_betas_from_chains(clr_chains, "CLR")
 
 # Truncated normal: latest chain files (new warm-started + old)
@@ -206,23 +215,30 @@ extract_plot_ove <- function(chain_files, model_data, model_label, var_prefix = 
   return(merged[, c("estimated", "observed", "model_type")])
 }
 
-# Cloglog: extract from chain samples2 for fair comparison (same method as other models)
-clog_chain1 <- list.files(here("data/model_outputs/cloglog_beta_driver_uncertainty/env_cycl/ascomycota"),
-                          pattern = "samples_env_cycl.*chain1.rds", full.names = TRUE)[1]
-if (!is.na(clog_chain1) && file.exists(clog_chain1)) {
-  clog_s1 <- readRDS(clog_chain1)
-  clog_ove <- extract_plot_ove(clog_chain1, clog_s1$metadata$model_data, "Cloglog", var_prefix = "plot_mu")
-  rm(clog_s1); gc()
-} else {
-  # Fallback to summary
-  plot_est <- readRDS(here("data/summary/plot_estimates.rds"))
-  clog_ove <- plot_est %>%
-    filter(species == "ascomycota", model_name == "env_cycl") %>%
-    group_by(plot_num, timepoint) %>%
-    summarize(estimated = mean(Mean, na.rm = TRUE),
-              observed = mean(truth, na.rm = TRUE), .groups = "drop") %>%
+# Cloglog: extract from combined file (2 chains × 7480 samples with samples2 + metadata)
+clog_combined_file <- here("data/model_outputs/cloglog_beta_driver_uncertainty/env_cycl",
+                           "samples_env_cycl_ascomycota_20130601_20180101_with_legacy_covariate_beta_regression.rds")
+clog_s <- readRDS(clog_combined_file)
+# samples2 is a matrix (already combined), metadata has model_data
+mu_cols <- grep("^plot_mu", colnames(clog_s$samples2))
+if (length(mu_cols) > 0) {
+  mu_means <- colMeans(clog_s$samples2[, mu_cols, drop = FALSE])
+  nums <- regmatches(names(mu_means), gregexpr("[0-9]+", names(mu_means)))
+  plot_idx <- as.integer(sapply(nums, `[`, 1))
+  time_idx <- as.integer(sapply(nums, `[`, 2))
+  est_df <- data.frame(plot_idx = plot_idx, time_idx = time_idx, estimated = as.numeric(mu_means))
+  md <- clog_s$metadata$model_data
+  obs_val <- if (is.matrix(md$y)) md$y[, 1] else md$y
+  truth_df <- data.frame(plot_idx = md$plot_num, time_idx = md$timepoint, observed = obs_val) %>%
+    group_by(plot_idx, time_idx) %>%
+    summarize(observed = mean(observed, na.rm = TRUE), .groups = "drop")
+  clog_ove <- inner_join(est_df, truth_df, by = c("plot_idx", "time_idx")) %>%
+    filter(!is.na(estimated), !is.na(observed)) %>%
     mutate(model_type = "Cloglog")
+} else {
+  clog_ove <- data.frame()
 }
+rm(clog_s); gc()
 
 # CLR: extract from single chain samples2 (mu = CLR scale) — too large for all chains
 clr_chain1 <- here("data/model_outputs/CLR_regression/env_cycl/ascomycota",
