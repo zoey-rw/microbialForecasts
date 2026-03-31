@@ -135,9 +135,14 @@ failed_taxa <- 0
 cat("Discovering available models from file system...\n")
 
 # Search in multiple model output directories
-model_dirs <- c(
-  "cloglog_beta_driver_uncertainty"
-)
+# Override with MODEL_DIRS env var to read from a different output directory (e.g., rerun)
+env_model_dirs <- Sys.getenv("MODEL_DIRS", "")
+if (nzchar(env_model_dirs)) {
+  model_dirs <- strsplit(env_model_dirs, ",")[[1]]
+  cat("MODEL_DIRS override:", paste(model_dirs, collapse=", "), "\n")
+} else {
+  model_dirs <- c("cloglog_beta_driver_uncertainty")
+}
 
 all_files <- character(0)
 for (model_dir in model_dirs) {
@@ -1292,7 +1297,12 @@ process_single_taxon <- function(taxon_config, all_ranks, env_data) {
   } else {
     tax_output <- data.frame()
   }
-  
+
+    # Ensure pretty_group is populated (canonical source: fill_pretty_group from package)
+    if (nrow(tax_output) > 0) {
+      tax_output <- fill_pretty_group(as.data.table(tax_output))
+    }
+
     if (nrow(tax_output) > 0) {
       # All models go to driver uncertainty summary directory
       summary_dir <- file.path(project_root, "data", "summary", "driver_uncertainty")

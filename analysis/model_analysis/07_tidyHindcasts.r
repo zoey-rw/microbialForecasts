@@ -138,40 +138,8 @@ clean_hindcast_dt <- function(dt, filename) {
     }]
   }
 
-  # 4. Taxonomy / Pretty Groups (create from rank_name if missing; fill NA when present).
-  # Functional/diversity ranks often lack _bac/_fun suffix; fill those from species when possible.
-  if ("rank_name" %in% names(dt)) {
-    rn <- dt$rank_name
-    grp <- data.table::fcase(
-      grepl("_bac$|16S", rn), "Bacteria",
-      grepl("_fun$|ITS", rn), "Fungi",
-      default = NA_character_
-    )
-    if (!"pretty_group" %in% names(dt)) {
-      dt[, pretty_group := grp]
-    } else {
-      na_idx <- is.na(dt$pretty_group)
-      if (any(na_idx)) dt[na_idx, pretty_group := grp[na_idx]]
-    }
-    if ("species" %in% names(dt) && requireNamespace("microbialForecast", quietly = TRUE)) {
-      na_idx <- which(is.na(dt$pretty_group))
-      if (length(na_idx) > 0L) {
-        fg_names <- microbialForecast:::keep_fg_names
-        sp <- dt$species[na_idx]
-        is_fg <- sp %in% fg_names
-        if (any(is_fg)) {
-          fg_kingdoms <- microbialForecast::assign_fg_kingdoms(
-            microbialForecast::assign_fg_categories(sp[is_fg])
-          )
-          dt[na_idx[is_fg], pretty_group := data.table::fcase(
-            fg_kingdoms == "16S", "Bacteria",
-            fg_kingdoms == "ITS", "Fungi",
-            default = NA_character_
-          )]
-        }
-      }
-    }
-  }
+  # 4. Taxonomy / Pretty Groups — use the canonical package function.
+  dt <- fill_pretty_group(dt)
   
   if (!"rank_only" %in% names(dt) && "rank_name" %in% names(dt)) {
     dt[, rank_only := tstrsplit(rank_name, "_", keep = 1)]
@@ -322,47 +290,9 @@ process_streaming()
 
 # 4. FINAL OUTPUT GENERATION (COMBINE & SAVE)
 # ------------------------------------------------------------------------------
-# Fill NA pretty_group from species for functional groups (Bacteria/Fungi by kingdom).
-# Used when rank_name does not match _bac/_fun (e.g. functional or diversity ranks).
-fill_pretty_group_from_species <- function(dt) {
-  if (!"species" %in% names(dt) || !requireNamespace("microbialForecast", quietly = TRUE)) return(invisible(NULL))
-  na_idx <- which(is.na(dt$pretty_group))
-  if (length(na_idx) == 0L) return(invisible(NULL))
-  fg_names <- microbialForecast:::keep_fg_names
-  sp <- dt$species[na_idx]
-  is_fg <- sp %in% fg_names
-  if (!any(is_fg)) return(invisible(NULL))
-  fg_kingdoms <- microbialForecast::assign_fg_kingdoms(
-    microbialForecast::assign_fg_categories(sp[is_fg])
-  )
-  dt[na_idx[is_fg], pretty_group := data.table::fcase(
-    fg_kingdoms == "16S", "Bacteria",
-    fg_kingdoms == "ITS", "Fungi",
-    default = NA_character_
-  )]
-  invisible(NULL)
-}
-
-# Fill NA pretty_group from rank_name on a combined DT (for combine-step fix when partitions were built before NA-fill).
-# Then fill remaining NAs from species (functional groups).
-fill_pretty_group_na <- function(dt) {
-  if (!"rank_name" %in% names(dt)) return(invisible(NULL))
-  rn <- dt$rank_name
-  rn[is.na(rn)] <- ""
-  grp <- data.table::fcase(
-    grepl("_bac$|16S", rn), "Bacteria",
-    grepl("_fun$|ITS", rn), "Fungi",
-    default = NA_character_
-  )
-  if (!"pretty_group" %in% names(dt)) {
-    dt[, pretty_group := grp]
-  } else {
-    na_idx <- is.na(dt$pretty_group)
-    if (any(na_idx)) dt[na_idx, pretty_group := grp[na_idx]]
-  }
-  fill_pretty_group_from_species(dt)
-  invisible(NULL)
-}
+# Local aliases removed — use fill_pretty_group() from microbialForecast package.
+# fill_pretty_group() derives kingdom from rank_name suffix (_bac/_fun) and
+# assign_fg_kingdoms() for functional groups. It is the single canonical source.
 
 cat("\n=== GENERATING FINAL OUTPUTS ===\n")
 
@@ -392,7 +322,7 @@ if (length(parquet_files) == 0) {
 
   df_full <- rbindlist(all_data[1:batch_idx], use.names = TRUE, fill = TRUE)
   rm(all_data); gc(verbose = FALSE)
-  fill_pretty_group_na(df_full)
+  df_full <- fill_pretty_group(df_full)
   cat(sprintf("  Combined: %d rows\n", nrow(df_full)))
 
   # Save combined parquet
