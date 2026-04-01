@@ -119,7 +119,7 @@ panel_a <- ggplot(rep_site_data, aes(x = latitude, y = score)) +
            size = 3.2, label.x.npc = 0.02, label.y.npc = 0.95, color = "black") +
   facet_wrap(~facet_label, scales = "free_y", nrow = 1) +
   scale_x_continuous(breaks = seq(30, 70, by = 10)) +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(x = "Latitude (\u00b0N)", y = expression(R^2)) +
   base_theme + theme(legend.position = "none")
 
@@ -130,7 +130,7 @@ panel_b <- ggplot(site_env_cycl, aes(x = latitude, y = score)) +
   geom_smooth(aes(color = pretty_group, fill = pretty_group),
               method = "lm", linewidth = 1.5, alpha = 0.15) +
   scale_x_continuous(breaks = seq(30, 70, by = 10)) +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   scale_fill_manual(values  = kingdom_colors, guide = "none") +
   labs(x = "Latitude (\u00b0N)", y = expression(Site~R^2)) +
   base_theme +
@@ -146,7 +146,7 @@ panel_c <- ggplot(taxon_slopes, aes(x = slope, y = r2, color = pretty_group)) +
   geom_point(data = taxon_slopes %>% filter(is_representative),
              size = 4, shape = 21, fill = NA, color = "black", stroke = 1.2) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 1),
                      labels = c("TRUE" = "p < 0.1", "FALSE" = "n.s."),
                      name = "Significance") +
@@ -169,6 +169,6 @@ fig_lat_grad <- panel_a / (panel_b | panel_c) +
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-ggsave(file.path(out_dir, "fig_seasonal_latitude.png"), fig_lat_grad,
+ggsave(file.path(out_dir, "figS9_latitude_vs_accuracy.png"), fig_lat_grad,
        width = 13, height = 9, dpi = 200)
-cat("Saved: figures/fig_seasonal_latitude.png\n")
+cat("Saved: figures/figS9_latitude_vs_accuracy.png\n")

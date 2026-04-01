@@ -148,7 +148,7 @@ if (file.exists(here("data/summary/plot_estimates.rds"))) {
         ylab("Modeled abundance") +
         xlab("Date")
       
-      png(here("figures","compare_calibration_periods_seasonal_trends_single.png"), width = 1200, height = 800)
+      png(here("figures","figS17_calibration_periods.png"), width = 1200, height = 800)
       print(p)
       dev.off()
       cat("Plot created successfully\n")

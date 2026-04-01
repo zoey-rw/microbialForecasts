@@ -91,7 +91,7 @@ panel_a <- ggplot(plot_data,
   geom_smooth(method = "lm", linewidth = 1.5, alpha = 0.2, se = FALSE) +
   stat_cor(aes(label = paste(after_stat(rr.label), after_stat(p.label), sep = "~")),
            size = 4) +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   scale_x_sqrt() +
   labs(x = "Spatial autocorrelation (Moran's I)",
        y = "Seasonal amplitude (cycl_only)") +
@@ -114,7 +114,7 @@ if ("core_sd" %in% colnames(model_df) || "precision" %in% colnames(model_df)) {
     geom_smooth(method = "lm", linewidth = 1.5, alpha = 0.2, se = FALSE) +
     stat_cor(aes(label = paste(after_stat(rr.label), after_stat(p.label), sep = "~")),
              size = 4) +
-    scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+    scale_color_manual(values = kingdom_colors, name = NULL) +
     labs(x = paste0("Core-level variation (", spatial_var, ")"),
          y = "Seasonal amplitude (cycl_only)") +
     theme_bw(base_size = 14) +
@@ -135,7 +135,7 @@ if (!is.null(panel_b)) {
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-ggsave(file.path(out_dir, "spatial_vs_amplitude.png"), fig,
+ggsave(file.path(out_dir, "figS6_moran_vs_rsq.png"), fig,
        width = 14, height = 7, dpi = 200)
 
-cat("Saved: figures/spatial_vs_amplitude.png\n")
+cat("Saved: figures/figS6_moran_vs_rsq.png\n")

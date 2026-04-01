@@ -257,17 +257,17 @@ panel_f <- ggplot(model_site_var %>% filter(!is.na(site_sd)),
   theme_bw(base_size = 14) +
   xlab("Mean forecast horizon across sites (months)") +
   ylab("SD of horizon across sites") +
-  labs(color = "Kingdom") +
+  labs(color = NULL) +
   theme(legend.position = "top")
 
 # ============================================================
 # Compose and save — Panel C only
 # ============================================================
 
-ggsave(here("figures", "site_skill_drivers.png"), panel_c,
+ggsave(here("figures", "fig5_predictor_significance.png"), panel_c,
        width = 7, height = 5, dpi = 200)
 
-cat("Saved: figures/site_skill_drivers.png\n")
+cat("Saved: figures/fig5_predictor_significance.png\n")
 
 # ============================================================
 # Summary correlation table

@@ -166,7 +166,7 @@ fig_scatter <- ggplot(class_df, aes(x = amplitude, y = abs_rho)) +
   geom_vline(xintercept = AMPLITUDE_THRESHOLD, linetype = "dashed", color = "gray40") +
   geom_text(data = quad_labels, aes(x = x, y = y, label = label),
             size = 3, color = "gray30", hjust = 0, vjust = 0) +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   annotate("text", x = max(class_df$amplitude, na.rm = TRUE) * 0.5,
            y = max(class_df$abs_rho, na.rm = TRUE) * 0.97,
            label = "High persistence", size = 3, fontface = "italic", color = "gray50") +

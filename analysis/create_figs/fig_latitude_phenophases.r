@@ -215,7 +215,7 @@ pC <- ggplot(site_cv,
                 color = pretty_group),
             inherit.aes = FALSE, size = 3, hjust = 0.5, show.legend = FALSE) +
   facet_wrap(~fcast_type) +
-  scale_fill_manual(values  = kingdom_colors, name = "Kingdom") +
+  scale_fill_manual(values  = kingdom_colors, name = NULL) +
   scale_color_manual(values = kingdom_colors, guide = "none") +
   labs(
     x = "Site latitude",
@@ -260,7 +260,7 @@ pD <- ggplot(fg_ranked,
   geom_point(aes(shape = pretty_group), size = 3) +
   scale_color_manual(values = pheno_colors, name = "Peak phenophase",
                      na.value = "grey60") +
-  scale_shape_manual(values = c(Bacteria = 16, Fungi = 17), name = "Kingdom") +
+  scale_shape_manual(values = c(Bacteria = 16, Fungi = 17), name = NULL) +
   labs(x = "Seasonal amplitude", y = NULL) +
   theme_bw(base_size = 12) +
   theme(
@@ -289,7 +289,7 @@ fig_lat <- ggarrange(
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-ggsave(file.path(out_dir, "fig_latitude_phenophases.png"),
+ggsave(file.path(out_dir, "figS10_error_by_latitude.png"),
        fig_lat, width = 15, height = 12, dpi = 200)
 
-cat("Saved: figures/fig_latitude_phenophases.png\n")
+cat("Saved: figures/figS10_error_by_latitude.png\n")

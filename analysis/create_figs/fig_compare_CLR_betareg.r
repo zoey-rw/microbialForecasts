@@ -321,6 +321,6 @@ combined <- fig_a / fig_b +
 
 # ---- Save ----
 
-outpath <- here("figures/fig_compare_CLR_betareg.png")
+outpath <- here("figures/figS18_clr_vs_beta_comparison.png")
 ggsave(outpath, combined, width = 8, height = 9, dpi = 300)
 cat("Saved:", outpath, "\n")

@@ -75,6 +75,8 @@ print(hz_data %>% group_by(model_name) %>% summarize(
 # Panel 1a: Paired comparison - for each taxon, compare horizons across models
 hz_wide <- hz_data %>%
   select(species, model_name, pretty_group, forecast_horizon) %>%
+  group_by(species, model_name, pretty_group) %>%
+  summarize(forecast_horizon = mean(forecast_horizon, na.rm = TRUE), .groups = "drop") %>%
   pivot_wider(names_from = model_name, values_from = forecast_horizon)
 
 panel_1a <- ggplot(hz_data,
@@ -324,6 +326,8 @@ if (nrow(scoring_with_amp) > 0 &&
 hz_paired <- hz_data %>%
   select(species, model_name, pretty_group, forecast_horizon) %>%
   filter(model_name %in% c("cycl_only", "env_cycl")) %>%
+  group_by(species, model_name, pretty_group) %>%
+  summarize(forecast_horizon = mean(forecast_horizon, na.rm = TRUE), .groups = "drop") %>%
   pivot_wider(names_from = model_name, values_from = forecast_horizon) %>%
   filter(!is.na(cycl_only) & !is.na(env_cycl)) %>%
   mutate(horizon_diff = env_cycl - cycl_only)
@@ -340,7 +344,7 @@ panel_5 <- ggplot(hz_paired,
                   aes(x = cycl_only, y = env_cycl, color = pretty_group)) +
   geom_point(size = 2.5, alpha = 0.5) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(x = "Forecast horizon: Seasonality only (months)",
        y = "Forecast horizon: Env. + Seasonality (months)",
        title = "Paired comparison of forecast horizons") +
@@ -485,6 +489,8 @@ panel_6a <- ggplot(both_periods,
 # Panel 6b: Paired RSQ drop per taxon - which model loses the most going out-of-sample?
 rsq_drop <- both_periods %>%
   select(model_id, model_name, pretty_group, species, RSQ, period) %>%
+  group_by(model_id, model_name, pretty_group, species, period) %>%
+  summarize(RSQ = mean(RSQ, na.rm = TRUE), .groups = "drop") %>%
   pivot_wider(names_from = period, values_from = RSQ) %>%
   filter(!is.na(Calibration) & !is.na(Hindcast)) %>%
   mutate(rsq_drop = Calibration - Hindcast,

@@ -133,7 +133,7 @@ pC <- ggplot(fg_amp,
                color = "grey75", linewidth = 0.5) +
   geom_point(size = 3.5) +
   scale_color_manual(values = pheno_colors, name = "Peak phenophase") +
-  scale_shape_manual(values = c(Bacteria = 16, Fungi = 17), name = "Kingdom") +
+  scale_shape_manual(values = c(Bacteria = 16, Fungi = 17), name = NULL) +
   labs(
     x = "Seasonal amplitude",
     y = NULL
@@ -157,7 +157,7 @@ fig_peak <- ggarrange(
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-ggsave(file.path(out_dir, "fig_peak_phenophase.png"),
+ggsave(file.path(out_dir, "figS13_phenophase_diagram.png"),
        fig_peak, width = 11, height = 9, dpi = 200)
 
-cat("Saved: figures/fig_peak_phenophase.png\n")
+cat("Saved: figures/figS13_phenophase_diagram.png\n")

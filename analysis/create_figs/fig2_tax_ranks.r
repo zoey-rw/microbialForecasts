@@ -311,9 +311,9 @@ fig2_main <- ggarrange2(
   nrow = 2, heights = c(1.3, 1))
 
 fig2_main
-ggsave(file.path(out_dir, "figure_2_main.png"), fig2_main,
+ggsave(file.path(out_dir, "fig2_forecast_error_metrics.png"), fig2_main,
        width = 13, height = 11, dpi = 300, units = "in")
-cat("Saved: figure_2_main.png\n")
+cat("Saved: figures/fig2_forecast_error_metrics.png\n")
 
 # ── Supplementary S1: kingdom-level nRMSE and CRPS ────────────────────────────
 # Shows the explicit Bacteria vs. Fungi Wilcoxon test that is implicit in the
@@ -363,9 +363,9 @@ rank_models <- ggplot(rank_models_data,
         tagger.panel.tag.background = element_rect(fill = "white", color = "white"))
 
 rank_models
-ggsave(file.path(out_dir, "supp_rank_model_scores.png"), rank_models,
+ggsave(file.path(out_dir, "figS1_forecast_metrics_rank.png"), rank_models,
        width = 10, height = 20, dpi = 300, units = "in")
-cat("Saved: supp_rank_model_scores.png\n")
+cat("Saved: figures/figS1_forecast_metrics_rank.png\n")
 
 # ============================================================================
 # RESIDUALIZED nRMSE: remove abundance confound

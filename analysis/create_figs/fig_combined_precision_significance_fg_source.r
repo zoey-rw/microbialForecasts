@@ -339,7 +339,7 @@ pC <- ggplot(fg_source_data, aes(x = fg_source, y = as.numeric(score),
                   box.padding = 0.35, point.padding = 0.2, min.segment.length = 0.2,
                   show.legend = FALSE, seed = 42) +
   scale_color_manual(values = c("Bacteria" = BACT_COLOR, "Fungi" = FUNGI_COLOR),
-                     name = "Kingdom") +
+                     name = NULL) +
   scale_y_log10(limits = c(min(fg_source_data$score, na.rm = TRUE) * 0.8, y_ceiling)) +
   labs(x = NULL, y = "Forecast error (nRMSE, log scale)") +
   bracket_annotations +
@@ -445,9 +445,9 @@ combined <- top_row / bottom_row +
   plot_layout(heights = c(1, 1)) +
   plot_annotation(tag_levels = "A")
 
-ggsave(here("figures", "combined_precision_significance_fg_source.pdf"), combined,
+ggsave(here("figures", "fig3_functional_group_error.pdf"), combined,
        width = 15, height = 10, dpi = 300)
-ggsave(here("figures", "combined_precision_significance_fg_source.png"), combined,
+ggsave(here("figures", "fig3_functional_group_error.png"), combined,
        width = 15, height = 10, dpi = 300)
 
 cat("Saved: figures/combined_precision_significance_fg_source.pdf\n")

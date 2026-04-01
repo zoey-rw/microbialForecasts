@@ -129,8 +129,8 @@ if(nrow(rho_data %>% filter(model_name == "env_cycl")) > 0) {
 	print(p1)
 	
 	# Save the plot
-	ggsave(here("figures", "rho_parameter_comparison.png"), p1, width = 4, height = 6, dpi = 300)
-	cat("Rho parameter plot saved to figures/rho_parameter_comparison.png\n")
+	ggsave(here("figures", "figS5_rho_temporal_memory.png"), p1, width = 4, height = 6, dpi = 300)
+	cat("Saved: figures/figS5_rho_temporal_memory.png\n")
 
 	# Rho parameter comparison by kingdom (Bacteria vs Fungi), with separate statistical tests per kingdom
 	rho_plot_data_kingdom <- rho_plot_data %>% filter(!is.na(pretty_group))
