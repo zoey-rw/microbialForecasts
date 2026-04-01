@@ -117,9 +117,9 @@ fig1 <- ggarrange(
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-ggsave(file.path(out_dir, "fig1_fcast_types_composite.png"), fig1,
+ggsave(file.path(out_dir, "fig1_forecast_map_examples.png"), fig1,
        width = 12, height = 10, dpi = 300)
-cat("Saved: data/figures/fig1_fcast_types_composite.png\n")
+cat("Saved: figures/fig1_forecast_map_examples.png\n")
 
 # ── Diagnostic: why are nRMSE and CRPS inverted? ─────────────────────────────
 # nRMSE = RMSE / mean_abundance; CRPS_truncated uses full predictive distribution.

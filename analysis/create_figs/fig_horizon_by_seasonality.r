@@ -132,7 +132,7 @@ panel_b <- ggplot(plot_data_amp,
                   aes(x = amplitude, y = forecast_horizon, color = pretty_group)) +
   geom_point(size = 1.8, alpha = 0.35) +
   geom_smooth(method = "lm", se = TRUE, linewidth = 1) +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(y = "Forecast horizon (months)", x = "Seasonal amplitude") +
   base_theme + theme(legend.position = "top")
 
@@ -179,7 +179,7 @@ panel_d <- ggplot(plot_data,
   geom_boxplot(aes(fill = pretty_group), alpha = 0.3, outlier.shape = NA, width = 0.4) +
   geom_point(size = 1.5, alpha = 0.2,
              position = position_jitterdodge(jitter.height = 0.05, dodge.width = 0)) +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   scale_fill_manual(values  = kingdom_colors, guide = "none") +
   labs(x = "Forecast horizon (months)", y = NULL) +
   base_theme + theme(legend.position = "top")
@@ -197,7 +197,7 @@ panel_e <- ggplot(site_kingdom,
                   aes(x = latitude, y = mean_horizon, color = pretty_group)) +
   geom_point(size = 2.5, alpha = 0.6) +
   geom_smooth(method = "lm", se = TRUE, linewidth = 1) +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(x = "Latitude (\u00b0N)", y = "Mean site-level\nforecast horizon (months)") +
   base_theme + theme(legend.position = "top")
 
@@ -271,8 +271,8 @@ if (has_sig_flags) {
                labeller = labeller(model_name = c(cycl_only = "Cycl. only",
                                                    env_cov   = "Env. only",
                                                    env_cycl  = "Env. + Cycl."))) +
-    scale_color_manual(values = kingdom_colors, name = "Kingdom") +
-    scale_fill_manual(values  = kingdom_colors, name = "Kingdom") +
+    scale_color_manual(values = kingdom_colors, name = NULL) +
+    scale_fill_manual(values  = kingdom_colors, name = NULL) +
     labs(x = "Forecast horizon (months)", y = NULL) +
     base_theme + theme(legend.position = "top")
 } else {

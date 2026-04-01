@@ -132,13 +132,13 @@ pB <- ggplot(sig_results_long,
 fig <- ggarrange(pA, pB, nrow = 1, widths = c(1, 1.5),
                  common.legend = TRUE, legend = "top")
 
-ggsave(here("figures", "fig_variogram_summary.png"), fig,
+ggsave(here("figures", "figS11_variogram_pvalues.png"), fig,
        width = 12, height = 5.5, dpi = 300)
-ggsave(here("figures", "fig_variogram_summary.pdf"), fig,
+ggsave(here("figures", "figS11_variogram_pvalues.pdf"), fig,
        width = 12, height = 5.5, dpi = 300)
 
-cat("Saved: figures/fig_variogram_summary.png\n")
-cat("Saved: figures/fig_variogram_summary.pdf\n")
+cat("Saved: figures/figS11_variogram_pvalues.png\n")
+cat("Saved: figures/figS11_variogram_pvalues.pdf\n")
 
 cat("\n-- Spatial autocorrelation summary --\n")
 print(as.data.frame(pct_sig))

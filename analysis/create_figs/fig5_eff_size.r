@@ -139,7 +139,7 @@ b_vs_f_fcast_type_plot <- ggplot(
   geom_point(shape = 21, fill = "white", size = 3,
              position = position_jitter(width = 0.1, height = 0),
              alpha = 0.35, show.legend = FALSE) +
-  xlab("Kingdom") +
+  xlab(NULL) +
   ylab("Absolute effect size") +
   facet_nested(fcast_type ~ beta_pretty, labeller = label_fn2) +
   base_theme +
@@ -309,7 +309,7 @@ sig_bf_plot <- ggplot(sig_summary_bf,
   geom_text(data = sig_test_results_bf,
             aes(x = 1.5, y = 0.9, label = sig_label),
             size = 5, color = "black", inherit.aes = FALSE) +
-  xlab("Kingdom") +
+  xlab(NULL) +
   ylab("Proportion of Significant Predictors") +
   facet_nested(fcast_type ~ beta_pretty, labeller = label_fn2) +
   base_theme +
@@ -317,9 +317,9 @@ sig_bf_plot <- ggplot(sig_summary_bf,
   scale_fill_manual(values = kingdom_colors) +
   scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2))
 
-ggsave(here("figures", "significance_bacteria_vs_fungi.png"), sig_bf_plot,
+ggsave(here("figures", "figS4_parameter_violin.png"), sig_bf_plot,
        width = 14, height = 5, dpi = 300)
-ggsave(here("figures", "significance_bacteria_vs_fungi.pdf"), sig_bf_plot,
+ggsave(here("figures", "figS4_parameter_violin.pdf"), sig_bf_plot,
        width = 14, height = 5)
 
 # ══════════════════════════════════════════════════════════════════════════════

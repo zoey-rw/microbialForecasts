@@ -139,7 +139,7 @@ overall_importance <- ggplot(pred_vals_plot,
 	stat_compare_means(method = "t.test",
 		aes(y = values, label = after_stat(p.signif)),
 		label.y = 0.68, show.legend = FALSE, hide.ns = TRUE, size = 3.5) +
-	scale_color_manual("Kingdom", values = kingdom_colors) +
+	scale_color_manual(values = kingdom_colors, name = NULL) +
 	coord_cartesian(ylim = c(0, 0.75)) +
 	labs(x = "Predictor", y = "Importance for\nexplaining site effects", tag = "A") +
 	shared_theme +
@@ -161,7 +161,7 @@ f_b_category <- ggplot(group_vals_plot,
 	stat_compare_means(method = "t.test",
 		aes(y = values, label = after_stat(p.signif)),
 		label.y = 0.68, show.legend = FALSE, hide.ns = TRUE, size = 3.5) +
-	scale_color_manual("Kingdom", values = kingdom_colors) +
+	scale_color_manual(values = kingdom_colors, name = NULL) +
 	coord_cartesian(ylim = c(0, 0.75)) +
 	labs(x = "Predictor category", y = NULL, tag = "B") +
 	shared_theme +
@@ -174,7 +174,7 @@ supp_fig <- ggarrange(overall_importance, f_b_category,
 	widths = c(1.6, 1), align = "h",
 	common.legend = TRUE, legend = "top")
 
-ggsave(here("figures", "site_effect_predictor_importance.png"), supp_fig,
+ggsave(here("figures", "figS12_plsr_importance.png"), supp_fig,
 	width = 11, height = 5.5, dpi = 300, bg = "white")
 
 ggsave(here("figures", "site_effect_f_b_category.png"), f_b_category,
@@ -241,11 +241,11 @@ ecdf_plot_tight <- ecdf_plot +
 fig4_composite <- ggarrange(row1, ecdf_plot_tight,
                             nrow = 2, heights = c(1, 0.85))
 
-ggsave(here("figures", "fig4_site_effects_composite.png"), fig4_composite,
+ggsave(here("figures", "fig4_predictor_sets_accuracy.png"), fig4_composite,
        width = 11, height = 8, dpi = 300, bg = "white")
-ggsave(here("figures", "fig4_site_effects_composite.pdf"), fig4_composite,
+ggsave(here("figures", "fig4_predictor_sets_accuracy.pdf"), fig4_composite,
        width = 11, height = 8, bg = "white")
-cat("Saved: figures/fig4_site_effects_composite.png / .pdf\n")
+cat("Saved: figures/fig4_predictor_sets_accuracy.png\n")
 
 
 ggplot(all.out,#  %>% filter(rank_only != "functional"),
@@ -296,7 +296,7 @@ all_vars_domain <- ggplot(all.out %>% filter(model_name == "env_cycl"),
 		axis.title=element_text(size=22,face="bold")) + xlab(NULL) +
 	ylab("Variable importance") +
 	ggtitle("Variables best explaining site random effects") +
-	scale_color_discrete("Kingdom") +
+	scale_color_discrete(name = NULL) +
 	stat_compare_means(method = "t.test", aes(label = ..p.signif..),
 										 label.x= 1.5,
 										 #label.y = .75,

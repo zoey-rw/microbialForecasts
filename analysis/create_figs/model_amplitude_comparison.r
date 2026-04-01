@@ -159,7 +159,7 @@ fig_pheno <- ggarrange(
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-ggsave(file.path(out_dir, "model_amplitude_comparison.png"),
+ggsave(file.path(out_dir, "figS8_abundance_error_amplitude.png"),
        fig_pheno, width = 12, height = 5.5, dpi = 200)
 
-cat("Saved: figures/model_amplitude_comparison.png\n")
+cat("Saved: figures/figS8_abundance_error_amplitude.png\n")

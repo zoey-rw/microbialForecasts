@@ -75,7 +75,7 @@ pA <- ggplot(to_plot,
   stat_cor(aes(label = paste(after_stat(rr.label), after_stat(p.label), sep = "~")),
            label.x.npc = 0.05, label.y.npc = 0.9, size = 3.5) +
   scale_x_sqrt() +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(
     x = "Mean observed abundance (sqrt scale)",
     y = "Seasonal amplitude (cycl_only)"
@@ -92,7 +92,7 @@ pB <- ggplot(to_plot,
   stat_cor(aes(label = paste(after_stat(rr.label), after_stat(p.label), sep = "~")),
            label.x.npc = 0.05, label.y.npc = 0.9, size = 3.5) +
   scale_x_sqrt() +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(
     x = "Seasonal amplitude (sqrt scale)",
     y = "Relative forecast error (nRMSE)"
@@ -108,7 +108,7 @@ pC <- ggplot(to_plot,
   stat_cor(aes(label = paste(after_stat(rr.label), after_stat(p.label), sep = "~")),
            label.x.npc = 0.05, label.y.npc = 0.9, size = 3.5) +
   scale_x_sqrt() +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(
     x = "Mean observed abundance (sqrt scale)",
     y = "Relative forecast error (nRMSE)"

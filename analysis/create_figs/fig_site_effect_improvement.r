@@ -86,7 +86,7 @@ panel_b <- ggplot(improvement_summary,
                       ymax = mean_pct + sd_pct),
                   position = position_dodge(width = 0.4),
                   linewidth = 0.8, size = 0.7) +
-  scale_color_manual(values = kingdom_colors, name = "Kingdom") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(x = "Model type",
        y = "Mean CRPS improvement (%)") +
   base_theme +
