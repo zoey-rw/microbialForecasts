@@ -151,7 +151,12 @@ clean_hindcast_dt <- function(dt, filename) {
     }
   }
 
-  # 5. Metadata
+  # 5. Enforce correct fcast_period from dateID (fixes upstream mislabeling bug in 06)
+  if ("dateID" %in% names(dt)) {
+    dt[, fcast_period := fifelse(as.numeric(as.character(dateID)) <= 201801, "calibration", "hindcast")]
+  }
+
+  # 6. Metadata
   dt$.__source_file__ <- filename
   # Determine mode from filename for partitioning
   dt$.__mode__ <- ifelse(grepl("unobserved", filename, ignore.case = TRUE), "unobserved", "observed")
@@ -296,83 +301,115 @@ process_streaming()
 
 cat("\n=== GENERATING FINAL OUTPUTS ===\n")
 
-# Read all parquet partitions ONCE, then split by mode
+# Use duckdb to combine staging parquets without loading into R memory.
+# This avoids the OOM truncation that occurred with nanoparquet batch reads.
 parquet_files <- list.files(DATASET_DIR, pattern = "\\.parquet$", full.names = TRUE)
 
 if (length(parquet_files) == 0) {
   cat("No parquet files found in dataset directory. Nothing to combine.\n")
 } else {
-  cat(sprintf("Reading %d parquet partition files (single pass)...\n", length(parquet_files)))
+  cat(sprintf("Combining %d parquet partition files via duckdb...\n", length(parquet_files)))
 
-  # Read all partitions in batches and combine into one data.table
-  BATCH_COMBINE <- 50L
-  all_data <- vector("list", ceiling(length(parquet_files) / BATCH_COMBINE))
-  batch_idx <- 0L
+  library(duckdb)
+  ddb_con <- dbConnect(duckdb())
 
-  for (i in seq(1, length(parquet_files), by = BATCH_COMBINE)) {
-    j <- min(i + BATCH_COMBINE - 1L, length(parquet_files))
-    batch_chunks <- lapply(parquet_files[i:j], function(f) {
-      as.data.table(nanoparquet::read_parquet(f))
-    })
-    batch_idx <- batch_idx + 1L
-    all_data[[batch_idx]] <- rbindlist(batch_chunks, use.names = TRUE, fill = TRUE)
-    rm(batch_chunks); gc(verbose = FALSE)
-    if (batch_idx %% 4 == 0) cat(sprintf("  Read %d/%d files...\n", j, length(parquet_files)))
+  # Create a view over all staging parquets
+  dbExecute(ddb_con, sprintf(
+    "CREATE VIEW staging AS SELECT * FROM read_parquet('%s/*.parquet', union_by_name=true)",
+    DATASET_DIR
+  ))
+
+  # Report total rows before combining
+  row_count <- dbGetQuery(ddb_con, "SELECT count(*) as n FROM staging")$n
+  cat(sprintf("  Total staging rows: %d\n", row_count))
+
+  # Combine with fcast_period enforcement: dateID <= 201801 = calibration
+  # This fixes any staging parquets created before the fcast_period bug fix.
+  dbExecute(ddb_con, sprintf(
+    "COPY (
+      SELECT *,
+        CASE WHEN CAST(dateID AS INTEGER) <= 201801 THEN 'calibration'
+             ELSE 'hindcast' END AS fcast_period_fixed
+      FROM staging
+    ) TO '%s' (FORMAT PARQUET)",
+    paste0(OUT_PARQUET_FULL, ".tmp")
+  ))
+
+  # Now read back to rename the column (duckdb can't ALTER in parquet)
+  dbExecute(ddb_con, sprintf(
+    "COPY (
+      SELECT * EXCLUDE (fcast_period, fcast_period_fixed),
+             fcast_period_fixed AS fcast_period
+      FROM read_parquet('%s')
+    ) TO '%s' (FORMAT PARQUET)",
+    paste0(OUT_PARQUET_FULL, ".tmp"),
+    OUT_PARQUET_FULL
+  ))
+  unlink(paste0(OUT_PARQUET_FULL, ".tmp"))
+
+  # Report final stats
+  final_stats <- dbGetQuery(ddb_con, sprintf(
+    "SELECT fcast_period, count(*) as n, count(truth) as n_truth
+     FROM read_parquet('%s')
+     GROUP BY fcast_period",
+    OUT_PARQUET_FULL
+  ))
+  cat(sprintf("  ✓ Saved %s\n", basename(OUT_PARQUET_FULL)))
+  cat("  fcast_period breakdown:\n")
+  for (r in seq_len(nrow(final_stats))) {
+    cat(sprintf("    %s: %d rows (%d with truth)\n",
+        final_stats$fcast_period[r], final_stats$n[r], final_stats$n_truth[r]))
   }
 
-  df_full <- rbindlist(all_data[1:batch_idx], use.names = TRUE, fill = TRUE)
-  rm(all_data); gc(verbose = FALSE)
-  df_full <- fill_pretty_group(df_full)
-  cat(sprintf("  Combined: %d rows\n", nrow(df_full)))
-
-  # Save combined parquet
-  cat("Saving combined parquet...\n")
+  # Save observed/unobserved RDS splits (streamed via duckdb to avoid memory issues)
+  cat("Saving Observed RDS...\n")
   tryCatch({
-    nanoparquet::write_parquet(df_full, OUT_PARQUET_FULL)
-    cat(sprintf("  ✓ Saved %s (%d rows)\n", basename(OUT_PARQUET_FULL), nrow(df_full)))
+    df_obs <- as.data.table(dbGetQuery(ddb_con, sprintf(
+      "SELECT * FROM read_parquet('%s') WHERE \".__mode__\" = 'observed'",
+      OUT_PARQUET_FULL
+    )))
+    if (nrow(df_obs) > 0) {
+      df_obs <- fill_pretty_group(df_obs)
+      saveRDS(df_obs, OUT_RDS_OBSERVED)
+      cat(sprintf("  ✓ Saved %s (%d rows)\n", basename(OUT_RDS_OBSERVED), nrow(df_obs)))
+    }
+    rm(df_obs); gc(verbose = FALSE)
   }, error = function(e) cat("  Failed:", e$message, "\n"))
 
-  # Split by mode and save observed/unobserved RDS
-  mode_col <- ".__mode__"
-  if (mode_col %in% names(df_full)) {
-    cat("Saving Observed RDS...\n")
-    tryCatch({
-      df_obs <- df_full[get(mode_col) == "observed"]
-      if (nrow(df_obs) > 0) {
-        saveRDS(df_obs, OUT_RDS_OBSERVED)
-        cat(sprintf("  ✓ Saved %s (%d rows)\n", basename(OUT_RDS_OBSERVED), nrow(df_obs)))
-      } else {
-        cat("  Warning: No observed data found.\n")
-      }
-      rm(df_obs); gc(verbose = FALSE)
-    }, error = function(e) cat("  Failed:", e$message, "\n"))
+  cat("Saving Unobserved RDS...\n")
+  tryCatch({
+    df_unobs <- as.data.table(dbGetQuery(ddb_con, sprintf(
+      "SELECT * FROM read_parquet('%s') WHERE \".__mode__\" = 'unobserved'",
+      OUT_PARQUET_FULL
+    )))
+    if (nrow(df_unobs) > 0) {
+      df_unobs <- fill_pretty_group(df_unobs)
+      saveRDS(df_unobs, OUT_RDS_UNOBSERVED)
+      cat(sprintf("  ✓ Saved %s (%d rows)\n", basename(OUT_RDS_UNOBSERVED), nrow(df_unobs)))
+    }
+    rm(df_unobs); gc(verbose = FALSE)
+  }, error = function(e) cat("  Failed:", e$message, "\n"))
 
-    cat("Saving Unobserved RDS...\n")
-    tryCatch({
-      df_unobs <- df_full[get(mode_col) == "unobserved"]
-      if (nrow(df_unobs) > 0) {
-        saveRDS(df_unobs, OUT_RDS_UNOBSERVED)
-        cat(sprintf("  ✓ Saved %s (%d rows)\n", basename(OUT_RDS_UNOBSERVED), nrow(df_unobs)))
-      } else {
-        cat("  Warning: No unobserved data found.\n")
-      }
-      rm(df_unobs); gc(verbose = FALSE)
-    }, error = function(e) cat("  Failed:", e$message, "\n"))
-  }
-
-  # Save combined RDS
+  # Combined RDS (may OOM on large datasets; parquet is the primary output)
   cat("Saving Combined RDS...\n")
   tryCatch({
+    df_full <- as.data.table(dbGetQuery(ddb_con, sprintf(
+      "SELECT * FROM read_parquet('%s')", OUT_PARQUET_FULL
+    )))
+    df_full <- fill_pretty_group(df_full)
     cat(sprintf("  Total Rows: %d\n", nrow(df_full)))
     if ("truth" %in% names(df_full)) {
-      cat(sprintf("  Truth Coverage: %.1f%%\n", 100 * sum(!is.na(df_full$truth)) / nrow(df_full)))
+      cat(sprintf("  Truth Coverage: %.1f%%\n",
+          100 * sum(!is.na(df_full$truth)) / nrow(df_full)))
     }
     saveRDS(df_full, OUT_RDS_COMBINED)
     cat(sprintf("  ✓ Saved %s\n", basename(OUT_RDS_COMBINED)))
     rm(df_full); gc(verbose = FALSE)
   }, error = function(e) {
-    cat("\n⚠️  Could not save combined RDS (memory). Parquet and split files ARE saved.\n")
+    cat("\n  Could not save combined RDS (memory). Parquet and split files ARE saved.\n")
   })
+
+  dbDisconnect(ddb_con, shutdown = TRUE)
 }
 
 cat("\n=== PROCESSING COMPLETE ===\n")

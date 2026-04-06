@@ -352,11 +352,15 @@ if (sum(valid_rows) > 0) {
     chunk_indices <- valid_indices[start_idx:end_idx]
     
     cat("Processing CRPS chunk", i, "of", n_chunks, "(", length(chunk_indices), "rows)\n")
-    fcast_horizon_df[chunk_indices, crps := crps(truth, family = "tnorm", 
-                                                location = mean, 
-                                                scale = sd,
-                                                lower = 0, upper = 1)]
-    fcast_horizon_df[chunk_indices, crps_norm := crps_norm(truth, mean, sd)]
+    # Filter out rows with non-positive SD before CRPS calculation
+    valid_chunk <- chunk_indices[fcast_horizon_df[chunk_indices, sd > 0 & is.finite(sd)]]
+    if (length(valid_chunk) > 0) {
+      fcast_horizon_df[valid_chunk, crps := crps(truth, family = "tnorm",
+                                                  location = mean,
+                                                  scale = sd,
+                                                  lower = 0, upper = 1)]
+      fcast_horizon_df[valid_chunk, crps_norm := crps_norm(truth, mean, sd)]
+    }
   }
   cat("CRPS calculation completed\n")
   crps_populated <- sum(!is.na(fcast_horizon_df$crps))
@@ -429,7 +433,10 @@ fcast_horizon_model_mean <- fcast_horizon_df[, {
   }
 }, by = grouping_cols]
 
-fcast_horizon_model_mean[, RSQ.1 := ifelse(RSQ.1 < 0, 0, RSQ.1)]
+# NOTE: Do NOT clamp RSQ.1 to 0 here — negative NSE values are informative
+# for the loess fit in pooled_loess_horizon. Clamping creates a false floor
+# at the null line (NSE=0), causing the loess to cross the null sooner.
+# A separate RSQ_plot column is used where clamping is needed for display.
 fcast_horizon_model_mean[, RMSE.norm := ifelse(RMSE.norm > 5, 5, RMSE.norm)]
 cat("Completed average scores calculation\n")
 
@@ -1018,6 +1025,13 @@ setnames(fcast_horizon_null_site, null_cols_to_rename, gsub("^null_", "", null_c
 
 model_id_list <- unique(to_plot$model_id)
 
+# Filter to only weakly converged models (convergence IDs already had
+# _beta_regression suffix stripped at line 224 to match hindcast model_id format)
+if (!is.null(converged) && length(converged) > 0) {
+  model_id_list <- model_id_list[model_id_list %in% converged]
+  cat("Filtered to", length(model_id_list), "converged models\n")
+}
+
 # Configuration: Model selection for forecast horizon calculation
 # Options: "loess" (default), "exponential" (GLM with log link), "gam" (GAM with mgcv), or "all" (test all methods)
 FCAST_HORIZON_METHOD <- "all"  # Options: "loess", "exponential", "gam", "all"
@@ -1227,9 +1241,12 @@ if (nrow(last_obs_values_all) > 0 && "sd" %in% names(last_obs_values_all)) {
 
       if (i %% 10 == 0) cat("    Processing CRPS chunk", i, "of", n_chunks, "\n")
       # FIX 2: Use truncated CRPS [0,1] instead of unbounded crps_norm
-      last_obs_values_all[chunk_indices, crps := crps(truth, family = "tnorm",
+      valid_chunk <- chunk_indices[last_obs_values_all[chunk_indices, sd > 0 & is.finite(sd)]]
+      if (length(valid_chunk) > 0) {
+        last_obs_values_all[valid_chunk, crps := crps(truth, family = "tnorm",
                                                        location = mean, scale = sd,
                                                        lower = 0, upper = 1)]
+      }
     }
   }
 }
@@ -1430,7 +1447,8 @@ if (!exists("fcast_horizon_df") || is.null(fcast_horizon_df)) {
   if (!"crps" %in% names(fcast_horizon_model_subset) && "sd" %in% names(fcast_horizon_model_subset)) {
     valid_crps <- !is.na(fcast_horizon_model_subset$truth) &
                   !is.na(fcast_horizon_model_subset$mean) &
-                  !is.na(fcast_horizon_model_subset$sd)
+                  !is.na(fcast_horizon_model_subset$sd) &
+                  fcast_horizon_model_subset$sd > 0
     if (sum(valid_crps) > 0) {
       fcast_horizon_model_subset[valid_crps, crps := crps(truth, family = "tnorm",
                                                            location = mean, scale = sd,
@@ -1582,6 +1600,17 @@ if (HORIZON_POOLING %in% c("pooled", "both")) {
                                            is.finite(months_since_obs) &
                                            months_since_obs >= 0 & months_since_obs <= 20]
 
+  # Filter out months with fewer than 3 sites to avoid single-site artifacts.
+  # E.g., month 3 may only have data from 1 tropical site, which can dominate
+  # the loess fit and produce artificially short horizons.
+  if (nrow(pooled_data) > 0 && "siteID" %in% names(pooled_data)) {
+    sites_per_month <- pooled_data[months_since_obs > 0, .(n_sites = uniqueN(siteID)), by = months_since_obs]
+    sparse_months <- sites_per_month[n_sites < 3]$months_since_obs
+    if (length(sparse_months) > 0) {
+      pooled_data <- pooled_data[!(months_since_obs %in% sparse_months)]
+    }
+  }
+
   # Add month 0 from last_obs if not present
   if (exists("last_obs_values_site_precalc") && nrow(last_obs_values_site_precalc) > 0) {
     m0 <- last_obs_values_site_precalc[model_id == current_model_id]
@@ -1593,26 +1622,33 @@ if (HORIZON_POOLING %in% c("pooled", "both")) {
   pooled_loess_horizon <- function(metric_vals, time_vals, null_val, direction) {
     ok <- is.finite(metric_vals) & is.finite(time_vals)
     if (sum(ok) < 4 || is.na(null_val) || !is.finite(null_val)) return(NA_real_)
+
+    # Only search for crossings at or after the first real hindcast month.
+    # Month 0 is the last calibration observation (anchor for the curve fit)
+    # but crossings in the interpolation gap (months 0-3) are artifacts.
+    first_hindcast <- min(time_vals[ok & time_vals > 0], na.rm = TRUE)
+    if (!is.finite(first_hindcast)) return(NA_real_)
+
     fit <- tryCatch(loess(metric_vals[ok] ~ time_vals[ok], span = 0.75,
                           control = loess.control(surface = "direct")),
                     error = function(e) NULL)
     if (is.null(fit)) {
       # Discrete crossing fallback
       if (direction == "below") {
-        cr <- which(metric_vals[ok] < null_val & time_vals[ok] > 0)
+        cr <- which(metric_vals[ok] < null_val & time_vals[ok] >= first_hindcast)
       } else {
-        cr <- which(metric_vals[ok] > null_val & time_vals[ok] > 0)
+        cr <- which(metric_vals[ok] > null_val & time_vals[ok] >= first_hindcast)
       }
-      return(if (length(cr) > 0) time_vals[ok][min(cr)] else max(time_vals[ok]))
+      return(if (length(cr) > 0) time_vals[ok][min(cr)] else NA_real_)
     }
     xg <- seq(min(time_vals[ok]), max(time_vals[ok]), by = 0.5)
     pred <- predict(fit, xg)
     if (direction == "below") {
-      cr <- which(pred < null_val & xg > 0)
+      cr <- which(pred < null_val & xg >= first_hindcast)
     } else {
-      cr <- which(pred > null_val & xg > 0)
+      cr <- which(pred > null_val & xg >= first_hindcast)
     }
-    if (length(cr) > 0) xg[min(cr)] else max(xg)
+    if (length(cr) > 0) xg[min(cr)] else NA_real_
   }
 
   if (nrow(pooled_data) >= 4) {
@@ -1629,24 +1665,25 @@ if (HORIZON_POOLING %in% c("pooled", "both")) {
     ph_persist <- compute_pooled_for_null(null_persist)
     ph_clim <- compute_pooled_for_null(null_clim)
   } else {
-    ph_sm <- ph_persist <- ph_clim <- list(rsq = 1, crps = 1, rmse = 1)
+    # Not enough data points for loess fit; return NA instead of a misleading default
+    ph_sm <- ph_persist <- ph_clim <- list(rsq = NA_real_, crps = NA_real_, rmse = NA_real_)
   }
 }
 
 # If pooled-only, set the main horizon variables and skip per-site loop
 if (HORIZON_POOLING == "pooled") {
   # Primary horizons use site_mean null (backward compatible)
-  rsq_fcast_horizon <- min(ph_sm$rsq, 20, na.rm = TRUE)
-  crps_fcast_horizon <- min(ph_sm$crps, 20, na.rm = TRUE)
-  rmse_fcast_horizon <- min(ph_sm$rmse, 20, na.rm = TRUE)
+  rsq_fcast_horizon <- if (is.na(ph_sm$rsq)) NA_real_ else min(ph_sm$rsq, 20)
+  crps_fcast_horizon <- if (is.na(ph_sm$crps)) NA_real_ else min(ph_sm$crps, 20)
+  rmse_fcast_horizon <- if (is.na(ph_sm$rmse)) NA_real_ else min(ph_sm$rmse, 20)
 
   # GAM/LM columns: use persistence and climatological null horizons
-  rsq_fcast_horizon_gam <- min(ph_persist$rsq, 20, na.rm = TRUE)
-  crps_fcast_horizon_gam <- min(ph_persist$crps, 20, na.rm = TRUE)
-  rmse_fcast_horizon_gam <- min(ph_persist$rmse, 20, na.rm = TRUE)
-  rsq_fcast_horizon_lm <- min(ph_clim$rsq, 20, na.rm = TRUE)
-  crps_fcast_horizon_lm <- min(ph_clim$crps, 20, na.rm = TRUE)
-  rmse_fcast_horizon_lm <- min(ph_clim$rmse, 20, na.rm = TRUE)
+  rsq_fcast_horizon_gam <- if (is.na(ph_persist$rsq)) NA_real_ else min(ph_persist$rsq, 20)
+  crps_fcast_horizon_gam <- if (is.na(ph_persist$crps)) NA_real_ else min(ph_persist$crps, 20)
+  rmse_fcast_horizon_gam <- if (is.na(ph_persist$rmse)) NA_real_ else min(ph_persist$rmse, 20)
+  rsq_fcast_horizon_lm <- if (is.na(ph_clim$rsq)) NA_real_ else min(ph_clim$rsq, 20)
+  crps_fcast_horizon_lm <- if (is.na(ph_clim$crps)) NA_real_ else min(ph_clim$crps, 20)
+  rmse_fcast_horizon_lm <- if (is.na(ph_clim$rmse)) NA_real_ else min(ph_clim$rmse, 20)
 
   # Store null lines (site_mean for primary)
   rsq_null_line <- null_sm$rsq
@@ -2524,6 +2561,14 @@ if (HORIZON_POOLING == "pooled") {
   out_figure_list[[current_model_id]] <- NULL
 }
 
+# Output columns use three null baselines for horizon crossing:
+#   *_fcast_horizon      = site-mean null (primary; backward compatible)
+#   *_fcast_horizon_gam  = persistence null (last observed value carried forward)
+#   *_fcast_horizon_lm   = climatological null (monthly mean from calibration period)
+# The *_horizon_persist and *_horizon_clim columns duplicate _gam/_lm for clarity.
+# RSQ throughout uses Nash-Sutcliffe efficiency (1 - SS_res/SS_tot), not regression R².
+# Regression R² is computed as RSQ.reg in scoring tables but is NOT used for horizon
+# crossing because Nash-Sutcliffe is the standard forecast skill benchmark.
 out_df = cbind.data.frame(single_tax[1,1:5],
 													rsq_fcast_horizon = rsq_fcast_horizon,
 													rsq_fcast_horizon_gam = rsq_fcast_horizon_gam,
@@ -2538,12 +2583,12 @@ out_df = cbind.data.frame(single_tax[1,1:5],
 													crps_fcast_horizon_lm = crps_fcast_horizon_lm,
 													crps_null_line = crps_null_line,
 													# Pooled horizons with alternative null baselines
-													rsq_horizon_persist = if (exists("ph_persist")) min(ph_persist$rsq, 20, na.rm=TRUE) else NA_real_,
-													crps_horizon_persist = if (exists("ph_persist")) min(ph_persist$crps, 20, na.rm=TRUE) else NA_real_,
-													rmse_horizon_persist = if (exists("ph_persist")) min(ph_persist$rmse, 20, na.rm=TRUE) else NA_real_,
-													rsq_horizon_clim = if (exists("ph_clim")) min(ph_clim$rsq, 20, na.rm=TRUE) else NA_real_,
-													crps_horizon_clim = if (exists("ph_clim")) min(ph_clim$crps, 20, na.rm=TRUE) else NA_real_,
-													rmse_horizon_clim = if (exists("ph_clim")) min(ph_clim$rmse, 20, na.rm=TRUE) else NA_real_)
+													rsq_horizon_persist = if (exists("ph_persist") && !is.na(ph_persist$rsq)) min(ph_persist$rsq, 20) else NA_real_,
+													crps_horizon_persist = if (exists("ph_persist") && !is.na(ph_persist$crps)) min(ph_persist$crps, 20) else NA_real_,
+													rmse_horizon_persist = if (exists("ph_persist") && !is.na(ph_persist$rmse)) min(ph_persist$rmse, 20) else NA_real_,
+													rsq_horizon_clim = if (exists("ph_clim") && !is.na(ph_clim$rsq)) min(ph_clim$rsq, 20) else NA_real_,
+													crps_horizon_clim = if (exists("ph_clim") && !is.na(ph_clim$crps)) min(ph_clim$crps, 20) else NA_real_,
+													rmse_horizon_clim = if (exists("ph_clim") && !is.na(ph_clim$rmse)) min(ph_clim$rmse, 20) else NA_real_)
 out_df_list[[current_model_id]] = out_df
 
 cat("Completed processing for:", current_model_id, "\n")
