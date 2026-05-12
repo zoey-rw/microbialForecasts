@@ -198,17 +198,20 @@ if (nrow(seas_vals) > 0) {
   out <- rbindlist(out)
   seas_vals <- cbind.data.frame(seas_vals, out)
 
-  cycl_vals <- seas_vals %>% filter(time_period == "2015-11_2018-01" &
-                                    model_name == "cycl_only")
-  all_cov_vals <- seas_vals %>% filter(time_period == "2015-11_2018-01" &
-                                       (model_name == "all_covariates|env_cov" | grepl("env_cov", model_name)))
+  # Primary calibration period in current production data is 2013-06_2018-01 (recoded form).
+  # "env_cycl" is the model carrying BOTH sin/cos AND env covariates, so its sin/cos are
+  # the "residual seasonal trend" after env covariates are accounted for.
+  # "env_cov" has NO sin/cos terms and is intentionally excluded here.
+  primary_period <- "2013-06_2018-01"
+  refit_period   <- "2015-11_2020-01"
 
-  cycl_vals_refit <- seas_vals %>% filter(time_period == "2015-11_2020-01" &
-                                          model_name == "cycl_only")
-  all_cov_vals_refit <- seas_vals %>% filter(time_period == "2015-11_2020-01" &
-                                             (model_name == "all_covariates|env_cov" | grepl("env_cov", model_name)))
+  cycl_vals    <- seas_vals %>% filter(time_period == primary_period & model_name == "cycl_only")
+  all_cov_vals <- seas_vals %>% filter(time_period == primary_period & model_name == "env_cycl")
 
-  input_dateID = c("201401","201402","201403","201404","201405","201406","201407","201408","201409","201410","201412")
+  cycl_vals_refit    <- seas_vals %>% filter(time_period == refit_period & model_name == "cycl_only")
+  all_cov_vals_refit <- seas_vals %>% filter(time_period == refit_period & model_name == "env_cycl")
+
+  input_dateID = c("201401","201402","201403","201404","201405","201406","201407","201408","201409","201410","201411","201412")
   dates = fixDate(input_dateID)
   input_date_df = data.frame(x = lubridate::month(dates),
                              dates = dates)
@@ -237,9 +240,10 @@ if (nrow(seas_vals) > 0) {
     out_seas_vals[[row]] <- data.frame(y_cycl) %>% t %>% as.data.frame()
   }
   seas_vals_to_plot = rbindlist(out_seas_vals, fill=T)
+  date_cols <- names(seas_vals_to_plot)  # column names = ISO date strings produced by fixDate()
   seas_vals_to_plot <- cbind.data.frame(seas_vals_only, seas_vals_to_plot)
-  seas_vals_long = seas_vals_to_plot %>% 
-    pivot_longer(cols = c(16:26), names_to = "dates", values_to = "y_cycl") %>%
+  seas_vals_long = seas_vals_to_plot %>%
+    pivot_longer(cols = all_of(date_cols), names_to = "dates", values_to = "y_cycl") %>%
     mutate(dates = as.Date(dates))
 
   max_vals =	seas_vals_long %>% group_by(model_name, taxon, time_period, model_id) %>%
@@ -247,7 +251,18 @@ if (nrow(seas_vals) > 0) {
     mutate(max_y_date = dates) %>% select(-c(dates, y_cycl))
   seas_vals_long <- merge(seas_vals_long, max_vals, all=T)
 
-  saveRDS(list(seas_vals_long, all_cov_vals, cycl_vals, all_cov_vals_refit, cycl_vals_refit, seas_vals), here("data/summary/seasonal_amplitude.rds"))
+  # Saved as a named list to make slot meanings explicit. Positional access still works,
+  # so existing consumers (fig3_f_b_seasonality.r uses [[6]], etc.) continue to function.
+  # Slot 2 is env_cycl (sin/cos AFTER env covariates) — i.e. the "residual seasonal trend".
+  # Slot 3 is cycl_only (pure seasonal model). env_cov has no sin/cos and is not present.
+  saveRDS(list(
+    seas_vals_long      = seas_vals_long,
+    env_cycl_vals       = all_cov_vals,
+    cycl_only_vals      = cycl_vals,
+    env_cycl_vals_refit = all_cov_vals_refit,
+    cycl_only_vals_refit = cycl_vals_refit,
+    seas_vals           = seas_vals
+  ), here("data/summary/seasonal_amplitude.rds"))
 } else {
   cat("No seasonal data to process - creating empty seasonal amplitude file\n")
   # Create empty seasonal amplitude data for compatibility

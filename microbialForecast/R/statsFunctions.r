@@ -207,37 +207,20 @@ crib_fun <- function(x,N = NA){
 #' @export
 #'
 getMaxMin <- function(sin, cos, T = 12, max_only = T) {
-
-	print(sin[[1]]);
-	print(cos[[1]])
-
-	print(length(sin));
-	print(length(cos))
-
 	sin <- sin[[1]]
 	cos <- cos[[1]]
 
-	t <- atan(sin/cos) * T/(2*pi)
-
-	if (sin==0 & cos==0) {
+	if (sin == 0 & cos == 0) {
 		return(list("min" = NA, "max" = NA))
 	}
 
-	if ((sin/cos) > 0){
-		extreme1 <- t
-		extreme2 <- extreme1 + T/2
-	} else if ((sin/cos) <= 0){
-		extreme1 <- t + T/2
-		extreme2 <- t + T
-	}
+	# Closed-form peak of y(t) = sin*sin(2*pi*t/T) + cos*cos(2*pi*t/T) using atan2.
+	# atan2 returns the angle in (-pi, pi] for any quadrant including the sin=0 axes,
+	# avoiding the edge-case bug the old quadrant-by-quadrant branch had when sin==0.
+	# The peak is at the angle whose direction is (cos, sin); the trough is half a period later.
+	max <- (atan2(sin, cos) * T / (2 * pi)) %% T
+	min <- (max + T / 2) %% T
 
-	if (sin > 0){
-		max <- extreme1
-		min <- extreme2
-	} else if (sin <= 0){
-		min <- extreme1
-		max <- extreme2
-	}
 	if (max_only) {
 		return(max)
 	} else {
