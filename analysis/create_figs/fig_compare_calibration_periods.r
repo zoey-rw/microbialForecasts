@@ -6,7 +6,10 @@ if (!file.exists(here("data/summary/seasonal_amplitude.rds"))) {
 }
 
 seas_vals = readRDS(here("data/summary/seasonal_amplitude.rds"))
-all_seas_vals = seas_vals[[5]]
+# Named slots from 04_tidyEffectSizes.r: seas_vals_long, env_cycl_vals, cycl_only_vals,
+# env_cycl_vals_refit, cycl_only_vals_refit, seas_vals (all rows, wide).
+# all_seas_vals is the full wide-format table used by the per-taxon trend block below.
+all_seas_vals = seas_vals$seas_vals
 
 # Check if plot_seasonal_trend function exists
 if (!exists("plot_seasonal_trend")) {
@@ -190,32 +193,33 @@ if (file.exists(here("data/summary/plot_estimates.rds"))) {
     cat("No data available for plotting\n")
   }
 
-# Check if seasonal amplitude data has the expected structure
-if (length(seas_vals) >= 2) {
-  cycl_calibration = seas_vals[[2]]
-  all_cov_calibration = seas_vals[[1]]
-  
-  if (is.data.frame(cycl_calibration) && nrow(cycl_calibration) > 0) {
-    p1 <- ggplot(cycl_calibration) + 
-      geom_point(aes(y = rank, x = max)) + 
-      xlab("Month in which peak seasonal trend is observed")
-    png(here("figures","compare_calibration_periods_cycl_peak.png"), width = 800, height = 600)
-    print(p1)
-    dev.off()
-  } else {
-    cat("cycl_calibration data not available\n")
-  }
-  
-  if (is.data.frame(all_cov_calibration) && nrow(all_cov_calibration) > 0) {
-    p2 <- ggplot(all_cov_calibration) + 
-      geom_point(aes(y = rank, x = max)) + 
-      xlab("Month in which peak residual seasonal trend is observed")
-    png(here("figures","compare_calibration_periods_all_cov_peak.png"), width = 800, height = 600)
-    print(p2)
-    dev.off()
-  } else {
-    cat("all_cov_calibration data not available\n")
-  }
+# Peak-month-by-rank, faceted by model type. cycl_only is the pure seasonal model;
+# env_cycl carries sin/cos AND env covariates, so its sin/cos describe seasonality
+# after env covariates are controlled for ("residual seasonal trend"). env_cov has
+# no sin/cos and is excluded. Faceting prevents the two distributions from
+# overlaying into a misleading bimodal appearance.
+cycl_calibration    <- seas_vals$cycl_only_vals
+all_cov_calibration <- seas_vals$env_cycl_vals
+
+if (is.data.frame(cycl_calibration) && nrow(cycl_calibration) > 0 &&
+    is.data.frame(all_cov_calibration) && nrow(all_cov_calibration) > 0) {
+  peak_df <- bind_rows(
+    cycl_calibration    %>% mutate(panel = "cycl_only:\npeak seasonal trend"),
+    all_cov_calibration %>% mutate(panel = "env_cycl:\npeak residual seasonal trend\n(after env covariates)")
+  )
+  p3 <- ggplot(peak_df, aes(x = max, y = rank, color = panel)) +
+    geom_point(alpha = 0.6) +
+    facet_wrap(~ panel, nrow = 1) +
+    scale_x_continuous(breaks = seq(0, 12, 2), limits = c(0, 12)) +
+    xlab("Month in which peak is observed") +
+    ylab("rank") +
+    theme_bw() +
+    theme(legend.position = "none")
+  png(here("figures","compare_calibration_periods_peak_by_model.png"),
+      width = 1400, height = 700)
+  print(p3)
+  dev.off()
+  cat("Saved: figures/compare_calibration_periods_peak_by_model.png\n")
 } else {
-  cat("Seasonal amplitude data structure not as expected\n")
+  cat("cycl_only_vals or env_cycl_vals data not available\n")
 }
