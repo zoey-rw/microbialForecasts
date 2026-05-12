@@ -110,7 +110,7 @@ pred_vals = obs_sites %>%
 	arrange(pretty_group, predictor) %>% ungroup
 
 # -- Shared styling --
-kingdom_colors <- c("Bacteria" = "#E07A5F", "Fungi" = "#3D85C6")
+# kingdom_colors comes from source.R
 shared_theme <- theme_bw(base_size = 13) +
 	theme(
 		panel.grid.minor = element_blank(),

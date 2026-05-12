@@ -98,15 +98,9 @@ crps_values$metric <- "mean_crps"
 plotting_df_rank_scores <- bind_rows(rmse_values, crps_values)
 plotting_tukey          <- bind_rows(tukey_crps_rank, tukey_rmse_rank)
 
-# ── Shared aesthetics (Okabe-Ito color-blind safe) ─────────────────────────────
-# Bacteria/Fungi kingdom colors — consistent with fig3_f_b_seasonality.r
-kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
-kingdom_shapes <- c(Bacteria = 16,        Fungi = 17)
-
-# Model-type colors
-model_colors <- c(env_cov   = "#56B4E9",
-                  cycl_only = "#009E73",
-                  env_cycl  = "#D55E00")
+# ── Shared aesthetics ────────────────────────────────────────────────────────
+# kingdom_colors and model_colors come from source.R (single source of truth).
+kingdom_shapes <- c(Bacteria = 16, Fungi = 17)
 
 # Two-group pairwise comparison list for stat_compare_means
 comparisons_kingdom <- list(c("Bacteria", "Fungi"))
@@ -243,22 +237,42 @@ if (length(unique(fcast_horizon_data$pretty_group)) < 2)
   cat("WARNING: forecast horizon data is missing one kingdom —",
       "check fcast_horizon_df.rds\n")
 
-# ── Panel C: forecast horizon by kingdom ──────────────────────────────────────
+# ── Panel C: forecast horizon by kingdom (horizontal: months on X) ────────────
+# Compute Wilcoxon p-value once for manual annotation.
+# stat_compare_means brackets render unreliably under coord_flip / swapped aes.
+.bact_h <- fcast_horizon_data$forecast_horizon[fcast_horizon_data$pretty_group == "Bacteria"]
+.fung_h <- fcast_horizon_data$forecast_horizon[fcast_horizon_data$pretty_group == "Fungi"]
+.horizon_p <- if (length(.bact_h) > 1 && length(.fung_h) > 1) {
+  wilcox.test(.bact_h, .fung_h)$p.value
+} else NA_real_
+.horizon_signif <- dplyr::case_when(
+  is.na(.horizon_p)    ~ "",
+  .horizon_p < 0.0001  ~ "****",
+  .horizon_p < 0.001   ~ "***",
+  .horizon_p < 0.01    ~ "**",
+  .horizon_p < 0.05    ~ "*",
+  TRUE                 ~ "ns"
+)
+
 horizon_plot_f <- ggplot(fcast_horizon_data,
-                         aes(x = pretty_group, y = forecast_horizon,
+                         aes(y = pretty_group, x = forecast_horizon,
                              fill = pretty_group, color = pretty_group)) +
   geom_violin(alpha = 0.45, quantiles = 0.5, show.legend = FALSE) +
   geom_point(shape = 21, fill = "white", size = 2,
-             position = position_jitter(width = 0.1, height = 0),
+             position = position_jitter(width = 0, height = 0.1),
              alpha = 0.45, show.legend = FALSE) +
-  stat_compare_means(comparisons = comparisons_kingdom,
-                     method = "wilcox.test", label = "p.signif", size = 5) +
+  annotate("text",
+           x = max(fcast_horizon_data$forecast_horizon, na.rm = TRUE) * 1.02,
+           y = 1.5, label = .horizon_signif, size = 5) +
   scale_color_manual(values = kingdom_colors) +
   scale_fill_manual(values  = kingdom_colors) +
-  labs(x = NULL, y = "Forecast horizon\n(months since last observation)") +
+  labs(y = NULL, x = "Forecast horizon (months since last observation)") +
   base_theme +
-  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
-        plot.margin = margin(0.3, 0.3, 0.3, 0.3, "cm"))
+  theme(axis.text.x        = element_text(angle = 0, hjust = 0.5),
+        axis.text.y        = element_text(angle = 0, hjust = 1),
+        panel.grid.major.x = element_line(color = "grey85"),
+        panel.grid.major.y = element_blank(),
+        plot.margin        = margin(0.3, 0.3, 0.3, 0.3, "cm"))
 
 # ── Forecast horizon summary stats ────────────────────────────────────────────
 cat("\n=== FORECAST HORIZON ANALYSIS BY KINGDOM ===\n")

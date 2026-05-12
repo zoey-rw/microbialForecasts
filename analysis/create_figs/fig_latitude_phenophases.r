@@ -184,7 +184,7 @@ site_cv <- abun_data %>%
   left_join(lat_df, by = "siteID") %>%
   filter(!is.na(latitude_category), is.finite(seasonal_cv))
 
-kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
+# kingdom_colors comes from source.R
 
 # Compute KW p-values per fcast_type × pretty_group stratum
 kw_annot <- site_cv %>%

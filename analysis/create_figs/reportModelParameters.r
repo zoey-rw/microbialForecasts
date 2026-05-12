@@ -52,11 +52,7 @@ kable(df_wide, "html") %>%
 
 
 # Read in forecast scores
-#converged <- readRDS(here("data/summary/weak_converged_taxa_list.rds"))
-
 scores_list = readRDS(here("data/summary/scoring_metrics_plsr2.rds"))
-converged = scores_list$converged_list
-#converged  = scores_list$converged_strict_list
 
 hindcast_scores_to_merge = scores_list$scoring_metrics %>% ungroup() %>%
 	select(model_id, site_prediction, mean_crps_sample, RSQ, RSQ.1,RMSE.norm) %>%

@@ -41,7 +41,7 @@ scores_wide <- scores_list$scoring_metrics %>%
 cat("Taxa included:", nrow(scores_wide), "\n")
 
 # ── Shared aesthetics ─────────────────────────────────────────────────────────
-kingdom_colors   <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
+# kingdom_colors comes from source.R
 improve_colors   <- c("TRUE" = "#0072B2", "FALSE" = "#D55E00")
 model_colors     <- c("Cycl. only" = "#0072B2", "Env. only" = "#D55E00",
                       "Env. + Cycl." = "#009E73")

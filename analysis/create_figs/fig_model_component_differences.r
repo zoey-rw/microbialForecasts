@@ -44,7 +44,7 @@ fg_names <- microbialForecast:::keep_fg_names
 
 # ── Shared aesthetics ────────────────────────────────────────
 model_colors <- c(cycl_only = "#2166AC", env_cov = "#B2182B", env_cycl = "#4DAF4A")
-kingdom_colors <- c(Bacteria = "#F8766D", Fungi = "#00BFC4")
+# kingdom_colors comes from source.R
 
 base_theme <- theme_bw(base_size = 14) +
   theme(

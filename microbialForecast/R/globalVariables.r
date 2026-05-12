@@ -230,7 +230,8 @@ FG_kingdoms <- list("cellulolytic" = "Bacterial_functional_group",
 
 N_cyclers <- c("assim_nitrite_reduction", "dissim_nitrite_reduction","assim_nitrate_reduction","n_fixation","dissim_nitrate_reduction","nitrification","denitrification")
 
-date_recode <- c("20151101_20180101" = "2015-11_2018-01",
+date_recode <- c("20130601_20180101" = "2013-06_2018-01",
+								 "20151101_20180101" = "2015-11_2018-01",
 								 "20160101_20200101" = "2016-01_2020-01",
 								 "20130601_20170101" = "2013-06_2017-01",
 								 "20130601_20150101" = "2013-06_2015-01",

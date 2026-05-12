@@ -46,7 +46,7 @@ if ("pretty_group.y" %in% names(plot_data)) {
 cat("Model-level data:", nrow(plot_data), "env_cycl models\n")
 
 # ── Shared aesthetics ──────────────────────────────────────────────────────────
-kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
+# kingdom_colors comes from source.R
 
 base_theme <- theme_bw(base_size = 12) +
   theme(

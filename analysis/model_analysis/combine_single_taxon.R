@@ -50,23 +50,24 @@ chains_raw <- Filter(Negate(is.null), chains_raw)
 iters <- sapply(chains_raw, nrow)
 cat("Iterations per chain:", iters, "\n")
 
-# If chains have different lengths, truncate all to the minimum.
-# Only drop short chains if they have <50% of the max iterations
-# AND we'd still have >=3 chains without them.
+# Strategy: prefer longer (newer) chains. If >=3 chains share the
+# max iteration count, use only those. Otherwise keep all and truncate.
 max_iter <- max(iters)
 min_iter <- min(iters)
-short_chains <- which(iters < max_iter * 0.5)
-if (length(short_chains) > 0 &&
-    (length(chains_raw) - length(short_chains)) >= 3) {
-  cat("Dropping", length(short_chains), "very short chains (<50% of max)\n")
-  chains_raw <- chains_raw[-short_chains]
-  chain_files <- chain_files[-short_chains]
-  iters <- iters[-short_chains]
-  min_iter <- min(iters)
-}
-if (any(iters != min_iter)) {
-  cat("Truncating", length(chains_raw), "chains to last",
-      min_iter, "of", max_iter, "iterations\n")
+long_idx <- which(iters == max_iter)
+short_idx <- which(iters < max_iter)
+
+if (length(long_idx) >= 3) {
+  # Enough long chains — drop the shorter (older) ones
+  cat("Using", length(long_idx), "chains with", max_iter,
+      "iterations (dropping", length(short_idx), "shorter chains)\n")
+  chains_raw <- chains_raw[long_idx]
+  chain_files <- chain_files[long_idx]
+  iters <- iters[long_idx]
+  min_iter <- max_iter
+} else if (length(short_idx) > 0) {
+  cat("Keeping all", length(chains_raw), "chains,",
+      "truncating to last", min_iter, "iterations\n")
 }
 chains <- lapply(chains_raw, function(ch) {
   n <- nrow(ch)

@@ -152,7 +152,7 @@ panel_map <- ggplot() +
         legend.key.size = unit(0.4, "cm"))
 
 # ── 4. Hindcast ribbon panels ──────────────────────────────────────────────
-taxon_colors <- c("Bacteria" = "#4DAF4A", "Fungi" = "#FF7F00")
+taxon_colors <- kingdom_colors  # from source.R
 
 # Calibration boundary date for vertical line
 cal_boundary <- as.Date("2018-01-01")

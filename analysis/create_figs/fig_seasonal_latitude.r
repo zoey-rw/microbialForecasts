@@ -73,7 +73,7 @@ taxon_slopes <- site_env_cycl %>%
   )
 
 # ── Shared aesthetics ─────────────────────────────────────────────────────────
-kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
+# kingdom_colors comes from source.R
 
 base_theme <- theme_bw(base_size = 12) +
   theme(

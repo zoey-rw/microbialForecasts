@@ -27,7 +27,7 @@ hindcast_rsq <- scores_list$scoring_metrics %>%
 
 # ── Predictor effect sizes (calibration period, env_cycl) ────────────────────
 df_cal <- sum.all %>%
-  filter(time_period == "20130601_20180101", model_name == "env_cycl") %>%
+  filter(time_period == "2013-06_2018-01", model_name == "env_cycl") %>%
   mutate(model_id_base = gsub("_(combined|beta_regression)$", "", model_id)) %>%
   filter(model_id_base %in% converged,
          !beta %in% c("sin", "cos", "rho")) %>%

@@ -24,7 +24,7 @@ if (file.exists(here("data/summary/plot_estimates.rds"))) {
     data_in$plot_est <- data.frame()
   }
 }
-keep_list <- readRDS(here("data/summary/converged_taxa_list.rds"))
+keep_list <- readRDS(here("data/summary/weak_converged_taxa_list.rds"))
 
 # Check if data has the expected structure
 if (!"plot_est" %in% names(data_in)) {

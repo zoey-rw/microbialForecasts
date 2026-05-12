@@ -169,10 +169,13 @@ combine_summaries <- function(files) {
     return(model_id)
   }
   
-  # Apply simple convergence criteria (matching main script)
-  keep_models <- unique(gelman_dt[is_major_param == TRUE & `Point est.` < 1.1]$model_id)
-  keep_models_weak <- unique(gelman_dt[is_major_param == TRUE & `Point est.` < 1.2]$model_id)
-  keep_models_stricter <- unique(gelman_dt[is_major_param == TRUE & `Point est.` < 1.05]$model_id)
+  # Apply convergence criteria based on MAX Rhat across all major params per model
+  max_rhat_per_model <- gelman_dt[is_major_param == TRUE,
+                                   .(max_rhat = max(`Point est.`, na.rm = TRUE)),
+                                   by = model_id]
+  keep_models <- max_rhat_per_model[max_rhat < 1.1]$model_id
+  keep_models_weak <- max_rhat_per_model[max_rhat < 1.2]$model_id
+  keep_models_stricter <- max_rhat_per_model[max_rhat < 1.05]$model_id
   
   # Fix model_ids to include _beta_regression suffix
   keep_models <- sapply(keep_models, fix_model_id)

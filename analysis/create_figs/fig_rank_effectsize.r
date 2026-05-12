@@ -19,7 +19,7 @@ plotting_df <- sum.all %>%
   filter(beta %in% beta_names,
          model_name == "env_cycl",
          !grepl("other", taxon),
-         time_period == "20130601_20180101")
+         time_period == "2013-06_2018-01")
 
 # ── Tukey HSD tests per group x predictor ───────────────────────────────────
 tukey_list <- list()
@@ -68,7 +68,7 @@ for (pg in c("Bacteria", "Fungi")) {
 tukey_df <- data.table::rbindlist(tukey_list)
 
 # ── Colorblind-friendly palette ─────────────────────────────────────────────
-kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
+# kingdom_colors comes from source.R
 
 # ── Main figure: effect sizes by rank, faceted by predictor x kingdom ────────
 p <- ggplot(plotting_df, aes(x = rank_only, y = effSize, color = pretty_group)) +

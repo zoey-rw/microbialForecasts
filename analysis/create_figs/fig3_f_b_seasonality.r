@@ -57,7 +57,7 @@ to_plot <- cycl_vals_scores %>%
   filter(!is.na(RMSE.norm), !is.na(mean_abun), !is.na(amplitude), amplitude > 0)
 
 # ── Shared aesthetics ─────────────────────────────────────────────────────────
-kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
+# kingdom_colors comes from source.R
 
 base_theme <- theme_bw(base_size = 12) +
   theme(

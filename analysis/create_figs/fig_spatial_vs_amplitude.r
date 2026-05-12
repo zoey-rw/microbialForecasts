@@ -10,7 +10,7 @@ library(MuMIn)
 options(na.action = "na.fail")
 
 # ── Colorblind-friendly palette ─────────────────────────────────────────────
-kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
+# kingdom_colors comes from source.R
 
 # ── Data loading ─────────────────────────────────────────────────────────────
 scores_list    <- readRDS(here("data/summary/scoring_metrics_plsr2.rds"))

@@ -6,15 +6,10 @@ library(ggpubr)
 library(rstatix)
 library(ggh4x)
 
-# ── Shared constants (Okabe-Ito, consistent with fig2/fig3/combined) ─────────
+# ── Shared constants ─────────────────────────────────────────────────────────
+# kingdom_colors and fcast_type_colors come from source.R.
 BASE_SIZE <- 14
-FUNC_COLOR  <- "#0072B2"   # blue
-TAX_COLOR   <- "#E69F00"   # orange
-BACT_COLOR  <- "#E69F00"   # orange  (kingdom palette matches fig2)
-FUNGI_COLOR <- "#0072B2"   # blue
-
-kingdom_colors  <- c("Bacteria" = BACT_COLOR, "Fungi" = FUNGI_COLOR)
-func_tax_colors <- c("Functional" = FUNC_COLOR, "Taxonomic" = TAX_COLOR)
+func_tax_colors <- fcast_type_colors
 
 base_theme <- theme_bw(base_size = BASE_SIZE) +
   theme(
@@ -55,7 +50,7 @@ env_cycl_vals_scores <- seasonal_amplitude_in[[6]] %>%
 
 # ── Combine and clean ────────────────────────────────────────────────────────
 df_cal_fg_tax <- sum.all %>%
-  filter(time_period == "20130601_20180101") %>%
+  filter(time_period == "2013-06_2018-01") %>%
   filter(!beta %in% c("sin", "cos"))
 
 df_cal_fg_tax <- rbindlist(list(df_cal_fg_tax, env_cycl_vals_scores, cycl_only_vals_scores), fill = TRUE)

@@ -12,12 +12,14 @@ library(patchwork)
 library(data.table)
 library(lubridate)
 
-# ── Shared constants (Okabe-Ito, consistent with fig2/fig3) ──────────────────
+# ── Shared constants ─────────────────────────────────────────────────────────
+# kingdom_colors and fcast_type_colors come from source.R.
+# Bacteria/Fungi = orange/blue (Wong); Taxonomic/Functional = green/pink (Wong).
 BASE_SIZE <- 12
-FUNC_COLOR <- "#0072B2"   # blue
-TAX_COLOR  <- "#E69F00"   # orange
-BACT_COLOR <- "#009E73"   # bluish green
-FUNGI_COLOR <- "#CC79A7"  # reddish purple
+BACT_COLOR  <- kingdom_colors[["Bacteria"]]
+FUNGI_COLOR <- kingdom_colors[["Fungi"]]
+TAX_COLOR   <- fcast_type_colors[["Taxonomic"]]
+FUNC_COLOR  <- fcast_type_colors[["Functional"]]
 
 base_theme <- theme_bw(base_size = BASE_SIZE) +
   theme(
@@ -116,7 +118,7 @@ env_cycl_vals_scores <- seasonal_amplitude_in[[6]] %>%
   pivot_longer(cols = residual_amplitude, values_to = "effSize", names_to = "beta")
 
 df_cal_fg_tax <- sum_all %>%
-  filter(time_period == "20130601_20180101") %>%
+  filter(time_period == "2013-06_2018-01") %>%
   filter(!beta %in% c("sin", "cos"))
 df_cal_fg_tax <- rbindlist(list(df_cal_fg_tax, env_cycl_vals_scores, cycl_only_vals_scores), fill = TRUE)
 df_cal_fg_tax <- df_cal_fg_tax %>% filter(time_period != "2015-11_2018-01")
@@ -378,12 +380,13 @@ guild_pheno <- guild_pheno %>%
   mutate(season_label = factor(season_labels[as.character(sampling_season)],
                                levels = season_labels))
 
-# Colors and linetypes for accessibility (labels placed directly on lines)
+# Colors and linetypes for accessibility (labels placed directly on lines).
+# Avoids kingdom orange/blue (#E69F00, #0072B2) which are reserved for Bacteria/Fungi.
 guild_colors <- c(
-  "Saprotrophs"         = "#E69F00",
-  "Ectomycorrhizae"     = "#0072B2",
-  "Plant pathogens"     = "#009E73",
-  "Animal pathogens"    = "#D55E00"
+  "Saprotrophs"         = "#56B4E9",  # sky blue
+  "Ectomycorrhizae"     = "#009E73",  # green
+  "Plant pathogens"     = "#D55E00",  # vermillion
+  "Animal pathogens"    = "#CC79A7"   # pink
 )
 guild_linetypes <- c(
   "Saprotrophs"         = "solid",
@@ -392,11 +395,12 @@ guild_linetypes <- c(
   "Animal pathogens"    = "dotted"
 )
 
-# Phenophase background shading
+# Phenophase background shading.
+# Peak uses Wong yellow (#F0E442) to avoid colliding with the reserved kingdom orange.
 phenophase_fills <- c(
   "Dormancy"   = "grey85",
   "Green-up"   = "#009E73",
-  "Peak"       = "#E69F00",
+  "Peak"       = "#F0E442",
   "Senescence" = "#D55E00"
 )
 

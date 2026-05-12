@@ -65,18 +65,7 @@ extract_betas_from_chains <- function(chain_files, model_label,
                sd    = apply(samp[, bcols, drop = FALSE], 2, sd))
   })
   all_stats <- do.call(rbind, chain_stats)
-  multi <- aggregate(cbind(mean, sd) ~ param, data = all_stats, FUN = function(x) x)
-  # Pooled: mean of means, sqrt(mean(var_within) + var(means))
-  result <- data.frame(
-    param = unique(all_stats$param),
-    Mean  = tapply(all_stats$mean, all_stats$param, mean),
-    SD    = tapply(all_stats$mean, all_stats$param, function(m) {
-      sds <- all_stats$sd[all_stats$param == all_stats$param[1]]  # placeholder
-      sqrt(mean(tapply(all_stats$sd[all_stats$param == unique(all_stats$param)[1]],
-                       seq_along(sds), function(x) x^2)) + var(m))
-    })
-  )
-  # Simpler: recompute properly
+  # Pool across chains: SD via mean within-chain variance + between-chain variance.
   result <- do.call(rbind, lapply(unique(all_stats$param), function(p) {
     rows <- all_stats[all_stats$param == p, ]
     data.frame(param = p,
