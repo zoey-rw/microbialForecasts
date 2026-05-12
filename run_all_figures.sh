@@ -3,6 +3,10 @@ cd /Users/zoeywerbin/Documents/microbialForecasts
 
 # Discover figure scripts (create_figs only; excludes subdirectories)
 # Include both .r and .R so all scripts run regardless of filename case
+# Scripts in SKIP_SCRIPTS are not re-run; their existing outputs in figures/ are kept.
+SKIP_SCRIPTS=(
+  "analysis/create_figs/fig_compare_CLR_betareg.r"
+)
 scripts=( $(find analysis/create_figs -maxdepth 1 \( -name "*.r" -o -name "*.R" \) | sort) )
 
 # Create log file
@@ -16,6 +20,16 @@ skipped_count=0
 
 # Run each script with timeout
 for script in "${scripts[@]}"; do
+  # Honor SKIP_SCRIPTS list
+  skip=false
+  for s in "${SKIP_SCRIPTS[@]}"; do
+    if [ "$script" = "$s" ]; then skip=true; break; fi
+  done
+  if [ "$skip" = true ]; then
+    echo "SKIPPED: $script (in SKIP_SCRIPTS)" | tee -a "$log_file"
+    ((skipped_count++))
+    continue
+  fi
   if [ -f "$script" ]; then
     echo "==========================================" | tee -a "$log_file"
     echo "Running: $script" | tee -a "$log_file"

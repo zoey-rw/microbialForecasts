@@ -41,10 +41,30 @@ full_phylo_res <- full_phylo_res %>%
 # Merge full results with means for Tukey test
 phylo_to_plot <- merge(full_phylo_res, phylo_res_means)
 
+safe_tukey <- function(x, y, y.offset = 0) {
+	# Drop non-finite values and any ranks with fewer than 2 observations
+	ok <- is.finite(y)
+	x <- x[ok]; y <- y[ok]
+	if (length(unique(x)) < 2) {
+		maxs <- tibble(x = unique(x), tot = tapply(y, x, max) + y.offset * max(abs(y)))
+		return(maxs %>% mutate(Letters_Tukey = "a"))
+	}
+	keep_levels <- names(which(table(x) >= 2))
+	if (length(keep_levels) < 2) {
+		maxs <- tibble(x = unique(x), tot = tapply(y, x, max) + y.offset * max(abs(y)))
+		return(maxs %>% mutate(Letters_Tukey = "a"))
+	}
+	tryCatch(tukey(x = x, y = y, y.offset = y.offset),
+					 error = function(e) {
+					 	maxs <- tibble(x = unique(x), tot = tapply(y, x, max) + y.offset * max(abs(y)))
+					 	maxs %>% mutate(Letters_Tukey = "a")
+					 })
+}
+
 tukey_phylo_rank <- phylo_to_plot %>%
-	filter(!is.na(contributionindex)) %>%
+	filter(is.finite(contributionindex)) %>%
 	group_by(trait.name) %>%
-	reframe(tukey(x = rank, y = contributionindex, y.offset = 0))
+	reframe(safe_tukey(x = as.character(rank), y = contributionindex, y.offset = 0))
 tukey_phylo_rank$rank <- tukey_phylo_rank$x %>%
 	ordered(levels = rev(c("genus","family","order","class","phylum")))
 tukey_phylo_rank <- merge(tukey_phylo_rank,

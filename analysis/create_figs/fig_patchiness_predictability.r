@@ -23,7 +23,7 @@ scores_df <- scores_list$scoring_metrics %>%
 
 # Temporal autocorrelation (rho) and core-level precision
 rho_core <- readRDS(here("data/summary/rho_core_sd_effects.rds")) %>%
-  filter(time_period == "20130601_20180101",
+  filter(time_period == "2013-06_2018-01",
          model_name != "all_covariates") %>%
   mutate(model_id = gsub("_(combined|beta_regression)$", "", model_id)) %>%
   filter(model_id %in% converged_base) %>%
@@ -44,14 +44,14 @@ cv_data <- scores_list$cv_metric_scaled %>%
 
 # Seasonal amplitude
 seas_amplitude <- readRDS(here("data/summary/seasonal_amplitude.rds"))[[6]] %>%
-  filter(time_period == "20130601_20180101") %>%
+  filter(time_period == "2013-06_2018-01") %>%
   mutate(model_id = gsub("_(combined|beta_regression)$", "", model_id)) %>%
   filter(model_id %in% converged_base) %>%
   select(model_id, taxon, model_name, amplitude)
 
 # Environmental predictor effect sizes
 beta_wide <- readRDS(here("data/summary/predictor_effects.rds")) %>%
-  filter(time_period == "20130601_20180101") %>%
+  filter(time_period == "2013-06_2018-01") %>%
   mutate(model_id = gsub("_(combined|beta_regression)$", "", model_id)) %>%
   filter(model_id %in% converged_base) %>%
   select(model_id, beta, effSize) %>%

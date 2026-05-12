@@ -41,7 +41,7 @@ scores_df <- scores_list$scoring_metrics %>%
   )
 
 # ── Shared aesthetics ─────────────────────────────────────────────────────────
-kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
+# kingdom_colors comes from source.R
 
 site_colors <- c(
   "New time\n(observed site)"       = "#009E73",

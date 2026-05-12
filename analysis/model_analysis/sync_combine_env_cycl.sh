@@ -7,14 +7,18 @@
 #          bash sync_combine_env_cycl.sh   # process all 169 taxa with Nov 11 chains
 
 set -e
-
-REMOTE_USER="zrwerbin"
-REMOTE_HOST="scc2.bu.edu"
-REMOTE_BASE="/projectnb/dietzelab/zrwerbin/microbialForecasts/data/model_outputs/cloglog_beta_driver_uncertainty/env_cycl"
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REMOTE_MOUNT="$HOME/remote_microbialForecasts/data/model_outputs/cloglog_beta_driver_uncertainty/env_cycl"
 LOCAL_BASE="$PROJECT_ROOT/data/model_outputs/cloglog_beta_driver_uncertainty/env_cycl"
 LOGDIR="$PROJECT_ROOT/logs/sync_combine"
 mkdir -p "$LOGDIR"
+
+# Verify remote mount is accessible
+if [ ! -d "$REMOTE_MOUNT" ]; then
+    echo "ERROR: Remote mount not found at $REMOTE_MOUNT"
+    echo "Mount with: sshfs zrwerbin@scc2.bu.edu:/projectnb/dietzelab/zrwerbin/microbialForecasts ~/remote_microbialForecasts -o reconnect"
+    exit 1
+fi
 
 TAXON_FILTER="${1:-}"
 
@@ -41,20 +45,33 @@ for taxon in "${TAXA[@]}"; do
     echo ""
     echo "--- $taxon ---"
 
+    remote_dir="$REMOTE_MOUNT/$taxon"
     local_dir="$LOCAL_BASE/$taxon"
     mkdir -p "$local_dir"
 
-    # Step 1: Rsync chain files only (not checkpoints or progress files)
-    echo "  [1/4] Syncing chain files from SCC..."
-    rsync -avP \
-        --include="samples_*chain*.rds" \
-        --exclude="*" \
-        "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_BASE}/${taxon}/" \
-        "$local_dir/" \
+    # Skip if already completed in this run
+    if [ -f "$LOGDIR/${taxon}_combine.log" ] && grep -q "^Done" "$LOGDIR/${taxon}_combine.log" 2>/dev/null; then
+        echo "  SKIP: already completed"
+        rhat=$(grep "^Max Rhat" "$LOGDIR/${taxon}_combine.log" | head -1 | grep -oE "[0-9]+\.[0-9]+")
+        echo "  (Rhat=$rhat)"
+        succeeded=$((succeeded + 1))
+        continue
+    fi
+
+    if [ ! -d "$remote_dir" ]; then
+        echo "  SKIP: no remote directory"
+        failed=$((failed + 1))
+        continue
+    fi
+
+    # Rsync chain files from remote mount to local (fast: sequential read)
+    echo "  [1/2] Copying chain files..."
+    rsync -a --include="samples_*chain*.rds" --exclude="*" \
+        "$remote_dir/" "$local_dir/" \
         > "$LOGDIR/${taxon}_sync.log" 2>&1
 
-    nchains=$(find "$local_dir" -maxdepth 1 -name "samples_*chain*.rds" | wc -l | tr -d ' ')
-    echo "  Synced: $nchains chain files"
+    nchains=$(find "$local_dir" -maxdepth 1 -name "samples_*chain*.rds" 2>/dev/null | wc -l | tr -d ' ')
+    echo "  Copied: $nchains chain files"
 
     if [ "$nchains" -lt 2 ]; then
         echo "  SKIP: fewer than 2 chains"
@@ -62,9 +79,9 @@ for taxon in "${TAXA[@]}"; do
         continue
     fi
 
-    # Step 2+3: Combine chains, summarize, and clean up
+    # Combine chains, summarize, clean up
     combined_file="$LOCAL_BASE/samples_env_cycl_${taxon}_20130601_20180101_with_legacy_covariate_beta_regression.rds"
-    echo "  [2/3] Combining chains + summarizing..."
+    echo "  [2/2] Combining + summarizing..."
     Rscript combine_single_taxon.R \
         "$local_dir" "$combined_file" --cleanup \
         > "$LOGDIR/${taxon}_combine.log" 2>&1
@@ -78,7 +95,7 @@ for taxon in "${TAXA[@]}"; do
     fi
 
     # Show key results from log
-    grep -E "^(Selected|Using|Max Rhat|Converged|Saved|Done)" \
+    grep -E "^(Selected|Using|Keeping|Truncating|Max Rhat|Converged|Saved|Done)" \
         "$LOGDIR/${taxon}_combine.log" 2>/dev/null | sed 's/^/  /'
 
     succeeded=$((succeeded + 1))

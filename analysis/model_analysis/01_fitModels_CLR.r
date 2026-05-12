@@ -1529,12 +1529,11 @@ runAndSave_task <- function(task_idx) {
             
             # Create model_id for consistent naming using helper function
             model_id <- create_model_id(
-                valid_models$model_name[model_idx], 
+                valid_models$model_name[model_idx],
                 valid_models$species[model_idx],
-                valid_models$min.date[model_idx], 
+                valid_models$min.date[model_idx],
                 valid_models$max.date[model_idx],
-                grepl("Legacy with covariate", valid_models$scenario[model_idx]),
-                "clr"
+                grepl("Legacy with covariate", valid_models$scenario[model_idx])
             )
             
             # Create species-specific subdirectory (matching beta regression structure)

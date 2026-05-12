@@ -212,7 +212,14 @@ if (nzchar(Sys.getenv("RHO_PRIOR_UNIF", ""))) {
   base_dir_name <- paste0(base_dir_name, "_rho_unif")
   cat("RHO_PRIOR_UNIF set: writing to", base_dir_name, "\n")
 }
-model_output_dir <- here("data", "model_outputs", base_dir_name)
+# Allow MODEL_OUTPUT_DIR env var to override the default output path
+env_output_dir <- Sys.getenv("MODEL_OUTPUT_DIR", "")
+if (nzchar(env_output_dir)) {
+  model_output_dir <- env_output_dir
+  cat("MODEL_OUTPUT_DIR override:", model_output_dir, "\n")
+} else {
+  model_output_dir <- here("data", "model_outputs", base_dir_name)
+}
 dir.create(model_output_dir, recursive = TRUE, showWarnings = FALSE)
 
 # Diagnostic: confirm writeability + actual target path
@@ -409,8 +416,12 @@ if (identical(tolower(Sys.getenv("LOCAL_TEST", "false")), "true")) {
             scenario %in% c("Legacy with covariate 2013-2018")
     ) %>% distinct(.keep_all = TRUE)
     
-    # PRODUCTION: Filter out converged models
-    params <- params %>% filter(!model_id %in% converged_list)
+    # PRODUCTION: Filter out converged models (unless explicitly skipping)
+    if (!identical(tolower(Sys.getenv("SKIP_CONVERGED_FILTER", "false")), "true")) {
+      params <- params %>% filter(!model_id %in% converged_list)
+    } else {
+      cat("SKIP_CONVERGED_FILTER=true: keeping all models regardless of convergence status\n")
+    }
 }
 
 info("LOCAL TESTING: Starting parallel execution for %d models with %d chains", nrow(params), nchains)
@@ -1913,9 +1924,9 @@ run_scenarios_fixed <- function(j, chain_no) {
             iter_per_chunk <- 2000  # Larger chunks for efficiency (reduces overhead)
             init_iter <- 2000
             min_eff_size_perchain <- 100  # Target ESS for reliable estimates
-            max_loops <- 10  # Limit loops to prevent excessive runtime
+            max_loops <- as.integer(Sys.getenv("MAX_LOOPS", "25"))  # Allow env override
             min_total_iterations <- 10000  # Minimum iterations for reliable estimates
-            max_total_iterations <- 50000  # Hard limit to prevent runaway jobs
+            max_total_iterations <- as.integer(Sys.getenv("MAX_TOTAL_ITER", "100000"))  # Allow env override
             convergence_check_interval <- 2  # Check convergence every N loops to reduce overhead
             info("  🏭 PRODUCTION MODE: Using optimized iteration values")
         }
@@ -2103,6 +2114,7 @@ run_scenarios_fixed <- function(j, chain_no) {
             loop_counter <- loop_counter + 1
             
             # Save checkpoint after each loop (including samples2) - but only if not too large
+            max_checkpoints <- as.integer(Sys.getenv("MAX_CHECKPOINTS", "3"))
             if (nrow(all_samples) <= max_save_size) {
                 loop_checkpoint_data <- list(
                     samples = all_samples,
@@ -2114,6 +2126,15 @@ run_scenarios_fixed <- function(j, chain_no) {
                 tryCatch({
                     saveRDS(loop_checkpoint_data, loop_checkpoint_file)
                     info("  ✓ Checkpoint saved (loop %d)", loop_counter)
+                    # Remove old checkpoints, keeping only the most recent max_checkpoints
+                    all_ckpts <- sort(list.files(species_output_dir,
+                        pattern = paste0("checkpoint_.*_chain", chain_no, "_loop.*\\.rds$"),
+                        full.names = TRUE))
+                    if (length(all_ckpts) > max_checkpoints) {
+                        to_remove <- head(all_ckpts, length(all_ckpts) - max_checkpoints)
+                        file.remove(to_remove)
+                        info("  Cleaned %d old checkpoints (keeping %d)", length(to_remove), max_checkpoints)
+                    }
                 }, error = function(e) {
                     warn("  ✗ Failed to save checkpoint: %s", e$message)
                 })

@@ -22,7 +22,7 @@ betas_wide = sum.all %>% filter(model_name=="env_cycl" & pretty_group=="Bacteria
 
 # Merge ASV list with model effect estimates
 ASVs_betas <- merge(ASVs_for_phylogeny, betas_wide %>%
-											filter(time_period == "20130601_20180101"), all=T) %>%
+											filter(time_period == "2013-06_2018-01"), all=T) %>%
 	filter(rank_only !="functional")
 
 # Create dendrogram version of SILVA phylogeny
@@ -91,9 +91,11 @@ MRCA_nodes <- merge(MRCA_nodes, unique_taxa)
 # PHYLOCOM ANALYSIS (contribution index)
 
 # Subset to the traits we are testing
+# Select traits for phylogenetic analysis — only require environmental betas (not scores)
 traits <- merged_fort_beta %>% filter(isTip) %>%
 	select(name = "label", "LAI", "pC", "pH", "Temperature",
-				 "Moisture",Ecto = "Ectomycorrhizal\ntrees", "CRPS", "RSQ", "RSQ.1") %>% na.omit %>%
+				 "Moisture", Ecto = "Ectomycorrhizal\ntrees", "CRPS", "RSQ", "RSQ.1") %>%
+	filter(!is.na(LAI) & !is.na(pH) & !is.na(Temperature) & !is.na(Moisture) & !is.na(pC) & !is.na(Ecto)) %>%
 	distinct(name, .keep_all = T)
 traits <- apply(traits,2,as.character) %>% as.data.frame()
 

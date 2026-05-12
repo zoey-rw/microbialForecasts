@@ -1,7 +1,14 @@
 source("../../source.R")
 library(kableExtra)
 
-fieldsites_raw <- read.csv("https://www.neonscience.org/sites/default/files/NEON_Field_Site_Metadata_20220412.csv")  %>% filter(!grepl("Aquatic", field_site_type)) %>%
+# Production calibration is 20130601-20180101; validation is the remaining
+# data through 20200101. min.prev=3 used to match production model fits.
+CAL_MIN <- "20130601"
+CAL_MAX <- "20180101"
+VAL_MAX <- "20200101"
+
+fieldsites_raw <- read.csv("https://www.neonscience.org/sites/default/files/NEON_Field_Site_Metadata_20220412.csv") %>%
+	filter(!grepl("Aquatic", field_site_type)) %>%
 	select(siteID = field_site_id,
 				 `site name` = field_site_name,
 				 MAT = field_mean_annual_temperature_C,
@@ -11,115 +18,84 @@ fieldsites_raw <- read.csv("https://www.neonscience.org/sites/default/files/NEON
 				 nlcd = field_dominant_nlcd_classes,
 				 ecoregion = field_domain_id)
 
-#hindcast_201511_201801 <- readRDS("./data/summary/beta_hindcast_fg_2015-11_2018-01.rds")
+abun_its <- readRDS(here("data/clean/groupAbundances_ITS_2023.rds"))
+abun_16s <- readRDS(here("data/clean/groupAbundances_16S_2023.rds"))
 
-# Check if Parquet file exists, otherwise use RDS
-parquet_file <- here("data/summary/parquet/all_hindcasts.parquet")
-rds_file <- here("data/summary/all_hindcasts.rds")
+# Per-site counts: built from two prepBetaRegData calls.
+# (1) "obs" call (default full_timeseries=FALSE, min.prev=3) gives the 30
+#     observed sites with the same filtering as production model fits, so
+#     cal+val totals here match the model-input counts in the Methods.
+# (2) "new" call (full_timeseries=TRUE, min.prev=0) restores the 13
+#     held-out new-sites that have no cal samples but contribute to
+#     new-site validation.
+per_site_counts <- function(rank.df, abundance_col) {
+	obs <- prepBetaRegData(rank.df = rank.df, min.prev = 3,
+												 min.date = CAL_MIN, max.date = VAL_MAX)
+	new <- prepBetaRegData(rank.df = rank.df, min.prev = 0,
+												 min.date = CAL_MIN, max.date = VAL_MAX,
+												 full_timeseries = TRUE)
 
-if (file.exists(parquet_file)) {
-  cat("Using Parquet file for memory efficiency...\n")
-  hindcast_in <- arrow::read_parquet(parquet_file)
-} else if (file.exists(rds_file)) {
-  cat("Parquet file not found, using RDS file...\n")
-  hindcast_in <- readRDS(rds_file)
-} else {
-  stop("Neither Parquet nor RDS hindcast files found!")
+	jan2018 <- unique(obs$truth.plot.long$timepoint[
+										obs$truth.plot.long$dateID == "201801"])[1]
+
+	obs_counts <- obs$sample_values %>%
+		filter(!is.na(.data[[abundance_col]])) %>%
+		mutate(period = ifelse(timepoint <= jan2018, "cal", "val")) %>%
+		group_by(siteID, period) %>% tally() %>%
+		pivot_wider(names_from = period, values_from = n, values_fill = 0)
+
+	new_site_ids <- setdiff(unique(new$sample_values$siteID),
+													unique(obs$sample_values$siteID))
+	new_counts <- new$sample_values %>%
+		filter(siteID %in% new_site_ids, !is.na(.data[[abundance_col]])) %>%
+		group_by(siteID) %>% tally(name = "val") %>%
+		mutate(cal = 0L) %>% select(siteID, cal, val)
+
+	bind_rows(obs_counts, new_counts) %>%
+		mutate(cal = ifelse(cal == 0, NA_integer_, cal),
+					 val = ifelse(val == 0, NA_integer_, val))
 }
 
-# Subset data from a bacterial group and fungal group since sample sizes differ slightly
-hindcast_201511_201801 <- hindcast_in %>% filter(model_name=="env_cycl" & taxon %in% c("ectomycorrhizal", "copiotroph"))
+bac_counts <- per_site_counts(abun_16s$copiotroph, "copiotroph") %>%
+	rename(`Calibration bacterial samples` = cal,
+				 `Validation bacterial samples`  = val)
+fun_counts <- per_site_counts(abun_its$ectomycorrhizal, "ectomycorrhizal") %>%
+	rename(`Calibration fungal samples` = cal,
+				 `Validation fungal samples`  = val)
 
-# How many plot data points for forecast validation ? #424
-n_newtime_plot_obs = hindcast_201511_201801 %>% filter(new_site==F & !is.na(truth)) %>%
-	select(plotID, dateID) %>% distinct() %>% tally
+bac_site_n     <- bac_counts %>% select(siteID, `Calibration bacterial samples`)
+val_bac_site_n <- bac_counts %>% select(siteID, `Validation bacterial samples`)
+fun_site_n     <- fun_counts %>% select(siteID, `Calibration fungal samples`)
+val_fun_site_n <- fun_counts %>% select(siteID, `Validation fungal samples`)
 
-# How many plot data points for out-of-sample (new-site) validation? #162
-n_newsite_plot_obs = hindcast_201511_201801 %>% filter(new_site==T & !is.na(truth)) %>%
-	select(plotID, dateID) %>% distinct() %>% tally
-
-# How many samples in entire dataset? #6005 for fungi
-abun_its = readRDS(here("data/clean/groupAbundances_ITS_2023.rds"))
-unique(abun_its$phylum_fun$sampleID) %>% length
-
-# How many samples in entire dataset? #6080 for bacteria
-abun_16s = readRDS(here("data/clean/groupAbundances_16S_2023.rds"))
-unique(abun_16s$phylum_bac$sampleID) %>% length
-
-calibration = hindcast_201511_201801 %>% filter(fcast_period == "calibration" & !is.na(truth))
-
-
-# How many samples are used for calibration? #3128 for bacteria
-model.inputs_bac <- prepBetaRegData(rank.df = abun_16s$copiotroph,
-														 min.prev = 3,
-														 min.date = "20150101",
-														 max.date = "20180101")
-nrow(model.inputs_bac$y)
-
-# How many unique plot/dates does this amount to? #1283
-model.inputs_bac$truth.plot.long %>% filter(!is.na(truth)) %>%
-	select(plotID, dateID) %>% distinct() %>% tally
-
-# How many samples are used for calibration? #2705 for bacteria
-model.inputs_fun <- prepBetaRegData(rank.df = abun_its$ectomycorrhizal,
-																		min.prev = 3,
-																		min.date = "20150101",
-																		max.date = "20180101")
-nrow(model.inputs_fun$y)
-
-# How many unique plot/dates does this amount to? #1213
-model.inputs_fun$truth.plot.long %>% filter(!is.na(truth)) %>%
-	select(plotID, dateID) %>% distinct() %>% tally
-
-# Now get sample sizes per site to create site table
-fun_site_n = model.inputs_fun$sample_values %>% filter(!is.na(other)) %>% group_by(siteID) %>% distinct() %>% tally(name = "Calibration fungal samples")
-bac_site_n = model.inputs_bac$sample_values %>% filter(!is.na(other)) %>% group_by(siteID) %>% distinct() %>% tally(name = "Calibration bacterial samples")
-
-
-
-val_model_inputs_bac <- prepBetaRegData(rank.df = abun_16s$copiotroph,
-																				min.prev = 0,
-																				min.date = "20150101",
-																				max.date = "20200101",
-																				full_timeseries = T)
-val_model_inputs_fun <- prepBetaRegData(rank.df = abun_its$ectomycorrhizal,
-																				min.prev = 0,
-																				min.date = "20150101",
-																				max.date = "20200101",
-																				full_timeseries = T)
-# Now get sample sizes per site to create site table
-val_fun_site_n = val_model_inputs_fun$sample_values %>% filter(!is.na(other)) %>%
-	filter(!plot_date %in% model.inputs_fun$sample_values$plot_date) %>%
-	group_by(siteID) %>% distinct() %>% tally(name = "Validation fungal samples")
-val_bac_site_n = val_model_inputs_bac$sample_values %>% filter(!is.na(other)) %>%
-	filter(!plot_date %in% model.inputs_bac$sample_values$plot_date) %>%
-	group_by(siteID) %>% distinct() %>% tally(name = "Validation bacterial samples")
-
-val_samples <- merge(val_bac_site_n, val_fun_site_n, all=T)
-fieldsites_samples <- merge(fieldsites_samples, val_samples, all=T)
-
-
-# newsite_n = hindcast_201511_201801 %>% filter(new_site==T & !is.na(truth)) %>% select(siteID) %>% distinct %>% mutate("Calibration fungal samples" = 0,
-# 																																																											"Calibration bacterial samples" = 0)
-
-fieldsites_samples <- merge(bac_site_n, fun_site_n, all=T)
-fieldsites_samples <- merge(fieldsites_samples, val_samples, all=T)
-#fieldsites_samples <- merge(fieldsites_samples, newsite_n, all=T)
-fieldsites_samples <- merge(fieldsites_samples, fieldsites_raw, all=T) %>%
-	filter(!(is.na(`Validation bacterial samples`) & is.na(`Calibration bacterial samples`)))  %>%
+fieldsites_samples <- merge(bac_site_n, fun_site_n, all = TRUE) %>%
+	merge(merge(val_bac_site_n, val_fun_site_n, all = TRUE), all = TRUE) %>%
+	merge(fieldsites_raw, all = TRUE) %>%
+	filter(!(is.na(`Validation bacterial samples`) &
+					 is.na(`Calibration bacterial samples`) &
+					 is.na(`Validation fungal samples`) &
+					 is.na(`Calibration fungal samples`))) %>%
 	rename("Land cover (NLCD class)" = "nlcd")
 
+# Reorder columns to match the existing Forecasting_TableS1.csv layout
+fieldsites_samples <- fieldsites_samples[, c(
+	"siteID",
+	"Calibration bacterial samples", "Calibration fungal samples",
+	"Validation bacterial samples", "Validation fungal samples",
+	"site name", "MAT", "MAP", "latitude", "longitude",
+	"Land cover (NLCD class)", "ecoregion")]
 
-# Table S1
-write.csv(fieldsites_samples, here("figures", "table_S1.csv"))
+write.csv(fieldsites_samples, here("figures", "Forecasting_TableS1.csv"),
+					row.names = FALSE)
 
 kable(fieldsites_samples, "html") %>%
 	kable_styling(bootstrap_options = c("striped", "hover")) %>%
 	cat(., file = here("figures", "sample_size.html"))
 
-# For reporting in Methods
-sum(fieldsites_samples$`Calibration fungal samples`, na.rm=T)
-sum(fieldsites_samples$`Calibration bacterial samples`, na.rm=T)
-
-sum(fieldsites_samples$`Validation fungal samples`, na.rm=T)
-sum(fieldsites_samples$`Validation bacterial samples`, na.rm=T)
+cat("Wrote figures/Forecasting_TableS1.csv with", nrow(fieldsites_samples), "sites\n")
+cat("Totals (calibration", CAL_MIN, "->", CAL_MAX, "):\n")
+cat("  Bacterial:", sum(fieldsites_samples$`Calibration bacterial samples`, na.rm = TRUE), "\n")
+cat("  Fungal:   ", sum(fieldsites_samples$`Calibration fungal samples`,    na.rm = TRUE), "\n")
+cat("Totals (validation", CAL_MAX, "->", VAL_MAX, "):\n")
+cat("  Bacterial:", sum(fieldsites_samples$`Validation bacterial samples`, na.rm = TRUE), "\n")
+cat("  Fungal:   ", sum(fieldsites_samples$`Validation fungal samples`,    na.rm = TRUE), "\n")

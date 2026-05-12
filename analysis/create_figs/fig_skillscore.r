@@ -60,7 +60,7 @@ skill_df <- site_scores %>%
   )
 
 # ── Shared aesthetics ─────────────────────────────────────────────────────────
-kingdom_colors <- c(Bacteria = "#E69F00", Fungi = "#0072B2")
+# kingdom_colors comes from source.R
 model_colors   <- c("Cycl. only" = "#0072B2", "Env. only" = "#D55E00",
                     "Env. + Cycl." = "#009E73")
 site_colors    <- c("Observed\nsite"        = "#009E73",

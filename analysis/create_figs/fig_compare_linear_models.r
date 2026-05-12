@@ -45,7 +45,7 @@ if (nrow(scatter_data) > 0 && "pretty_group" %in% names(scatter_data) &&
   scatter_overall =
     ggplot(scatter_data, aes(x = med, y = truth, group = model_name)) +
     geom_point(aes(color = pretty_group), alpha = 0.15, show.legend = FALSE) +
-    scale_color_manual(values = c(Bacteria = "#F8766D", Fungi = "#00BFC4"), na.value = "gray50") +
+    scale_color_manual(values = kingdom_colors, na.value = "gray50") +
     geom_smooth(method = "lm", se = FALSE, color = 1) +
     theme_classic(base_size = 18) +
     facet_grid(pretty_group ~ model_name, labeller = labeller(model_name = model.labs), scales = "free") +
@@ -85,7 +85,7 @@ if (!is.null(scatter_overall)) {
         geom_point(shape = 21, fill = "white", size = 1.5, alpha = 0.5,
                    position = position_jitterdodge(dodge.width = 0.9, jitter.width = 0.15),
                    show.legend = FALSE) +
-        scale_fill_manual(values = c(Bacteria = "#F8766D", Fungi = "#00BFC4")) +
+        scale_fill_manual(values = kingdom_colors) +
         facet_grid(pretty_group ~ ., scales = "free_y") +
         scale_x_discrete(labels = model.labs) +
         theme_classic(base_size = 16) +
