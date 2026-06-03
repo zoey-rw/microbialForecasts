@@ -4,11 +4,11 @@
 library(daymetr)
 library(dplyr)
 
-sites_locs <- read.csv("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data_construction/field-sites.csv")
+sites_locs <- read.csv(here::here("data_construction/field-sites.csv"))
 
-output.path.monthly <- "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/daymet_monthly.rds"
-output.path.weekly <- "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/daymet_weekly.rds"
-output.path.daily <- "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/daymet_daily.rds"
+output.path.monthly <- here::here("data/clean/daymet_monthly.rds")
+output.path.weekly <- here::here("data/clean/daymet_weekly.rds")
+output.path.daily <- here::here("data/clean/daymet_daily.rds")
 
 sites_locs$lat <- unlist(lapply(strsplit(as.character(sites_locs$`Lat..Long.`), split = ",  ", fixed=T), "[[", 1))
 sites_locs$lon <- unlist(lapply(strsplit(as.character(sites_locs$`Lat..Long.`), split = ",  ", fixed=T), "[[", 2))

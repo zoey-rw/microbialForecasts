@@ -1,7 +1,7 @@
 # Creates the "site_effect_predictors.rds" file used to analyze model results
 
 
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source(here::here("source.R"))
 pacman::p_load(stringr)
 
 

@@ -12,7 +12,7 @@ source('/projectnb/talbot-lab-data/zrwerbin/NEFI_microbe/NEFI_functions/crib_fun
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/createTaxFunction.r")
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/addBacterialFunction.r")
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/binTaxGroups.r")
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
+source(here::here("functions/helperFunctions.r"))
 
 #### 16S #####
 
@@ -26,11 +26,11 @@ master_ps <- merge_phyloseq(legacy_ps, recent_ps)
 colnames(tax_table(master_ps)) <- tolower(colnames(tax_table(master_ps)))
 
 # Assign functional groups
-tax_ref <- createTaxFunction(ref.path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/reference_data/bacteria_func_groups.csv", 
-														 N.path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/reference_data/Npathways_Albright2018.csv", 
-														 C.path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/reference_data/cellulolytic_Berlemont.csv",
+tax_ref <- createTaxFunction(ref.path = here::here("data/reference_data/bacteria_func_groups.csv"), 
+														 N.path = here::here("data/reference_data/Npathways_Albright2018.csv"), 
+														 C.path = here::here("data/reference_data/cellulolytic_Berlemont.csv"),
 														 Naylor.path = "/projectnb2/talbot-lab-data/zrwerbin/random_data/Naylor_functional_groups/functional_module_df.rds",
-														 out.path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/tax_function_ref.csv")
+														 out.path = here::here("data/tax_function_ref.csv"))
 tax_df = as.data.frame(as(tax_table(master_ps), "matrix"))
 new_tax <- addBacterialFunction(tax = tax_df[,!colnames(tax_df) %in% "kingdom"], 
 																tax_fun_ref = tax_ref)
@@ -109,7 +109,7 @@ out_top10 <- out_top10[which(!rowSums(out_top10) > 1),]
 out_top10$Other <- 1-rowSums(out_top10)
 ps.phy.filt <- prune_samples(sample_names(ps.filt) %in% rownames(out_top10), ps.filt)
 rank.df <- cbind(sample_data(ps.phy.filt)[,c("siteID","plotID","dateID","sampleID","dates","plot_date")], out_top10)
-#saveRDS(rank.df,"/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/phylum_bac_abundances.rds")
+#saveRDS(rank.df,here::here("data/phylum_bac_abundances.rds"))
 
 
 # cal.out.bac <- list()
@@ -130,5 +130,5 @@ rank.df <- cbind(sample_data(ps.phy.filt)[,c("siteID","plotID","dateID","sampleI
 names(cal.out.bac)[1:5] <- paste0(names(cal.out.bac)[1:5], "_bac")
 names(val.out.bac)[1:5] <- paste0(names(val.out.bac)[1:5], "_bac")
 
-saveRDS(cal.out.bac, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_16S_10tax.rds")
-saveRDS(val.out.bac, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_16S_10tax.rds")
+saveRDS(cal.out.bac, here::here("data/clean/cal_groupAbundances_16S_10tax.rds"))
+saveRDS(val.out.bac, here::here("data/clean/val_groupAbundances_16S_10tax.rds"))

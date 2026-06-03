@@ -9,7 +9,7 @@ library(cutpointr)
 library(tidyverse)
 library(gridExtra)
 
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
+source(here::here("functions/helperFunctions.r"))
 
 # Code outline: assumes you have already downloaded raw sensor data and sample data
 ## 1. Download bulk density/particle size data ##
@@ -31,11 +31,11 @@ source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperF
 # # Combine particle size and bulk density tables
 # bd_ps <- merge(bd, ps[,c("horizonID","coarseFragPercent")], by = "horizonID", all.x = T)
 # bd_ps$fineFragPercent <- 1 - bd_ps$coarseFragPercent
-# saveRDS(bd_ps, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/bulkDensity_allsites.rds")
+# saveRDS(bd_ps, here::here("data/raw/bulkDensity_allsites.rds"))
 
 ##### 2. Calculate bulk density for each plot/horizon #####
 
-bd_ps <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/bulkDensity_allsites.rds")
+bd_ps <- readRDS(here::here("data/raw/bulkDensity_allsites.rds"))
 
 # label horizons by O or M
 bd_ps$horizon <- ifelse(grepl("O", bd_ps$horizonName), "O", "M")
@@ -67,7 +67,7 @@ site_plot_bd <- bd_shallow %>% group_by(siteID, horizon) %>%  #depth) %>%
 ##### 3. Convert gravimetric to volumetric soil moisture #####
 
 # Read in soil samples
-dat_soil <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilData.rds")
+dat_soil <- readRDS(here::here("data/clean/soilData.rds"))
 dat_soil$day <- as.Date(dat_soil$collectDate)
 dat_soil$date_time <- substr(dat_soil$collectDate, 1, 13)
 
@@ -123,7 +123,7 @@ horizon_depth_key <- all_horizon_depths[all_horizon_depths$bulkDensTopDepth < 30
 horizon_depth_key <- bind_rows(key1, key2, horizon_depth_key)
 
 # Read in soil moisture sensor locations
-sensors <- read.csv("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEONSoilMoist_daily/rawMoistStacked/stackedFiles/sensor_positions_00094.csv")
+sensors <- read.csv(here::here("data/raw/NEONSoilMoist_daily/rawMoistStacked/stackedFiles/sensor_positions_00094.csv"))
 sensors$sensorID <- paste(sensors$siteID, sensors$HOR.VER, sep ="_")
 sensors$sensorDepth <- abs(sensors$zOffset*100)
 
@@ -143,8 +143,8 @@ sensors.to.keep <- fuzzy_left_join(
 ##### 5. Match up sensor data with sample data, by hour #####
 
 # Read in soil moisture, and subset to shallow sensors
-daily.SWC <- data.table::fread("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEONSoilMoist_daily/rawMoistStacked.rds/stackedFiles/SWS_30_minute.csv")
-daily.SWC <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEONSoilMoist_raw_allsites.rds")
+daily.SWC <- data.table::fread(here::here("data/raw/NEONSoilMoist_daily/rawMoistStacked.rds/stackedFiles/SWS_30_minute.csv"))
+daily.SWC <- readRDS(here::here("data/raw/NEONSoilMoist_raw_allsites.rds"))
 
 daily.SWC$sensorID <- paste0(daily.SWC$siteID, "_", daily.SWC$horizontalPosition, ".", daily.SWC$verticalPosition) # can delete later
 daily.SWC$date_time <-  substr(daily.SWC$startDateTime, 1, 13)

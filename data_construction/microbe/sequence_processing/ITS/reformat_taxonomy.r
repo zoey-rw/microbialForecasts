@@ -44,11 +44,11 @@ ps_legacy <- phyloseq(otu_table(seqtab_legacy, taxa_are_rows = F), tax_table(as.
 
 # Combine legacy and recent!
 ps_its <- merge_phyloseq(ps_recent, ps_legacy)
-saveRDS(ps_its, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_ITS.rds")
+saveRDS(ps_its, here::here("data/clean/phyloseq_ITS.rds"))
 
 
 
-ps_its <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_ITS.rds")
+ps_its <- readRDS(here::here("data/clean/phyloseq_ITS.rds"))
 
 ## Get abundances
 out <- get_tax_level_abun(ps_its,
@@ -103,8 +103,8 @@ saveRDS(out.fun_save, here("data/clean/groupAbundances_ITS_2023.rds"))
 
 
 # Append previous fg abundances since they didn't change
-old_cal = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS_2021.rds")
-old_val = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_ITS_2021.rds")
+old_cal = readRDS(here::here("data/clean/cal_groupAbundances_ITS_2021.rds"))
+old_val = readRDS(here::here("data/clean/val_groupAbundances_ITS_2021.rds"))
 
 fg_list = list()
 for (i in 6:length(old_cal)){

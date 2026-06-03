@@ -42,11 +42,11 @@ source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/help
 # sample_data(recent_ps_ITS) <- new_sample_dat_ITS
 # colnames(tax_table(legacy_ps_ITS)) <- tolower(colnames(tax_table(legacy_ps_ITS)))
 # ps_ITS <- merge_phyloseq(legacy_ps_ITS, recent_ps_ITS)
-# saveRDS(list(ps_16S, ps_ITS), "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_16S_ITS.rds")
+# saveRDS(list(ps_16S, ps_ITS), here::here("data/clean/phyloseq_16S_ITS.rds"))
 
 # Read in 16S and ITS phyloseq objects
-ps_16S_orig <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_16S_ITS.rds")[[1]]
-ps_ITS_orig <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_16S_ITS.rds")[[2]]
+ps_16S_orig <- readRDS(here::here("data/clean/phyloseq_16S_ITS.rds"))[[1]]
+ps_ITS_orig <- readRDS(here::here("data/clean/phyloseq_16S_ITS.rds"))[[2]]
 
 # Align the samples from each phyloseq objects
 sample_names(ps_16S_orig) <- make.unique(sample_data(ps_16S_orig)$sample)
@@ -162,8 +162,8 @@ return(conn.merged)
 connectivity.out <- do.call(rbind, connectivity.out.list)
 #cohesion.out.list <- mclapply(1:35, calc_site_cohesion, mc.cores = 28)
 
-#saveRDS(cohesion.out, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cohesion_all_samples.rds")
-saveRDS(connectivity.out, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/connectivity_all_taxa.rds")
+#saveRDS(cohesion.out, here::here("data/clean/cohesion_all_samples.rds"))
+saveRDS(connectivity.out, here::here("data/clean/connectivity_all_taxa.rds"))
 
 
 stopCluster(cl)
@@ -173,7 +173,7 @@ stopCluster(cl)
 
 # testing cohesion...
 library(tidyverse)
-cohesion.out <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cohesion_all_samples.rds")
+cohesion.out <- readRDS(here::here("data/clean/cohesion_all_samples.rds"))
 coh.df <- cbind(cohesion.out, parseNEONsampleIDs(cohesion.out$sampleID)) %>% select(-c(1))
 
 library(ggpubr)
@@ -243,7 +243,7 @@ return(coh_plot_out)
 
 
 
-connectivity.out <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/connectivity_all_taxa.rds")
+connectivity.out <- readRDS(here::here("data/clean/connectivity_all_taxa.rds"))
 plot(NegativeConnectedness_orig_16S ~ PositiveConnectedness_orig_16S, connectivity.out)
 
 names(connectivity.out) <- c("PositiveConnectedness", "NegativeConnectedness", "Metric")

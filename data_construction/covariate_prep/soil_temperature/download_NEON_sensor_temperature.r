@@ -4,8 +4,8 @@
 library(neonstore)
 library(neonUtilities)
 library(data.table)
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/custom_neonstore.r")
-store_dir = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/neon_store/"
+source(here::here("functions/custom_neonstore.r"))
+store_dir = here::here("data/raw/neon_store/")
 token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJhdWQiOiJodHRwczovL2RhdGEubmVvbnNjaWVuY2Uub3JnL2FwaS92MC8iLCJzdWIiOiJ6cndlcmJpbkBidS5lZHUiLCJzY29wZSI6InJhdGU6cHVibGljIiwiaXNzIjoiaHR0cHM6Ly9kYXRhLm5lb25zY2llbmNlLm9yZy8iLCJleHAiOjE3NTc4ODg2NzAsImlhdCI6MTYwMDIwODY3MCwiZW1haWwiOiJ6cndlcmJpbkBidS5lZHUifQ.8eW8vxUOiton-kQ_Xyvva0QSHD_BDd2E5IGeNKW3WHib-m7UpTnEhGFAUlAHGdsUyz-dKE1jMOAGS5A_NRYXGg"
 
 # Regex to only keep the first 3 depths, and the 30-minute product
@@ -35,7 +35,7 @@ dt[, `:=` (sensorID = paste0(siteID, "_", horizontalPosition, ".", verticalPosit
            day = as.Date(substr(as.character(startDateTime), 1, 10)),
            date_time = gsub(" ", "T", substr(startDateTime, 1, 13))
 )]
-saveRDS(dt, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEONSoilTemp_raw_allsites.rds")
+saveRDS(dt, here::here("data/raw/NEONSoilTemp_raw_allsites.rds"))
 
 
 

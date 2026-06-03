@@ -13,14 +13,14 @@ wherenearest <- function(myPoint, allPoints){
 }
 
 # Get NEON data for relevant sites.
-neon <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/NEONSoilMois_monthly_allsites.rds")
+neon <- readRDS(here::here("data/clean/NEONSoilMois_monthly_allsites.rds"))
 
 # Pull out sites/months of interest.
 sites <- sort(unique(neon$siteID))
 months <- gsub("-","", sort(unique(neon$month)))
 
 # Use descending orbit bc has more data points
-allfiles <- list.files("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/SMOS/DES/", full.names = T)
+allfiles <- list.files(here::here("data/raw/SMOS/DES/"), full.names = T)
 
 # Loop through all months and all sites
 out.list <- list()
@@ -46,4 +46,4 @@ for (m in months){
   out.list[[m]] <- month.df
 }
 out <- do.call(rbind, out.list)
-saveRDS(out, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/SMOS/monthly_SMOS_allsites.rds")
+saveRDS(out, here::here("data/raw/SMOS/monthly_SMOS_allsites.rds"))

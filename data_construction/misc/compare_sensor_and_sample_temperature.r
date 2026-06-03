@@ -1,7 +1,7 @@
 
 # 16 million rows. oy vey.
-NEON_temp_30m <- read.csv("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEONSoilTemp_daily/dailyTempStacked.rds/stackedFiles/ST_30_minute.csv")
-NEON_temp_30m <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEONSoilTemp_raw_allsites.rds")
+NEON_temp_30m <- read.csv(here::here("data/raw/NEONSoilTemp_daily/dailyTempStacked.rds/stackedFiles/ST_30_minute.csv"))
+NEON_temp_30m <- readRDS(here::here("data/raw/NEONSoilTemp_raw_allsites.rds"))
 NEON_temp_30m$sensorID <- paste0(NEON_temp_30m$siteID, "_", NEON_temp_30m$horizontalPosition, ".", NEON_temp_30m$verticalPosition)
 
 NEON_temp_30m$month <- substr(NEON_temp_30m$startDateTime, 1, 7)
@@ -13,7 +13,7 @@ NEON_temp_30m$date_time <-  substr(NEON_temp_30m$startDateTime, 1, 13)
 NEON_temp_30m$date_time <- gsub(" ", "T", NEON_temp_30m$date_time)
 
 # Decide which sensor/depth is most correlated with observations
-dat_soil <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilData.rds")
+dat_soil <- readRDS(here::here("data/clean/soilData.rds"))
 dat_soil$day <- as.Date(dat_soil$collectDate)
 dat_soil$date_time <- substr(dat_soil$collectDate, 1, 13)
 dat_soil <- dat_soil[which(!is.na(dat_soil$soilTemp)),]
@@ -64,7 +64,7 @@ shallow <- sensor_by_site[sensor_by_site$depth %in% c(1)]
 # sensors <- NEON_temp_allsites$sensor_positions_00041[which(!is.na(soil.raw$sensor_positions_00041$referenceLatitude)),]
 # sensors$sensorID <- paste(sensors$siteID, sensors$HOR.VER, sep ="_")
 # sensors$sensorDepth <- abs(sensors$zOffset*100)
-# saveRDS(sensors, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEONSoilTemp_daily/sensorLocations.rds")
+# saveRDS(sensors, here::here("data/raw/NEONSoilTemp_daily/sensorLocations.rds"))
 # 
 # 
 

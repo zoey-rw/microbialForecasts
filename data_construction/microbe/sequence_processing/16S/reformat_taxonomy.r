@@ -1,11 +1,11 @@
 library(phyloseq)
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
+source(here::here("functions/helperFunctions.r"))
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/createTaxFunction.r")
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/addBacterialFunction.r")
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/binTaxGroups.r")
 # RECENT DATA #
 # Load combined sequence table and taxonomic table
-seqtab_orig <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/MCC_otu_16S.rds")
+seqtab_orig <- readRDS(here::here("data/raw/MCC_otu_16S.rds"))
 taxa_orig <- read.csv("/projectnb/microbiome/zrwerbin/NEON_amplicon/16S/NEON_16S_taxonomy/final_tax_table.csv", header=F, sep="\t")
 
 # Prep for phyloseq
@@ -21,7 +21,7 @@ ps_recent <- phyloseq(otu_table(seqtab_orig, taxa_are_rows = F),
 
 # LEGACY #
 # Load combined sequence table and taxonomic table
-seqtab_legacy <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/MCC_otu_16S_legacy.rds")
+seqtab_legacy <- readRDS(here::here("data/raw/MCC_otu_16S_legacy.rds"))
 taxa_legacy <- read.csv("/projectnb/dietzelab/zrwerbin/NEON_soil_microbe_processing/data/outputs/legacy_anomaly_tax_16S/final_tax_table.csv", header=F, sep="\t")
 
 # Prep for phyloseq
@@ -39,11 +39,11 @@ ps <- merge_phyloseq(ps_recent, ps_legacy_prune)
 
 
 # Assign functional groups
-tax_ref <- createTaxFunction(ref.path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/reference_data/bacteria_func_groups.csv",
-														 N.path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/reference_data/Npathways_Albright2018.csv",
-														 C.path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/reference_data/cellulolytic_Berlemont.csv",
+tax_ref <- createTaxFunction(ref.path = here::here("data/reference_data/bacteria_func_groups.csv"),
+														 N.path = here::here("data/reference_data/Npathways_Albright2018.csv"),
+														 C.path = here::here("data/reference_data/cellulolytic_Berlemont.csv"),
 														 Naylor.path = "/projectnb2/talbot-lab-data/zrwerbin/random_data/Naylor_functional_groups/functional_module_df.rds",
-														 out.path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/tax_function_ref.csv")
+														 out.path = here::here("data/tax_function_ref.csv"))
 tax_df = as.data.frame(as(tax_table(ps), "matrix"))
 new_tax <- addBacterialFunction(tax = tax_df[,!colnames(tax_df) %in% "Kingdom"],
 																tax_fun_ref = tax_ref)
@@ -57,10 +57,10 @@ names(dna) <- taxa_names(ps)
 ps <- merge_phyloseq(ps, dna)
 taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps)))
 ps
-saveRDS(ps, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_16S.rds")
+saveRDS(ps, here::here("data/clean/phyloseq_16S.rds"))
 
 
-ps <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_16S.rds")
+ps <- readRDS(here::here("data/clean/phyloseq_16S.rds"))
 # Make relative
 # ps.rel <- transform_sample_counts(ps, function(x) x/sum(x))
 # ps.filt = filter_taxa(ps.rel, function(x) sum(x) > .005, TRUE)
@@ -94,7 +94,7 @@ for (tax_rank in names(out)){
 	# organize by date
 	rank.df$dates <- as.Date(as.character(rank.df$dates), "%Y%m%d")
 	rank.df <- rank.df[order(rank.df$dates),]
-	# saveRDS(rank.df, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/genus_groupAbundances_16S.rds")
+	# saveRDS(rank.df, here::here("data/clean/genus_groupAbundances_16S.rds"))
 
 	out.bac[[tax_rank]] <- rank.df
 }
@@ -106,8 +106,8 @@ saveRDS(out.bac_save, here("data/clean/groupAbundances_16S_2023.rds"))
 
 
 # Append previous fg abundances since they didn't change
-old_cal = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_16S_2021.rds")
-old_val = readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_16S_2021.rds")
+old_cal = readRDS(here::here("data/clean/cal_groupAbundances_16S_2021.rds"))
+old_val = readRDS(here::here("data/clean/val_groupAbundances_16S_2021.rds"))
 
 fg_list = list()
 for (i in 7:length(old_cal)){

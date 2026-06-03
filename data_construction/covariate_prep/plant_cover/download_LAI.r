@@ -5,7 +5,7 @@ get_LAI <- function(
 	numeric_site_id = 1,
 	start_year = 2013,
 	end_year = 2020,
-	out_dir = '/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/modis/',
+	out_dir = here::here("data/raw/modis/"),
 	ncores=10,
 	field_site_info = con
 ){
@@ -56,7 +56,7 @@ get_LAI <- function(
 
 results <- Download_LAI(settings, start_year = 2013, 
 												end_year = 2020, 
-												out_dir = '/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/modis/')
+												out_dir = here::here("data/raw/modis/"))
 
 
 con <- read.csv("https://www.neonscience.org/sites/default/files/NEON_Field_Site_Metadata_20210928.csv")
@@ -66,7 +66,7 @@ for (s in 27:length(con$field_site_id)){
 	if(siteID=="NIWO") next()
 	print(paste("Downloading LAI for ", siteID))
 	out <- get_LAI(numeric_site_id = s, siteID = siteID, 
-								 out_dir = '/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/modis/', start_year = 2013, 
+								 out_dir = here::here("data/raw/modis/"), start_year = 2013, 
 								 end_year = 2020,
 								 ncores=10)
 	print(paste("Completed LAI for ", siteID))
@@ -74,13 +74,13 @@ for (s in 27:length(con$field_site_id)){
 
 
 
-bart <- load('/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/modis_test/BART.rds')
-load('/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/modis_test/BART.rds')
-save(out, file = '/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/modis_test/BART2.rds')
+bart <- load(here::here("data/raw/modis_test/BART.rds"))
+load(here::here("data/raw/modis_test/BART.rds"))
+save(out, file = here::here("data/raw/modis_test/BART2.rds"))
 
 # Turns out the RDS files are actually rdata, hence the approach below
 library(miceadds)
-myfiles = list.files("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/modis/","*.rds", full.names="TRUE")
+myfiles = list.files(here::here("data/raw/modis/"),"*.rds", full.names="TRUE")
 in_list <- list()
 for (i in 1:length(myfiles)){
 	print(myfiles[i])
@@ -92,4 +92,4 @@ for (i in 1:length(myfiles)){
 }
 lai_dat <- do.call(rbind, in_list)
 
-saveRDS(lai_dat, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/modis/LAI_allsites.rds")
+saveRDS(lai_dat, here::here("data/raw/modis/LAI_allsites.rds"))

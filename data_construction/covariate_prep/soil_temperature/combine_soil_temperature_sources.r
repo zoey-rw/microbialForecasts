@@ -6,11 +6,11 @@ library(merTools)
 library(ggplot2)
 
 # Read in NEON soil temp
-NEON_temp_monthly <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/NEONSoilTemp_monthly_allsites.rds")
+NEON_temp_monthly <- readRDS(here::here("data/clean/NEONSoilTemp_monthly_allsites.rds"))
 #NEON_temp_monthly <- NEON_temp_monthly %>% filter(!grepl("2020", dateID))
 
 # Read in daymet daily/weekly/monthly air temp 
-daymet_monthly <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/daymet_monthly.rds")
+daymet_monthly <- readRDS(here::here("data/clean/daymet_monthly.rds"))
 daymet_monthly <- daymet_monthly %>% filter(!dateID %in% c(201301, 201302, 201303, 201304, 201305)) %>% dplyr::rename(month = dateID)
 
 
@@ -91,7 +91,7 @@ soil.temperature.out$temperature_sd <- soil.temperature.out$temperature_sd_out/s
 
 
 
-saveRDS(soil.temperature.out, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/monthly_soil_temperature.rds")
+saveRDS(soil.temperature.out, here::here("data/clean/monthly_soil_temperature.rds"))
 
 
 # VISUALIIIIZE
@@ -101,7 +101,7 @@ p <- ggplot(soil.temperature.out, aes(x = date, y = temperature_out, color = sou
   guides(color = guide_legend(nrow = 1, byrow = TRUE, override.aes = list(size = 5, alpha = 1))) +
   ylab("Soil temperature") + xlab(NULL)
 p
-#ggsave(p, filename = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/figures/soil_temperature_calibration.png", device = "png", width = 15, height = 12, units = "in")
+#ggsave(p, filename = here::here("figures/soil_temperature_calibration.png"), device = "png", width = 15, height = 12, units = "in")
 
 # Plots look alright: 
 # Uncertainty is low for all sites. Daymet trends look incredibly similar to NEON trends.

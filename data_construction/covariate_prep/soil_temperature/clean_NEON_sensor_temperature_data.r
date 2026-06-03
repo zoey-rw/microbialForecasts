@@ -2,7 +2,7 @@ library(data.table)
 library(dplyr)
 
 # Load in massive dataset!
-NEON_temp_30m_orig <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEONSoilTemp_raw_allsites.rds")
+NEON_temp_30m_orig <- readRDS(here::here("data/raw/NEONSoilTemp_raw_allsites.rds"))
 
 # subset to shallowest depth, because this has the closest correlation with sampled temperature values.
 NEON_temp_30m <- NEON_temp_30m_orig[NEON_temp_30m_orig$verticalPosition %in% c(501,1),]
@@ -75,7 +75,7 @@ for (s in 1:length(sites)) { #loop through all sites
   NEON_temp_monthly_allsite[[s]] <- NEON_temp_monthly
 }
 NEON_temp_monthly_all <- do.call(rbind, NEON_temp_monthly_allsite)  
-saveRDS(NEON_temp_monthly_all, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/NEONSoilTemp_monthly_allsites.rds")
+saveRDS(NEON_temp_monthly_all, here::here("data/clean/NEONSoilTemp_monthly_allsites.rds"))
 
 
 
@@ -153,6 +153,6 @@ saveRDS(NEON_temp_monthly_all, "/projectnb2/talbot-lab-data/zrwerbin/temporal_fo
 #   NEON_temp_weekly_allsite[[s]] <- NEON_temp_weekly
 # }
 # NEON_temp_weekly_all <- do.call(rbind, NEON_temp_weekly_allsite)
-# saveRDS(NEON_temp_weekly_all, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/NEONSoilTemp_weekly_5sites.rds")
+# saveRDS(NEON_temp_weekly_all, here::here("data/clean/NEONSoilTemp_weekly_5sites.rds"))
 
   

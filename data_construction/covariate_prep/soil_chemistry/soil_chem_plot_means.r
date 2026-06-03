@@ -11,9 +11,9 @@ dat_sequenceMetadata <- read.csv("/projectnb/dietzelab/zrwerbin/NEON_soil_microb
 # dat_sequenceMetadata <- dat_sequenceMetadata[!duplicated(dat_sequenceMetadata$geneticSampleID),]
 
 # Read in soil sample data
-dat_soil <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/soilSample_data_allsites.rds")
+dat_soil <- readRDS(here::here("data/raw/soilSample_data_allsites.rds"))
 
-div_dat <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds")$full %>% select(siteID, plotID, horizon) %>% distinct()
+div_dat <- readRDS(here::here("data/clean/alpha_div_ITS.rds"))$full %>% select(siteID, plotID, horizon) %>% distinct()
 
 # plot(dat_soil$pH, dat_soil$CNratio)
 # plot(dat_soil$pH, dat_soil$organicCPercent)
@@ -82,7 +82,7 @@ dom_horizons <- dat_soil %>% distinct(siteID, dateID, horizon) %>%
 duped <- dom_horizons[duplicated(dom_horizons$siteID),]$siteID
 dom_duped <- dom_horizons[dom_horizons$siteID %in% duped & dom_horizons$horizon == "M",]
 dom_horizons_out <- rbind(dom_horizons[!dom_horizons$siteID %in% duped,], dom_duped)
-saveRDS(dom_horizons_out, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/dominantHorizonsSite.rds")
+saveRDS(dom_horizons_out, here::here("data/clean/dominantHorizonsSite.rds"))
 # Subset to the most dominant horizon for each site 
 soil.chem.out <- core.level.plot %>% filter(paste(siteID, horizon) %in% paste(dom_horizons_out$siteID, dom_horizons_out$horizon))
 
@@ -112,7 +112,7 @@ soil.chem.out.plot <- soil.chem.out %>% distinct(siteID, plotID, final_pH, final
 # soil.chem.out.plot <- rbind(soil.chem.out.plot, c("OSBS", "OSBS_006", osbs_pH, osbs_pH_sd, osbs_pC, osbs_pC_sd))
 
 #save output.----
-saveRDS(soil.chem.out.plot, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")
+saveRDS(soil.chem.out.plot, here::here("data/clean/soilChemPlot.rds"))
 
 
 

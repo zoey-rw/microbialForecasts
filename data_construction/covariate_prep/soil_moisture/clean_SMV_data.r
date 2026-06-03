@@ -5,7 +5,7 @@ library(tidyr)
 
 #### 1. GET/PREP SMV DATA ####
 # Directory where I put all of Jack's files
-smv_dir <- "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/DAAC_SMV/"
+smv_dir <- here::here("data/raw/DAAC_SMV/")
 files <- list.files(smv_dir, full.names = T)
 
 # Get list of NEON fieldsites/locations
@@ -42,7 +42,7 @@ smv_month <- smv_all %>%
   group_by(siteID, month) %>%
   dplyr::summarise(across(starts_with(c("mean", "min", "max")), ~mean(.x, na.rm = TRUE)), .groups="keep")
 smv_month_long <- smv_month %>% pivot_longer(cols = 3:17)
-saveRDS(smv_month, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/DAAC_SMV/monthly_SMV_allsites.rds")
+saveRDS(smv_month, here::here("data/raw/DAAC_SMV/monthly_SMV_allsites.rds"))
 
 
 ####################################
@@ -78,7 +78,7 @@ sites <- sort(unique(merged$siteID))
 months <- gsub("-","", sort(unique(merged$month)))
 months <- months[which(months < "201512")]
 # Use descending orbit bc has more data points
-allfiles <- list.files("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/SMOS/DES/", full.names = T)
+allfiles <- list.files(here::here("data/raw/SMOS/DES/"), full.names = T)
 out.list <- list()
 for (m in months){
     file <- grep(m, allfiles)
