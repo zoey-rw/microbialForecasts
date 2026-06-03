@@ -357,98 +357,33 @@ target_years <- if(length(available_years) > 0) {
 }
 cat("Processing years:", paste(target_years, collapse=", "), "\n")
 cat("Total years to process:", length(target_years), "\n")
-chunk_results <- list()
-
-for(year in target_years) {
-  cat("Processing year:", year, "\n")
-  
-  # Use Mean column if 50% column doesn't exist (driver uncertainty models)
-  median_col <- if("50%" %in% names(plot_estimates)) "50%" else "Mean"
-  
-  year_num <- as.numeric(year)
-  
-  # Diagnostic: count rows before filtering
-  year_rows_before <- plot_estimates %>%
-    filter(year == year_num)
-  cat("  Rows before NA filter:", nrow(year_rows_before), "\n")
-  
-  # Filter to this year and only keep rows with non-NA Mean (needed for peak detection)
-  # Note: We already filtered to rows with complete metadata earlier
-  year_data <- plot_estimates %>%
-    filter(year == year_num) %>%
-    filter(!is.na(.data[[median_col]]))  # Filter out NA Mean values (needed for peak detection)
-  
-  cat("  Rows after NA filter:", nrow(year_data), "\n")
-  cat("  Unique model_ids:", length(unique(year_data$model_id)), "\n")
-  cat("  Unique siteIDs:", length(unique(year_data$siteID)), "\n")
-  
-  year_data <- year_data %>%
-    group_by(model_id, siteID, year, month, dates) %>%
-    summarize(mean_modeled_abun = mean(.data[[median_col]], na.rm=T), .groups = "drop") %>%
-    filter(!is.na(mean_modeled_abun))  # Filter out NA after summarization
-  
-  cat("  Rows after summarization:", nrow(year_data), "\n")
-  
-  year_data <- year_data %>%
-    group_by(model_id, siteID, year) %>%
-    filter(mean_modeled_abun == max(mean_modeled_abun, na.rm=T))
-  
-  cat("  Rows after peak detection (max per model/site/year):", nrow(year_data), "\n")
-  cat("  Unique model_ids after peak detection:", length(unique(year_data$model_id)), "\n")
-  
-  if(nrow(year_data) > 0) {
-    chunk_results[[year]] <- year_data
-    cat("  Year", year, "final:", nrow(year_data), "rows\n")
-  }
-  
-  # Force garbage collection
-  gc()
-}
-
-# Combine results
-if(length(chunk_results) > 0) {
-  new_max_abun <- bind_rows(chunk_results)
-  cat("Combined peak abundance data:", nrow(new_max_abun), "rows\n")
-} else {
-  cat("No data found for target years\n")
-  new_max_abun <- data.frame()
-}
-
-# Process phenology assignment using vectorized approach by site
-if(nrow(new_max_abun) > 0) {
-  cat("Assigning phenological categories to peak abundance data...\n")
-  
-  # Prepare data
-  new_max_abun <- new_max_abun %>%
+# Assign phenophase to every monthly row, then derive per-site-year peak rows by
+# slicing. Running the per-site loop inside the year loop bounds memory: only
+# one year of monthly data is labeled at a time.
+assign_pheno_to_df <- function(df, pheno_categories_long) {
+  df <- df %>%
     mutate(dates = ymd(paste0(year, "-", sprintf("%02d", month), "-15"))) %>%
     filter(siteID %in% pheno_categories_long$ID)
-  
-  cat("Processing", nrow(new_max_abun), "rows with vectorized phenology assignment...\n")
-  
-  # Process by site using vectorized date matching (much faster than rowwise)
-  cat("Processing by site with vectorized date matching...\n")
-  new_max_abun$site_cat <- NA_character_
-  unique_sites <- unique(new_max_abun$siteID)
+
+  cat("Processing", nrow(df), "rows with vectorized phenology assignment...\n")
+
+  df$site_cat <- NA_character_
+  unique_sites <- unique(df$siteID)
   cat("Processing", length(unique_sites), "unique sites...\n")
-  
-  # Convert dates once
-  new_max_abun$dates_ymd <- ymd(new_max_abun$dates)
-  
-  # Process each site - use vectorized interval matching
+
+  df$dates_ymd <- ymd(df$dates)
+
   for(i in seq_along(unique_sites)) {
     site <- unique_sites[i]
-    site_rows <- which(new_max_abun$siteID == site)
-    
+    site_rows <- which(df$siteID == site)
+
     if(length(site_rows) > 0) {
-      site_dates_ymd <- new_max_abun$dates_ymd[site_rows]
+      site_dates_ymd <- df$dates_ymd[site_rows]
       site_pheno <- pheno_categories_long %>% filter(ID == site)
-      
+
       if(nrow(site_pheno) > 0) {
-        # Vectorized interval matching for all dates at this site
-        # Use %within% which is vectorized
         valid_dates <- !is.na(site_dates_ymd)
         if(sum(valid_dates) > 0) {
-          # For each date, find matching intervals
           site_cats <- character(length(site_dates_ymd))
           for(j in seq_along(site_dates_ymd)) {
             if(valid_dates[j]) {
@@ -458,13 +393,12 @@ if(nrow(new_max_abun) > 0) {
                 out_cats <- gsub("_interval", "", out_cats)
                 out_cats <- gsub("dormancy_interval[12]", "dormancy", out_cats)
                 unique_cats <- unique(out_cats)
-                
-                # If date falls in multiple intervals, prioritize more specific ones
-                # Priority: peak > greenup > greendown > dormancy
-                # This prevents dormancy from being incorrectly assigned to summer dates
+
+                # If a date falls in overlapping intervals, prefer the
+                # narrower phenophase. Peak > greenup > greendown > dormancy
+                # avoids labeling a summer date "dormancy" when both apply.
                 if(length(unique_cats) > 1) {
                   priority_order <- c("peak", "greenup", "greendown", "dormancy")
-                  # Find the highest priority category that matches
                   selected_cat <- NULL
                   for(priority_cat in priority_order) {
                     if(priority_cat %in% unique_cats) {
@@ -483,37 +417,84 @@ if(nrow(new_max_abun) > 0) {
               site_cats[j] <- NA_character_
             }
           }
-          new_max_abun$site_cat[site_rows] <- site_cats
+          df$site_cat[site_rows] <- site_cats
         }
       }
     }
-    
+
     if(i %% 10 == 0) {
       cat("  Processed site", i, "of", length(unique_sites), "\n")
     }
   }
-  
-  # Remove temporary column
-  new_max_abun$dates_ymd <- NULL
-  
-  # Filter out rows with NA site_cat
-  new_max_abun <- new_max_abun %>% filter(!is.na(site_cat))
-  
-  cat("Phenology assignment complete:", nrow(new_max_abun), "rows\n")
-  
-  max_abun <- new_max_abun
+
+  df$dates_ymd <- NULL
+  df %>% filter(!is.na(site_cat))
+}
+
+# Process one year at a time: summarize to monthly, assign phenophase, store.
+# This caps memory at ~1/N_years of the full monthly dataset.
+monthly_chunks <- list()
+
+for(year in target_years) {
+  cat("\nProcessing year:", year, "\n")
+
+  median_col <- if("50%" %in% names(plot_estimates)) "50%" else "Mean"
+  year_num <- as.numeric(year)
+
+  year_rows_before <- plot_estimates %>% filter(year == year_num)
+  cat("  Rows before NA filter:", nrow(year_rows_before), "\n")
+
+  year_data <- plot_estimates %>%
+    filter(year == year_num) %>%
+    filter(!is.na(.data[[median_col]]))
+
+  cat("  Rows after NA filter:", nrow(year_data), "\n")
+  cat("  Unique model_ids:", length(unique(year_data$model_id)), "\n")
+  cat("  Unique siteIDs:", length(unique(year_data$siteID)), "\n")
+
+  monthly_year <- year_data %>%
+    group_by(model_id, siteID, year, month, dates) %>%
+    summarize(mean_modeled_abun = mean(.data[[median_col]], na.rm = TRUE),
+              .groups = "drop") %>%
+    filter(!is.na(mean_modeled_abun))
+
+  cat("  Rows after summarization (all months):", nrow(monthly_year), "\n")
+
+  if(nrow(monthly_year) > 0) {
+    monthly_year <- assign_pheno_to_df(monthly_year, pheno_categories_long)
+    cat("  Rows after phenology assignment:", nrow(monthly_year), "\n")
+    monthly_chunks[[year]] <- monthly_year
+  }
+
+  rm(year_data, monthly_year)
+  gc()
+}
+
+if(length(monthly_chunks) > 0) {
+  all_monthly_abun <- bind_rows(monthly_chunks)
+  rm(monthly_chunks); gc()
+  cat("\nCombined monthly abundance data (labeled):",
+      nrow(all_monthly_abun), "rows\n")
+
+  # Derive per-site-year peak rows by slicing the labeled monthly data.
+  max_abun <- all_monthly_abun %>%
+    group_by(model_id, siteID, year) %>%
+    filter(mean_modeled_abun == max(mean_modeled_abun, na.rm = TRUE)) %>%
+    ungroup()
+  cat("Derived peak rows from labeled monthly data:", nrow(max_abun), "rows\n")
 } else {
+  all_monthly_abun <- data.frame()
   max_abun <- data.frame()
 }
 
 # About 6 sites are missing all MODIS phenophase data; these "NA" values will be excluded
 # About 7000 additional dates have some missing data
+pheno_levels <- c("dormancy", "greenup", "peak", "greendown")
 if(nrow(max_abun) > 0) {
-  max_abun$sampling_season = factor(max_abun$site_cat, ordered = T, levels = c("dormancy",#"dormancy_greenup",
-																																						 "greenup",#"greenup_peak",
-																																						 "peak", #"greendown_peak",
-																																						 "greendown"#,"dormancy_greendown"
-))
+  max_abun$sampling_season <- factor(max_abun$site_cat, ordered = TRUE, levels = pheno_levels)
+}
+if(nrow(all_monthly_abun) > 0) {
+  all_monthly_abun$sampling_season <- factor(all_monthly_abun$site_cat, ordered = TRUE, levels = pheno_levels)
 }
 
 # Process max_cycl with optimized function
@@ -668,6 +649,16 @@ if(nrow(max_abun) > 0) {
                             by.x = "model_id_normalized", by.y = "model_id_normalized", all.x = TRUE) %>%
     select(-model_id_normalized)
 
+  if(nrow(all_monthly_abun) > 0) {
+    all_monthly_abun_normalized <- all_monthly_abun %>%
+      mutate(model_id_normalized = gsub("_beta_regression$|_combined$", "", model_id))
+    all_monthly_abun_to_plot <- merge(all_monthly_abun_normalized, all_metadata,
+                                      by.x = "model_id_normalized", by.y = "model_id_normalized", all.x = TRUE) %>%
+      select(-model_id_normalized)
+  } else {
+    all_monthly_abun_to_plot <- data.frame()
+  }
+
   seasonality_mode_normalized <- seasonality_mode %>%
     mutate(model_id_normalized = gsub("_beta_regression$|_combined$", "", model_id))
   seasonality_mode_to_plot <- merge(seasonality_mode_normalized, all_metadata,
@@ -681,11 +672,22 @@ if(nrow(max_abun) > 0) {
   seasonality_mode3 <- data.frame()
   max_abun_to_plot <- data.frame()
   seasonality_mode_to_plot <- data.frame()
+  all_monthly_abun_to_plot <- data.frame()
 }
 
-# saveRDS(list(seasonality_mode2, max_abun,seasonality_mode3, max_abun_to_plot, seasonality_mode_to_plot), here("data/clean/group_peak_phenophases.rds"))
 cat("\n=== SAVING RESULTS ===\n")
-saveRDS(list(seasonality_mode2, max_abun,seasonality_mode3, max_abun_to_plot, seasonality_mode_to_plot), here("data/clean/pheno_group_peak_phenophases.rds"))
+# Element layout:
+#   [[1]] seasonality_mode2          — one row per model, most-abundant phenophase
+#   [[2]] max_abun                   — per site-year peak month with phenophase
+#   [[3]] seasonality_mode3          — models where one phenophase > 50% of peaks
+#   [[4]] max_abun_to_plot           — max_abun + metadata (peak-month view)
+#   [[5]] seasonality_mode_to_plot   — seasonality_mode + metadata
+#   [[6]] all_monthly_abun_to_plot   — every model x site x month estimate +
+#                                      phenophase + metadata (full seasonal profile)
+saveRDS(list(seasonality_mode2, max_abun, seasonality_mode3,
+             max_abun_to_plot, seasonality_mode_to_plot,
+             all_monthly_abun_to_plot),
+        here("data/clean/pheno_group_peak_phenophases.rds"))
 
 cat("\n=== SUMMARY ===\n")
 cat("✅ Used hindcast data for calibration period plot estimates\n")

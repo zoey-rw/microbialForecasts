@@ -14,6 +14,16 @@ converged <- readRDS(here("data/summary/weak_converged_taxa_list.rds"))
 beta_names <- c("Ectomycorrhizal\ntrees", "LAI", "pC",
                 "pH", "Temperature", "Moisture")
 
+# Display labels: use the short, standardized names in facet strips.
+beta_display <- c(
+  "Ectomycorrhizal\ntrees" = "EM trees",
+  "LAI"                    = "LAI",
+  "pC"                     = "% Carbon",
+  "pH"                     = "pH",
+  "Temperature"            = "Temperature",
+  "Moisture"               = "Moisture"
+)
+
 # ── Prepare plotting data ───────────────────────────────────────────────────
 plotting_df <- sum.all %>%
   filter(beta %in% beta_names,
@@ -81,7 +91,8 @@ p <- ggplot(plotting_df, aes(x = rank_only, y = effSize, color = pretty_group)) 
   stat_compare_means(aes(label = paste0("p = ", after_stat(p.format))),
                      method = "anova", size = 3.5, label.y.npc = 0.5) +
   facet_grid(cols = vars(beta), rows = vars(pretty_group),
-             drop = TRUE, scales = "free", space = "free") +
+             drop = TRUE, scales = "free", space = "free",
+             labeller = labeller(beta = beta_display)) +
   scale_color_manual(values = kingdom_colors) +
   scale_shape_manual(values = c("0" = 1, "1" = 16),
                      labels = c("Not significant", "Significant")) +

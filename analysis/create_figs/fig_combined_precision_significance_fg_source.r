@@ -129,10 +129,10 @@ df_cal_fg_tax$fcast_type <- recode(df_cal_fg_tax$fcast_type,
 df_cal_fg_tax$beta_pretty <- recode(df_cal_fg_tax$beta,
   "residual_amplitude" = "Seasonality", "cycl_amplitude" = "Seasonality",
   "pC" = "% Carbon", "LAI" = "Leaf area\nindex",
-  "Ectomycorrhizal\ntrees" = "Ecto-mycorr.\ntrees"
+  "Ectomycorrhizal\ntrees" = "EM trees"
 )
 df_cal_fg_tax$beta_pretty <- factor(df_cal_fg_tax$beta_pretty,
-  levels = c("Seasonality", "Ecto-mycorr.\ntrees", "Leaf area\nindex",
+  levels = c("Seasonality", "EM trees", "Leaf area\nindex",
              "% Carbon", "pH", "Temperature", "Moisture")
 )
 
@@ -355,7 +355,11 @@ pC <- ggplot(fg_source_data, aes(x = fg_source, y = as.numeric(score),
 # =============================================================================
 converged <- scores_list$converged_list
 
-pheno_data <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))[[4]]
+# Element [[6]] contains every model x site x month modeled estimate with its
+# assigned phenophase. We need this (not [[4]]) so the per-phenophase means
+# reflect modeled abundance across all months in each phenophase, not just the
+# single per-site-year peak month.
+pheno_data <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))[[6]]
 
 fungal_guilds <- c("saprotroph", "ectomycorrhizal", "plant_pathogen",
                    "animal_pathogen")

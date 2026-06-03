@@ -69,11 +69,11 @@ df_cal_fg_tax$beta_pretty <- recode(df_cal_fg_tax$beta,
   "cycl_amplitude"     = "Seasonality",
   "pC"                 = "% Carbon",
   "LAI"                = "Leaf area\nindex",
-  "Ectomycorrhizal\ntrees" = "Ecto-mycorr.\ntrees"
+  "Ectomycorrhizal\ntrees" = "EM trees"
 )
 
 df_cal_fg_tax$beta_pretty <- factor(df_cal_fg_tax$beta_pretty,
-  levels = c("Seasonality", "Ecto-mycorr.\ntrees", "Leaf area\nindex",
+  levels = c("Seasonality", "EM trees", "Leaf area\nindex",
              "% Carbon", "pH", "Temperature", "Moisture")
 )
 

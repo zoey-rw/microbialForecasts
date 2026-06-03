@@ -543,6 +543,8 @@ ggsave(here("figures", "linear_model_accuracy_mean_by_period_model.png"), p_mean
 sum.all <- readRDS(here("data", "summary/predictor_effects.rds"))
 
 beta_names <- c("Ectomycorrhizal\ntrees", "LAI", "pC", "pH", "Temperature", "Moisture")
+beta_display <- c("Ectomycorrhizal\ntrees" = "EM trees",
+                  "pC" = "% Carbon")  # other names display unchanged
 df_cal <- sum.all %>%
 	filter(beta %in% beta_names &
 				 	model_name %in% c("env_cov","env_cycl") &
@@ -559,7 +561,9 @@ if (nrow(df_cal_fg_tax) > 0 && length(unique(na.omit(df_cal_fg_tax$beta))) > 0) 
     labs(title = "Absolute effect size") +
     theme_minimal(base_size = 18) +
     xlab("Rank") + ylab(NULL) +
-    facet_grid(rows = vars(beta), cols = vars(pretty_group), drop = TRUE, scales = "free", space = "free_x") +
+    facet_grid(rows = vars(beta), cols = vars(pretty_group),
+               drop = TRUE, scales = "free", space = "free_x",
+               labeller = labeller(beta = beta_display)) +
     theme(axis.text.x = element_text(angle = 320, vjust = 1, hjust = -0.05),
           axis.title = element_text(size = 22, face = "bold"),
           strip.text.y = element_text(size = 12, face = "bold"))

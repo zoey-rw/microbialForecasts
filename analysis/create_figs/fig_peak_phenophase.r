@@ -12,11 +12,22 @@ source("source.R")
 # ── Data loading ─────────────────────────────────────────────────────────────
 phenophase_in <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))
 
-# Element 1: one row per model_id — dominant (modal) phenophase + amplitude
+# Element 1: one row per model_id — dominant (modal) phenophase + amplitude.
+# Used by Panel A (proportion of taxa peaking in each phenophase) and Panel C
+# (lollipop of seasonal amplitude). These are modal-peak questions.
 seasonality_mode_max <- phenophase_in[[1]]
 
-# Element 5: four rows per taxon (mean_abun per season across sites)
-seasonality_mode_all <- phenophase_in[[5]]
+# Panel B asks a different question — "how does abundance shape within each
+# taxon look across the four phenophases" — which requires every monthly
+# estimate, not just the per-site-year peak. Aggregate element [[6]] (full
+# monthly view) to one row per model x phenophase. The shape matches the old
+# element [[5]] so Panel B's normalization logic still works.
+seasonality_mode_all <- phenophase_in[[6]] %>%
+  group_by(model_id, sampling_season, fcast_type, pretty_group, rank_only,
+           model_name, taxon, amplitude, significant_sin, significant_cos) %>%
+  summarise(mean_abun = mean(mean_modeled_abun, na.rm = TRUE),
+            n = n(),
+            .groups = "drop")
 
 # ── Display settings ─────────────────────────────────────────────────────────
 pheno_levels <- c("greenup", "peak", "greendown", "dormancy")
