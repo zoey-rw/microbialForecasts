@@ -12,10 +12,11 @@ source("source.R")
 phenophase_in <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))
 site_descr    <- readRDS(here("data/clean/site_effect_predictors.rds"))
 
-# Element 4 has per-observation abundance + all metadata
-abun_data <- phenophase_in[[4]]   # siteID, dates, mean_modeled_abun, sampling_season,
-                                   # fcast_type, pretty_group, model_name, taxon, amplitude,
-                                   # significant_sin, significant_cos
+# Element 6 is the full monthly view: every model x site x month modeled
+# estimate with its assigned phenophase. We use this for seasonal-profile
+# panels so the means reflect modeled abundance across all months in each
+# phenophase, not just the per-site-year peak month (which is element 4).
+abun_data <- phenophase_in[[6]]
 
 # Element 1 has per-model modal phenophase + amplitude
 mode_data <- phenophase_in[[1]]   # one row per model_id

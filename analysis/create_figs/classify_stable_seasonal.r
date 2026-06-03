@@ -77,9 +77,12 @@ seas_env_cycl <- seas_env_cycl %>%
 class_df <- rho_env_cycl %>%
   inner_join(seas_env_cycl, by = "model_id")
 
-# Thresholds
+# Thresholds for the quadrant classification. The persistence threshold is
+# 0.1 (not 0.3) because env_cycl posterior ρ rarely exceeds 0.12; a higher
+# cutoff would leave the "high persistence" quadrant empty and waste the
+# visual contrast in the figure.
 AMPLITUDE_THRESHOLD <- 0.05
-PERSISTENCE_THRESHOLD <- 0.3
+PERSISTENCE_THRESHOLD <- 0.1
 
 class_df <- class_df %>%
   mutate(
@@ -229,6 +232,26 @@ make_marginal_scatter <- function(df, model_label, n_per_quadrant = 3) {
   y_max <- max(df$abs_rho,   na.rm = TRUE) * 1.12
   threshold_visible <- PERSISTENCE_THRESHOLD <= y_max
 
+  # Test whether Bacteria vs Fungi distributions differ on each axis.
+  # Annotate both results so a non-significant axis is just as visible as a
+  # significant one.
+  fmt_p <- function(p) {
+    if (is.na(p)) return("n.s.")
+    star <- if (p < 0.001) "***" else if (p < 0.01) "**" else if (p < 0.05) "*" else "n.s."
+    ptext <- if (p < 0.001) "p < 0.001" else sprintf("p = %.3f", p)
+    paste0(star, " (", ptext, ")")
+  }
+  kingdoms <- unique(df$pretty_group)
+  if (length(kingdoms) == 2) {
+    p_rho <- suppressWarnings(wilcox.test(abs_rho   ~ pretty_group, data = df))$p.value
+    p_amp <- suppressWarnings(wilcox.test(amplitude ~ pretty_group, data = df))$p.value
+    test_label <- paste0("Bacteria vs Fungi (Wilcoxon):\n",
+                         "ρ:  ", fmt_p(p_rho), "\n",
+                         "amplitude:  ", fmt_p(p_amp))
+  } else {
+    p_rho <- NA_real_; p_amp <- NA_real_; test_label <- NULL
+  }
+
   base <- ggplot(df, aes(x = amplitude, y = abs_rho,
                          color = pretty_group, fill = pretty_group)) +
     geom_point(size = 2, alpha = 0.7) +
@@ -254,6 +277,15 @@ make_marginal_scatter <- function(df, model_label, n_per_quadrant = 3) {
                hjust = 1, vjust = 1.4)
   }
 
+  if (!is.null(test_label)) {
+    base <- base +
+      annotate("label", x = x_max * 0.98, y = y_max * 0.97,
+               label = test_label,
+               hjust = 1, vjust = 1, size = 2.7, color = "gray15",
+               fill = "white", label.size = 0.3, label.r = unit(0.1, "lines"),
+               lineheight = 1.1)
+  }
+
   base <- base +
     scale_color_manual(values = kingdom_colors, name = NULL) +
     scale_fill_manual(values = kingdom_colors, name = NULL) +
@@ -273,26 +305,41 @@ make_marginal_scatter <- function(df, model_label, n_per_quadrant = 3) {
           plot.title.position = "plot",
           panel.grid.minor = element_blank())
 
-  ggMarginal(base, type = "density",
-             groupColour = TRUE, groupFill = TRUE, alpha = 0.35)
+  list(
+    plot  = ggMarginal(base, type = "density",
+                       groupColour = TRUE, groupFill = TRUE, alpha = 0.35),
+    tests = list(p_rho = p_rho, p_amplitude = p_amp,
+                 n_bacteria = sum(df$pretty_group == "Bacteria"),
+                 n_fungi    = sum(df$pretty_group == "Fungi"))
+  )
 }
 
 # Build the two datasets and render
 class_env_cycl  <- build_class("env_cycl")
 class_cycl_only <- build_class("cycl_only")
 
-fig_scatter_env_cycl  <- make_marginal_scatter(class_env_cycl,
-                                               "env_cycl (environmental + seasonal)")
-fig_scatter_cycl_only <- make_marginal_scatter(class_cycl_only,
-                                               "cycl_only (seasonal only)")
+scatter_env_cycl <- make_marginal_scatter(
+  class_env_cycl, "env_cycl (environmental + seasonal)")
 
-ggsave(file.path(fig_out_dir, "fig_persistence_seasonality_scatter.png"),
-       fig_scatter_env_cycl, width = 8, height = 6.5, dpi = 200)
-cat("Saved: figures/fig_persistence_seasonality_scatter.png\n")
+# Manuscript Figure S19. cycl_only data is still built above so the by-model
+# diagnostic figure below can use it; we just don't publish it as a separate
+# figure here.
+ggsave(file.path(fig_out_dir, "figS19_persistence_seasonality_env_cycl.png"),
+       scatter_env_cycl$plot, width = 8, height = 6.5, dpi = 200)
+cat("Saved: figures/figS19_persistence_seasonality_env_cycl.png\n")
 
-ggsave(file.path(fig_out_dir, "fig_persistence_seasonality_scatter_cycl_only.png"),
-       fig_scatter_cycl_only, width = 8, height = 6.5, dpi = 200)
-cat("Saved: figures/fig_persistence_seasonality_scatter_cycl_only.png\n")
+report_tests <- function(scatter, label) {
+  t <- scatter$tests
+  fmt <- function(p) if (is.na(p)) "n.s." else if (p < 0.001) "p < 0.001" else sprintf("p = %.3f", p)
+  cat(sprintf("[%s] n_bacteria=%d  n_fungi=%d  ρ %s  amplitude %s\n",
+              label, t$n_bacteria, t$n_fungi, fmt(t$p_rho), fmt(t$p_amplitude)))
+}
+cat("\nValues to cross-check against manuscript.tex Fig S19 caption:\n")
+report_tests(scatter_env_cycl, "S19 env_cycl")
+cat("\nQuadrant breakdown (env_cycl, persistence threshold = ",
+    PERSISTENCE_THRESHOLD, "):\n", sep = "")
+print(class_env_cycl %>% count(classification, name = "n") %>%
+      mutate(pct = round(100 * n / sum(n))))
 
 # Keep class_df pointing at env_cycl for downstream code (rank panel, exemplars)
 class_df <- class_env_cycl
@@ -393,82 +440,115 @@ print(as.data.frame(quad_by_rank))
 # ── Figure 2: Example hindcast panels for each quadrant ──────────────────────
 cat("\nGenerating example hindcast panels for each classification quadrant...\n")
 
-# Representative taxa (most extreme in each quadrant) and best-calibrated plots
-exemplars <- data.frame(
-  species   = c("ectomycorrhizal", "wd2101.soil.group", "chaetosphaeriales", "orbiliomycetes"),
-  plotID    = c("OSBS_001",        "SCBI_006",          "ORNL_049",          "DSNY_041"),
-  quadrant  = c("Seasonal,\nlow persistence",
-                "Non-seasonal,\nlow persistence",
-                "Seasonal,\nhigh persistence",
-                "Non-seasonal,\nhigh persistence"),
-  stringsAsFactors = FALSE
+# Data-driven exemplars: one most-extreme taxon per occupied quadrant. Empty
+# quadrants (e.g. non_seasonal/high-persistence under threshold 0.1) are skipped
+# entirely so panels can't end up with NA labels for missing taxa.
+quadrant_pretty <- c(
+  seasonal_high_persistence     = "Seasonal,\nhigh persistence",
+  seasonal_low_persistence      = "Seasonal,\nlow persistence",
+  non_seasonal_high_persistence = "Non-seasonal,\nhigh persistence",
+  non_seasonal_low_persistence  = "Non-seasonal,\nlow persistence"
 )
+exemplars <- class_df %>%
+  group_by(classification) %>%
+  mutate(extreme_score = case_when(
+    classification == "seasonal_high_persistence"     ~ amplitude + abs_rho,
+    classification == "seasonal_low_persistence"     ~ amplitude + (1 - abs_rho),
+    classification == "non_seasonal_high_persistence" ~ (1 - amplitude) + abs_rho,
+    classification == "non_seasonal_low_persistence" ~ (1 - amplitude) + (1 - abs_rho),
+    TRUE ~ 0
+  )) %>%
+  slice_max(extreme_score, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  transmute(species = taxon, pretty_group, classification,
+            rho_mean, amplitude,
+            quadrant = unname(quadrant_pretty[classification]))
 
-# Load hindcast data from fresh per-site files (re-run by 06_hindcast_observed.r)
+cat("Exemplar taxa per occupied quadrant:\n")
+print(exemplars %>% select(classification, species, pretty_group,
+                           rho_mean, amplitude))
+
+# For each exemplar, find an observed-site plot with the most truth values
+# (better visualization than picking an arbitrary plot).
 cat("Loading hindcast data from per-site files...\n")
 hindcast_dir <- here("data/hindcasts/driver_uncertainty")
 
-# Map exemplars to their site hindcast files
-exemplars$siteID <- gsub("_.*", "", exemplars$plotID)
+pick_best_plot <- function(species) {
+  pat <- paste0("^hindcasts_env_cycl_", species,
+                "_20130601_20180101_with_legacy_covariate_.*_observed\\.rds$")
+  files <- list.files(hindcast_dir, pattern = pat, full.names = TRUE)
+  if (length(files) == 0) return(NULL)
+  best_df <- NULL; best_plot <- NA_character_; best_n <- 0L
+  for (f in files) {
+    df <- tryCatch(readRDS(f), error = function(e) NULL)
+    if (is.null(df) || !"truth" %in% names(df)) next
+    counts <- df %>% filter(!is.na(truth)) %>% count(plotID)
+    if (nrow(counts) == 0) next
+    top <- counts %>% slice_max(n, n = 1, with_ties = FALSE)
+    if (top$n > best_n) {
+      best_n   <- top$n
+      best_plot <- top$plotID
+      best_df  <- df %>% filter(plotID == top$plotID)
+    }
+  }
+  if (is.null(best_df)) return(NULL)
+  list(plotID = best_plot, hindcast = best_df, n_obs = best_n)
+}
+
 hind_list <- list()
 for (i in seq_len(nrow(exemplars))) {
-  fname <- file.path(hindcast_dir,
-    paste0("hindcasts_env_cycl_", exemplars$species[i],
-           "_20130601_20180101_with_legacy_covariate_",
-           exemplars$siteID[i], "_observed.rds"))
-  if (file.exists(fname)) {
-    df <- readRDS(fname) %>%
-      filter(plotID == exemplars$plotID[i])
-    hind_list[[i]] <- df
-    cat("  Loaded", basename(fname), ":", nrow(df), "rows\n")
-  } else {
-    # Fall back to the big summary file
-    cat("  Not found:", basename(fname), "- falling back to all_hindcasts_plsr2.rds\n")
-    if (!exists("hindcast_all")) hindcast_all <- readRDS(here("data/summary/all_hindcasts_plsr2.rds"))
-    hind_list[[i]] <- hindcast_all %>%
-      filter(species == exemplars$species[i], model_name == "env_cycl",
-             plotID == exemplars$plotID[i])
+  sp <- exemplars$species[i]
+  picked <- pick_best_plot(sp)
+  if (is.null(picked)) {
+    cat("  No hindcast files found for", sp, "- skipping panel\n")
+    next
   }
+  cat("  ", sp, "@", picked$plotID,
+      "(", picked$n_obs, "observations)\n")
+  hind_list[[length(hind_list) + 1L]] <- picked$hindcast %>%
+    mutate(panel_species = sp, panel_plotID = picked$plotID)
 }
-hind_sub <- bind_rows(hind_list) %>%
-  inner_join(exemplars %>% select(species, plotID, quadrant), by = c("species", "plotID"))
-if (exists("hindcast_all")) { rm(hindcast_all); gc() }
+if (length(hind_list) == 0) stop("No exemplar hindcast files found.")
 
-# Fill pretty_group from classification data (new hindcast files have NA for some rows)
-pg_lookup <- class_df %>% select(taxon, pretty_group) %>% distinct()
+hind_sub <- bind_rows(hind_list) %>%
+  inner_join(exemplars %>% select(species, quadrant),
+             by = c("panel_species" = "species"))
+
+# Hindcast files may carry NA pretty_group on some rows; rebuild from class_df
+# using the canonical (non-NA) per-taxon mapping.
+pg_lookup <- class_df %>%
+  filter(!is.na(pretty_group)) %>%
+  select(taxon, pretty_group) %>% distinct()
 hind_sub <- hind_sub %>%
   select(-pretty_group) %>%
-  left_join(pg_lookup, by = c("species" = "taxon"))
+  left_join(pg_lookup, by = c("panel_species" = "taxon"))
 
 # Trim to start at first observation per panel
 first_obs <- hind_sub %>%
   filter(!is.na(truth)) %>%
-  group_by(species, plotID) %>%
+  group_by(panel_species, panel_plotID) %>%
   summarise(first_date = min(dates), .groups = "drop")
 
 hind_sub <- hind_sub %>%
-  left_join(first_obs, by = c("species", "plotID")) %>%
+  left_join(first_obs, by = c("panel_species", "panel_plotID")) %>%
   filter(dates >= first_date) %>%
   select(-first_date)
 
-# Add rho and amplitude values for subtitle
+# Attach the rho/amp values used in the panel header
 hind_sub <- hind_sub %>%
   left_join(class_df %>% select(taxon, rho_mean, amplitude),
-            by = c("species" = "taxon"))
+            by = c("panel_species" = "taxon"))
 
-# Panel label with taxon name, rho, amplitude
+# Panel label with taxon name, rho, amplitude. Skip the kingdom in parens
+# when pretty_group is NA (which only happens if class_df is missing it).
 hind_sub <- hind_sub %>%
   mutate(
+    kingdom_tag = ifelse(is.na(pretty_group), "",
+                         paste0(" (", pretty_group, ")")),
     panel_label = paste0(quadrant, "\n",
-                         species, " (", pretty_group, ")\n",
+                         panel_species, kingdom_tag, " @ ", panel_plotID, "\n",
                          "rho=", round(rho_mean, 2),
-                         ", amp=", round(amplitude, 2)),
-    # Order quadrants logically: seasonal first, then by persistence
-    quadrant_f = factor(quadrant,
-                        levels = c("Seasonal,\nhigh persistence",
-                                   "Seasonal,\nlow persistence",
-                                   "Non-seasonal,\nhigh persistence",
-                                   "Non-seasonal,\nlow persistence"))
+                         ", amp=", round(amplitude, 2))
   )
 
 fig_quadrants <- ggplot(hind_sub, aes(x = dates)) +
@@ -499,4 +579,4 @@ fig_quadrants <- ggplot(hind_sub, aes(x = dates)) +
 
 ggsave(file.path(fig_out_dir, "fig_classification_examples.png"), fig_quadrants,
        width = 9, height = 7, dpi = 200)
-cat("Saved: data/figures/fig_classification_examples.png\n")
+cat("Saved: figures/fig_classification_examples.png\n")

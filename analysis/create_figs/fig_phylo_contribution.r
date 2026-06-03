@@ -207,7 +207,7 @@ cat("Saved: figures/phylogeny_pH.png\n")
 
 # Ectomycorrhizal trees phylogeny fan plot
 tree_ecto <- make_phylo_fan(tree_viz, tip_traits, "Ecto",
-														"Ectomycorrhizal\ntree effect size")
+														"EM tree effect size")
 ggsave(here("figures","phylogeny_ecto.png"), tree_ecto,
 			 width = 12, height = 12, dpi = 300, bg = "white")
 cat("Saved: figures/phylogeny_ecto.png\n")

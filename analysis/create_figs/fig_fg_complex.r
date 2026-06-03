@@ -10,7 +10,12 @@ library(ggrepel)
 scores_list <- readRDS(here("data/summary/scoring_metrics_plsr2.rds"))
 converged <- scores_list$converged_list
 
-pheno_data <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))[[4]]
+# Element [[6]] is the full monthly view (every model x site x month modeled
+# estimate with assigned phenophase). Using [[4]] here would average only the
+# per-site-year peak month within each phenophase, which is what the model
+# placed an annual maximum into — not what abundance actually does across the
+# growing season.
+pheno_data <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))[[6]]
 
 fungal_guilds <- c("saprotroph", "ectomycorrhizal", "plant_pathogen",
                    "animal_pathogen")
