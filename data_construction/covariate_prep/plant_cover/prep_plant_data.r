@@ -9,9 +9,9 @@ library(zoo)
 library(corrplot) 
 
 # Output from clean_relEM.r
-basal_relEM <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEON_relEM_plot.level.rds")
+basal_relEM <- readRDS(here::here("data/raw/NEON_relEM_plot.level.rds"))
 # Output from clean_plantDiv_data.r
-div <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/annual_plant_data.rds")
+div <- readRDS(here::here("data/clean/annual_plant_data.rds"))
 
 poss_site_plots <- div %>% tidyr::expand(tidyr::nesting(siteID, plotID))
 basal_relEM <- merge(poss_site_plots, basal_relEM, all=T)
@@ -49,7 +49,7 @@ relEM_fill_site$relEM_orig <- relEM_fill_site$relEM
 # Mean center and scale data
 relEM_fill_site$relEM <- scale(relEM_fill_site$relEM_orig)
 
-saveRDS(relEM_fill_site, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/mean_relEM_data.rds")
+saveRDS(relEM_fill_site, here::here("data/clean/mean_relEM_data.rds"))
 
 
 
@@ -58,7 +58,7 @@ library(tidyverse)
 library(data.table)
 
 
-lai_dat_orig <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/modis/LAI_allsites.rds")
+lai_dat_orig <- readRDS(here::here("data/raw/modis/LAI_allsites.rds"))
 
 lai_dat <- lai_dat_orig %>% mutate(dateID = substr(calendar_date, 1, 7), 
 																	 dateID = gsub("-","",dateID, fixed = T))
@@ -74,7 +74,7 @@ lai_site_monthly$LAI <- scale(lai_site_monthly$mean_lai)[,1]
 lai_site_monthly$LAI_orig <- lai_site_monthly$mean_lai
 lai_site_monthly$LAI_sd <- lai_site_monthly$sd_lai
 
-saveRDS(lai_site_monthly, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/mean_LAI_data.rds")
+saveRDS(lai_site_monthly, here::here("data/clean/mean_LAI_data.rds"))
 
 
 ggplot(lai_site_monthly) + geom_point(aes(x = dateID, y = mean_lai)) + facet_grid(~siteID)

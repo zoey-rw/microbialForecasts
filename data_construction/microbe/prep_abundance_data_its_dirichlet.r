@@ -10,8 +10,8 @@ library(ggplot2)
 library(dplyr)
 library(data.table)
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/binTaxGroups.r")
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/assign_funfun_new.r")
+source(here::here("functions/helperFunctions.r"))
+source(here::here("functions/assign_funfun_new.r"))
 
 
 #### 16S #####
@@ -96,8 +96,8 @@ for (tax_rank in names(out)){
 names(cal.out.bac)[1:6] <- paste0(names(cal.out.bac)[1:6], "_fun")
 names(val.out.bac)[1:6] <- paste0(names(val.out.bac)[1:6], "_fun")
 
-saveRDS(cal.out.bac, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS_10tax.rds")
-saveRDS(val.out.bac, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_ITS_10tax.rds")
+saveRDS(cal.out.bac, here::here("data/clean/cal_groupAbundances_ITS_10tax.rds"))
+saveRDS(val.out.bac, here::here("data/clean/val_groupAbundances_ITS_10tax.rds"))
 
 
-#saveRDS(cal.out.bac, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS.rds")
+#saveRDS(cal.out.bac, here::here("data/clean/cal_groupAbundances_ITS.rds"))

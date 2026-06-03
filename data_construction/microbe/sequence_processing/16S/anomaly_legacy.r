@@ -1,7 +1,7 @@
 library(ranomaly)
 library(dada2)
 
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
+source(here::here("functions/helperFunctions.r"))
 
 # legacy.seqtab <- readRDS("/projectnb/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/data/raw_seqs/16S/raw_from_neon/seq_tables/legacyOtuTable_16S.rds")
 # legacy.seqtab.df <- as.data.frame(legacy.seqtab)
@@ -52,10 +52,10 @@ source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperF
 
 
 
-# saveRDS(seqtab, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/MCC_otu_16S_legacy.rds")
+# saveRDS(seqtab, here::here("data/raw/MCC_otu_16S_legacy.rds"))
 
 
-seqtab_joined <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/MCC_otu_16S_legacy.rds")
+seqtab_joined <- readRDS(here::here("data/raw/MCC_otu_16S_legacy.rds"))
 
 out.file <- "/projectnb/dietzelab/zrwerbin/NEON_soil_microbe_processing/data/outputs/legacy_anomaly_tax_16S"
 

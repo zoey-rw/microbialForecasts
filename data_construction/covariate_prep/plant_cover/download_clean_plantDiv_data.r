@@ -8,13 +8,13 @@ library(zoo)
 library(corrplot) 
 
 
-usda_list <- read_csv("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/reference_data/NEON_pla_taxonomy.csv")
+usda_list <- read_csv(here::here("data/reference_data/NEON_pla_taxonomy.csv"))
 
 ##### 1. Plant data #####
 # Download data from NEON sites (the ones I have microbial data for)
 # plant_info <- download_plant_div(sites = "all") 
-# saveRDS(plant_info, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEON_plant_data.rds")
-plant_info <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEON_plant_data.rds")
+# saveRDS(plant_info, here::here("data/raw/NEON_plant_data.rds"))
+plant_info <- readRDS(here::here("data/raw/NEON_plant_data.rds"))
 
 # Calculate a bunch of metrics for Poaceae. Documentation for this is here: https://github.com/admahood/neondiversity
 # Takes a couple minutes
@@ -30,14 +30,14 @@ plant_subset <- plant_stats %>%
 
 #### Add in % cover of mycorrhizal plants ----
 # Table S2 from FungalRoot
-fungalroot_genus <- read.csv("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/reference_data/fungalroot_genera.csv") 
+fungalroot_genus <- read.csv(here::here("data/reference_data/fungalroot_genera.csv")) 
 fungalroot_genus <- fungalroot_genus %>% mutate(myco_type = recode(Mycorrhizal.type, 
 																											 "EcM-AM" = "EcM")) %>% select(genus=Genus, myco_type)
 ## GET ECTOMYCORRHIZAL FAMILY LIST ##
 # File is from Fungal Root preprint (2019)
-old_fungalroot <- readxl::read_xlsx("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/reference_data/media-3.xlsx")
+old_fungalroot <- readxl::read_xlsx(here::here("data/reference_data/media-3.xlsx"))
 # This file is from GBIF - to add family info
-fungalroot_spec <- read.csv("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/reference_data/fungalroot_species.csv", sep="\t")
+fungalroot_spec <- read.csv(here::here("data/reference_data/fungalroot_species.csv"), sep="\t")
 fungalroot <- old_fungalroot %>% select(species, myco_type = `mycorrhiza type`)
 fungalroot$genus <- word(fungalroot$species)
 fungalroot <- left_join(fungalroot, fungalroot_spec[,c("genus","family")], by="genus")
@@ -117,7 +117,7 @@ plant_subset_save <- plant_subset
 plant_subset <- left_join(plant_subset_save, final_table)
 
 
-microbe_plots <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/microbe_plot_list.rds")
+microbe_plots <- readRDS(here::here("data/clean/microbe_plot_list.rds"))
 # Get all plotID x year combinations
 poss_site_dates <- plant_subset %>% tidyr::expand(tidyr::nesting(siteID, year_date))
 poss_site_plots <- plant_subset %>% tidyr::expand(tidyr::nesting(siteID, plotID))
@@ -146,12 +146,12 @@ plant_subset_fill$gap_filled <- ifelse(plant_subset_fill$real_year != plant_subs
 
 # let's also use site-level means to fill in plots unique to our microbial dataset (only applies for a handful)
 # This code is super clunky and dumb but w/e
-# microbes1 <- rbind(readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_16S_2021.rds")[[1]],
-# 									 readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_16S_2021.rds")[[1]])
-# microbes2 <- rbind(readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_ITS_2021.rds")[[1]],
-# 									 readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_ITS_2021.rds")[[1]])
-# microbes3 <- do.call(rbind.data.frame, readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_16S.rds")) %>% select(plotID, siteID)
-# microbes4 <- do.call(rbind.data.frame, readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds")) %>% select(plotID, siteID)
+# microbes1 <- rbind(readRDS(here::here("data/clean/cal_groupAbundances_16S_2021.rds"))[[1]],
+# 									 readRDS(here::here("data/clean/val_groupAbundances_16S_2021.rds"))[[1]])
+# microbes2 <- rbind(readRDS(here::here("data/clean/cal_groupAbundances_ITS_2021.rds"))[[1]],
+# 									 readRDS(here::here("data/clean/val_groupAbundances_ITS_2021.rds"))[[1]])
+# microbes3 <- do.call(rbind.data.frame, readRDS(here::here("data/clean/alpha_div_16S.rds"))) %>% select(plotID, siteID)
+# microbes4 <- do.call(rbind.data.frame, readRDS(here::here("data/clean/alpha_div_ITS.rds"))) %>% select(plotID, siteID)
 # microbe_plots <- unique(rbind(microbes3, microbes4))
 # microbe_plots1 <- unique(data.frame(plotID = substr(rownames(microbes1), 1, 8),
 # 														siteID = substr(rownames(microbes1), 1, 4)))
@@ -159,7 +159,7 @@ plant_subset_fill$gap_filled <- ifelse(plant_subset_fill$real_year != plant_subs
 # 																		siteID = substr(rownames(microbes2), 1, 4)))
 # microbe_plots <- unique(rbind(microbe_plots, microbe_plots1))
 # microbe_plots <- unique(rbind(microbe_plots, microbe_plots2))
-# saveRDS(microbe_plots, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/microbe_plot_list.rds")
+# saveRDS(microbe_plots, here::here("data/clean/microbe_plot_list.rds"))
 
 
 #plant_fill_site <- merge(plant_subset_fill, microbe_plots, all=T)
@@ -188,7 +188,7 @@ plant_fill_site$rc_EM <- scale(plant_fill_site$rc_EM_out)
 
 
 plant_fill_site[is.na(plant_fill_site$gap_filled),]$gap_filled <- T
-saveRDS(plant_fill_site, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/annual_plant_data.rds")
+saveRDS(plant_fill_site, here::here("data/clean/annual_plant_data.rds"))
 
 
 
@@ -230,7 +230,7 @@ p4 <- ggplot(dsny_fill) + geom_point(aes(x = year_date, y = rc_EM_out, shape = g
 	scale_shape_manual(values = c(19, 4), labels =c("Observed","Gap-filled")) + theme (legend.position = c(0.7, 0.04), text = element_text(size = 16)) 
 p4
 
-#ggsave(p, filename = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/figures/plant_diversity_gapfill.png", device = "png", width = 12, height = 12, units = "in")
+#ggsave(p, filename = here::here("figures/plant_diversity_gapfill.png"), device = "png", width = 12, height = 12, units = "in")
 
 
 

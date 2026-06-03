@@ -52,20 +52,22 @@ lat_colors <- c(
   "High (>44\u00b0N)" = "#56B4E9"
 )
 
-# ── Panel A: seasonal abundance profiles for key fungal FGs × latitude ────────
-focal_fg <- c("ectomycorrhizal", "plant_pathogen", "saprotroph", "animal_pathogen")
+# ── Panel A: seasonal relative-abundance profiles for focal FGs × latitude ────
+# Three functional groups with the clearest latitude contrasts, spanning both
+# kingdoms: Ectomycorrhizal & Saprotroph (Fungi) and N-fixation (Bacteria).
+# n_fixation only exists among bacteria and the two fungal names are unique to
+# fungi, so filtering on taxon alone unambiguously selects the right kingdom.
+focal_fg <- c("ectomycorrhizal", "saprotroph", "n_fixation")
 fg_labels <- c(
   ectomycorrhizal = "Ectomycorrhizal",
-  plant_pathogen  = "Plant pathogen",
   saprotroph      = "Saprotroph",
-  animal_pathogen = "Animal pathogen"
+  n_fixation      = "N-fixation"
 )
 
 pA_data <- abun_data %>%
   filter(
     model_name  == "cycl_only",
     fcast_type  == "Functional",
-    pretty_group == "Fungi",
     taxon       %in% focal_fg,
     !is.na(mean_modeled_abun),
     !is.na(sampling_season)
@@ -74,7 +76,7 @@ pA_data <- abun_data %>%
   filter(!is.na(latitude_category)) %>%
   mutate(
     sampling_season = factor(sampling_season, levels = pheno_levels, labels = pheno_labels),
-    taxon           = recode(taxon, !!!fg_labels)
+    taxon           = factor(recode(taxon, !!!fg_labels), levels = unname(fg_labels))
   ) %>%
   group_by(taxon, latitude_category, sampling_season) %>%
   summarise(
@@ -94,7 +96,7 @@ pA <- ggplot(pA_data,
   scale_color_manual(values = lat_colors, name = "Latitude") +
   labs(
     x = "Plant phenophase",
-    y = "Mean modeled abundance"
+    y = "Mean relative abundance (modeled)"
   ) +
   theme_bw(base_size = 12) +
   theme(
@@ -104,65 +106,6 @@ pA <- ggplot(pA_data,
     panel.grid.major.x = element_blank(),
     legend.position   = "right"
   )
-
-# ── Panel B: same for bacterial functional groups ─────────────────────────────
-focal_bac <- c("cellulolytic", "n_fixation", "denitrification", "nitrification")
-bac_labels <- c(
-  cellulolytic   = "Cellulolytic",
-  n_fixation     = "N-fixation",
-  denitrification = "Denitrification",
-  nitrification  = "Nitrification"
-)
-bac_present <- intersect(focal_bac, unique(abun_data$taxon))
-
-if (length(bac_present) >= 2) {
-  pB_data <- abun_data %>%
-    filter(
-      model_name   == "cycl_only",
-      fcast_type   == "Functional",
-      pretty_group == "Bacteria",
-      taxon        %in% bac_present,
-      !is.na(mean_modeled_abun),
-      !is.na(sampling_season)
-    ) %>%
-    left_join(lat_df, by = "siteID") %>%
-    filter(!is.na(latitude_category)) %>%
-    mutate(
-      sampling_season = factor(sampling_season, levels = pheno_levels, labels = pheno_labels),
-      taxon           = recode(taxon, !!!bac_labels)
-    ) %>%
-    group_by(taxon, latitude_category, sampling_season) %>%
-    summarise(
-      mean_abun = mean(mean_modeled_abun, na.rm = TRUE),
-      se_abun   = sd(mean_modeled_abun,   na.rm = TRUE) / sqrt(sum(!is.na(mean_modeled_abun))),
-      .groups   = "drop"
-    )
-
-  pB <- ggplot(pB_data,
-               aes(x = sampling_season, y = mean_abun,
-                   color = latitude_category, group = latitude_category)) +
-    geom_line(linewidth = 0.8) +
-    geom_errorbar(aes(ymin = mean_abun - se_abun, ymax = mean_abun + se_abun),
-                  width = 0.15, linewidth = 0.5) +
-    geom_point(size = 2.5) +
-    facet_wrap(~taxon, scales = "free_y", nrow = 1) +
-    scale_color_manual(values = lat_colors, name = "Latitude") +
-    labs(
-      x = "Plant phenophase",
-      y = "Mean modeled abundance"
-    ) +
-    theme_bw(base_size = 12) +
-    theme(
-      strip.background   = element_rect(fill = "grey92", color = NA),
-      strip.text         = element_text(face = "bold"),
-      axis.text.x        = element_text(angle = 30, hjust = 1),
-      panel.grid.major.x = element_blank(),
-      legend.position    = "bottom",
-      legend.key.size    = unit(0.8, "lines")
-    )
-} else {
-  pB <- NULL
-}
 
 # ── Panel C: seasonal CV by latitude — Bacteria and Fungi combined ────────────
 # For each site × significantly seasonal taxon, compute seasonal CV.
@@ -242,14 +185,31 @@ pheno_colors <- c(
   "Dormancy"   = "#56B4E9"
 )
 
+# Derive each model's peak phenophase from mean-monthly abundance (element 6),
+# matching the seasonal-niche definition used in Panels A-B and Fig 3D.
+# mode_data's model_id retains the `_beta_regression` suffix while abun_data's
+# model_id has it stripped, so we strip both sides before joining.
+strip_suffix <- function(x) gsub("_beta_regression$|_combined$", "", x)
+
+mm_peak <- abun_data %>%
+  group_by(model_id, sampling_season) %>%
+  summarise(mean_abun = mean(mean_modeled_abun, na.rm = TRUE), .groups = "drop") %>%
+  group_by(model_id) %>%
+  slice_max(mean_abun, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(model_id_norm = strip_suffix(model_id)) %>%
+  select(model_id_norm, mm_sampling_season = sampling_season)
+
 fg_ranked <- mode_data %>%
   filter(model_name == "cycl_only", fcast_type == "Functional",
          significant_sin == 1 | significant_cos == 1,
          !is.na(amplitude)) %>%
+  mutate(model_id_norm = strip_suffix(model_id)) %>%
+  left_join(mm_peak, by = "model_id_norm") %>%
   arrange(desc(amplitude)) %>%
   mutate(
     label      = tools::toTitleCase(gsub("_", " ", taxon)),
-    peak_phase = factor(sampling_season, levels = pheno_levels, labels = pheno_labels)
+    peak_phase = factor(mm_sampling_season, levels = pheno_levels, labels = pheno_labels)
   )
 
 pD <- ggplot(fg_ranked,
@@ -272,25 +232,18 @@ pD <- ggplot(fg_ranked,
   )
 
 # ── Combine and save ──────────────────────────────────────────────────────────
-pB_noleg <- if (!is.null(pB)) pB + theme(legend.position = "none") else NULL
-
-top_row <- if (!is.null(pB_noleg)) {
-  ggarrange(pA, pB_noleg, nrow = 2, labels = c("A", "B"))
-} else {
-  pA
-}
-
-bottom_row <- ggarrange(pC, pD, ncol = 2, labels = c("C", "D"), widths = c(1, 1))
+# Single profile row (A) on top; seasonal CV (B) and amplitude lollipop (C) below.
+bottom_row <- ggarrange(pC, pD, ncol = 2, labels = c("B", "C"), widths = c(1, 1))
 
 fig_lat <- ggarrange(
-  top_row, bottom_row,
-  nrow = 2, heights = c(1.6, 1)
+  pA, bottom_row,
+  nrow = 2, heights = c(1, 1.1), labels = c("A", "")
 )
 
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "figS10_error_by_latitude.png"),
-       fig_lat, width = 15, height = 12, dpi = 200)
+       fig_lat, width = 15, height = 9, dpi = 200)
 
 cat("Saved: figures/figS10_error_by_latitude.png\n")

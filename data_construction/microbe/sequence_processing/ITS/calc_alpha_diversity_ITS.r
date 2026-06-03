@@ -1,10 +1,10 @@
 # Calculate alpha diversity
 library(phyloseq)
 library(lubridate)
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source(here::here("source.R"))
 
 # Output from reformat_taxonomy.r
-# master_ps <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_ITS.rds")
+# master_ps <- readRDS(here::here("data/clean/phyloseq_ITS.rds"))
 # 
 # rared <- rarefy_even_depth(master_ps, sample.size = 5000, rngseed = 1)
 # 
@@ -12,9 +12,9 @@ source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 # # chao <- estimate_richness(master_ps, measures = "chao1")
 # # shannon$seqDepth <- sample_sums(master_ps)
 # dat <- cbind(parseNEONsampleIDs(rownames(shannon)), shannon)
-# saveRDS(dat, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS_full.rds")
+# saveRDS(dat, here::here("data/clean/alpha_div_ITS_full.rds"))
 
-dat <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS_full.rds")
+dat <- readRDS(here::here("data/clean/alpha_div_ITS_full.rds"))
 
 
 # Mean center and scale data (within each site), for only non-legacy (recent) data
@@ -41,12 +41,12 @@ dat <- dat %>% group_by(siteID) %>% mutate(Shannon_orig = Shannon,
 
 cal_dat <- dat[dat$asDate < "2017-01-01",]
 val_dat <- dat[dat$asDate >= "2017-01-01",]
-saveRDS(list(cal = cal_dat, val = val_dat, full = dat, recent = recent), "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds")
+saveRDS(list(cal = cal_dat, val = val_dat, full = dat, recent = recent), here::here("data/clean/alpha_div_ITS.rds"))
 
 
 #### Visualize
 
-div_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/alpha_div_ITS.rds")
+div_in <- readRDS(here::here("data/clean/alpha_div_ITS.rds"))
 div_cal <- div_in$cal
 
 

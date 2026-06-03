@@ -4,9 +4,9 @@ library(dplyr)
 # Source relevant scripts
 # source("https://raw.githubusercontent.com/claraqin/neonMicrobe/master/R/get_neon_data.R")
 # dat_soil <- downloadRawSoilData(startYrMo = "2013-06", endYrMo = "2020-09",
-#                     outDir = "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/")
-dat_soil <- data.table::fread("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/sls_soilData_2021-06-16.csv")
-dat_soil <- data.table::fread("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/sls_soilData_2022-11-07.csv")
+#                     outDir = here::here("data/raw/"))
+dat_soil <- data.table::fread(here::here("data/raw/sls_soilData_2021-06-16.csv"))
+dat_soil <- data.table::fread(here::here("data/raw/sls_soilData_2022-11-07.csv"))
 
 # # Bug in geoNEON package, no longer calculating lat/long
 
@@ -27,4 +27,4 @@ out <- out %>% dplyr::select(domainID, siteID, plotID, namedLocation, plotType, 
 out$dateID <- substr(out$collectDate,1,7)
 out$year <- substr(out$collectDate,1,4)
 
-saveRDS(out, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/soilSample_data_allsites.rds")
+saveRDS(out, here::here("data/raw/soilSample_data_allsites.rds"))

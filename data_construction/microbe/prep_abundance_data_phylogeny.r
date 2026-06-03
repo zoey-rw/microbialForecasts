@@ -10,7 +10,7 @@ library(padr)
 library(ggplot2)
 library(dplyr)
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/binTaxGroups.r")
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
+source(here::here("functions/helperFunctions.r"))
 
 #### 16S #####
 
@@ -71,5 +71,5 @@ n.taxa <- 30
 	dim(cal)
 	dim(val)
 
-saveRDS(cal, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/cal_groupAbundances_phylo_30tax.rds")
-saveRDS(val, "/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/val_groupAbundances_phylo_30tax.rds")
+saveRDS(cal, here::here("data/clean/cal_groupAbundances_phylo_30tax.rds"))
+saveRDS(val, here::here("data/clean/val_groupAbundances_phylo_30tax.rds"))

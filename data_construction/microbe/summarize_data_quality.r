@@ -1,8 +1,8 @@
 # Summarize read depth
 library(knitr)
 library(kableExtra)
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source(here::here("source.R"))
+source(here::here("source.R"))
 
 tax_16S = readRDS("/projectnb/dietzelab/zrwerbin/NEON_soil_microbe_processing/data/NEON_16S_tax.rds")
 
@@ -13,7 +13,7 @@ tax_ITS = readRDS("/projectnb/dietzelab/zrwerbin/NEON_soil_microbe_processing/da
 colSums(is.na(tax_ITS))/nrow(tax_ITS)
 
 # Bacterial final functional groups
-ps <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_16S.rds")
+ps <- readRDS(here::here("data/clean/phyloseq_16S.rds"))
 
 # Number of ESVs
 dim(ps@otu_table); #58208
@@ -99,7 +99,7 @@ nrow(unclassified) / nrow(tax_df)
 
 
 # Bacterial final functional groups
-ps_ITS <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/phyloseq_ITS.rds")
+ps_ITS <- readRDS(here::here("data/clean/phyloseq_ITS.rds"))
 
 # Number of ESVs
 dim(ps_ITS@otu_table); #58208

@@ -3,10 +3,10 @@
 rm(list=ls())
 
 # Specify output path
-output.path <- "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEON_relEM_plot.level.rds"
+output.path <- here::here("data/raw/NEON_relEM_plot.level.rds")
 
 #load tree data
-dat <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEON_treedata_allsites.rds")
+dat <- readRDS(here::here("data/raw/NEON_treedata_allsites.rds"))
 
 em_traits.path <- "/projectnb/talbot-lab-data/NEFI_data/ITS/pecan_gen/reference_data/ecto_genus_traits_hobbie_Jan2018.csv"
 em_species.path <- "/projectnb/talbot-lab-data/NEFI_data/ITS/pecan_gen/reference_data/myc_assignments.rds"

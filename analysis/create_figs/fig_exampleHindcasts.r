@@ -1,12 +1,17 @@
 #!/usr/bin/env Rscript
 # Example hindcast figure: map + ribbon panels for cellulolytic and saprotroph
-# at BART (Bartlett Forest, NH), CPER (Central Plains, CO), and WOOD (Woodworth, ND)
+# at HARV (Harvard Forest, MA) and CPER (Central Plains, CO).
+#
+# BART was originally used here, but the NEON microbial dataset has no
+# BART observations after Oct 2017, so no BART plot can show validation
+# data. HARV is the closest temperate-deciduous-forest analog with strong
+# post-2018 sampling for both cellulolytic and saprotroph.
 #
 # To regenerate hindcasts from project root:
 #   Rscript 06_hindcast_observed.r --sequential=true --force=true --figs=true \
-#     --taxon=cellulolytic --sites=BART,CPER,WOOD
+#     --taxon=cellulolytic --sites=HARV,CPER
 #   Rscript 06_hindcast_observed.r --sequential=true --force=true --figs=true \
-#     --taxon=saprotroph --sites=BART,CPER,WOOD
+#     --taxon=saprotroph --sites=HARV,CPER
 
 source("source.R")
 library(ggplot2)
@@ -17,9 +22,9 @@ library(maps)
 # ── 1. Load and filter data ─────────────────────────────────────────────────
 cat("Loading hindcast data from per-site files...\n")
 hindcast_dir <- here("data/hindcasts/driver_uncertainty")
-best_plots <- c("BART_042", "CPER_004", "WOOD_001")
+best_plots <- c("HARV_033", "CPER_004")
 needed_taxa <- c("cellulolytic", "saprotroph")
-site_ids <- c("BART", "CPER", "WOOD")
+site_ids <- c("HARV", "CPER")
 
 taxa_sites <- expand.grid(taxon = needed_taxa, site = site_ids, stringsAsFactors = FALSE)
 hind_list <- list()
@@ -57,10 +62,9 @@ plot_data <- hindcast %>%
   select(-first_date) %>%
   mutate(
     site_label = factor(case_when(
-      siteID == "BART" ~ "Bartlett Forest, NH",
-      siteID == "CPER" ~ "Central Plains, CO",
-      siteID == "WOOD" ~ "Woodworth, ND"
-    ), levels = c("Bartlett Forest, NH", "Central Plains, CO", "Woodworth, ND")),
+      siteID == "HARV" ~ "Harvard Forest, MA",
+      siteID == "CPER" ~ "Central Plains, CO"
+    ), levels = c("Harvard Forest, MA", "Central Plains, CO")),
     taxon_label = case_when(
       species == "cellulolytic" ~ "Bacteria (cellulolytic)",
       species == "saprotroph"  ~ "Fungi (saprotroph)"
@@ -68,6 +72,13 @@ plot_data <- hindcast %>%
     taxon_color = case_when(
       species == "cellulolytic" ~ "Bacteria",
       species == "saprotroph"  ~ "Fungi"
+    ),
+    # Panel tag (B/C/D/E) for facet corner label
+    panel_tag = case_when(
+      siteID == "HARV" & species == "cellulolytic" ~ "B",
+      siteID == "CPER" & species == "cellulolytic" ~ "C",
+      siteID == "HARV" & species == "saprotroph"  ~ "D",
+      siteID == "CPER" & species == "saprotroph"  ~ "E"
     )
   )
 
@@ -111,12 +122,12 @@ neon_conus <- neon_conus %>%
 
 highlight <- neon_conus %>% filter(siteID %in% site_ids)
 
-# Label positions: offset from site points to avoid overlap
+# Label positions: place in empty whitespace just outside US, with leader lines
 label_pos <- data.frame(
-  siteID = c("BART", "CPER", "WOOD"),
-  label  = c("Bartlett Forest\n(BART)", "Central Plains\n(CPER)", "Woodworth\n(WOOD)"),
-  nudge_x = c(3, 5, -6),
-  nudge_y = c(3, -4, 2),
+  siteID  = c("HARV", "CPER"),
+  label   = c("Harvard Forest\n(HARV)", "Central Plains\n(CPER)"),
+  label_x = c(-68, -100),
+  label_y = c(48,  28),
   stringsAsFactors = FALSE
 ) %>% left_join(highlight, by = "siteID")
 
@@ -124,32 +135,33 @@ panel_map <- ggplot() +
   geom_polygon(data = us_map, aes(x = long, y = lat, group = group),
                fill = "gray95", color = "gray70", linewidth = 0.2) +
   geom_point(data = neon_conus %>% filter(site_type == "Calibration"),
-             aes(x = lon, y = lat, shape = site_type), color = "gray40", size = 1.8) +
+             aes(x = lon, y = lat, shape = site_type), color = "gray40", size = 2) +
   geom_point(data = neon_conus %>% filter(site_type == "Held-out"),
-             aes(x = lon, y = lat, shape = site_type), color = "gray40", size = 1.8) +
+             aes(x = lon, y = lat, shape = site_type), color = "gray40", size = 2) +
   geom_point(data = highlight, aes(x = lon, y = lat),
-             shape = 16, color = "red", size = 3.5) +
+             shape = 16, color = "red", size = 4) +
   geom_segment(data = label_pos,
-               aes(x = lon + nudge_x + sign(nudge_x) * -0.5,
-                   y = lat + nudge_y + sign(nudge_y) * -0.5,
-                   xend = lon + sign(nudge_x) * 0.3,
-                   yend = lat + sign(nudge_y) * 0.3),
-               arrow = arrow(length = unit(0.12, "cm")), color = "black") +
+               aes(x = label_x, y = label_y, xend = lon, yend = lat),
+               linewidth = 0.3, color = "gray30") +
   geom_label(data = label_pos,
-             aes(x = lon + nudge_x, y = lat + nudge_y, label = label),
-             size = 2.8, fontface = "bold", label.size = 0,
-             fill = "white", alpha = 0.85, label.padding = unit(0.2, "lines")) +
+             aes(x = label_x, y = label_y, label = label),
+             size = 3, fontface = "bold", color = "black",
+             label.size = 0, fill = "white", alpha = 0.9,
+             label.padding = unit(0.15, "lines")) +
   scale_shape_manual(values = c("Calibration" = 16, "Held-out" = 17),
                      name = NULL) +
-  coord_fixed(1.3, xlim = c(-125, -66), ylim = c(25, 50)) +
+  coord_fixed(1.3, xlim = c(-125, -62), ylim = c(24, 50), clip = "off") +
   theme_void() +
   theme(plot.background = element_rect(fill = "white", color = NA),
         panel.background = element_rect(fill = "white", color = NA),
         plot.margin = margin(5, 5, 5, 5),
-        legend.position = c(0.15, 0.15),
+        legend.position = "inside",
+        legend.position.inside = c(0.02, 0.05),
+        legend.justification = c(0, 0),
         legend.background = element_rect(fill = "white", color = NA),
-        legend.text = element_text(size = 8),
-        legend.key.size = unit(0.4, "cm"))
+        legend.text = element_text(size = 9),
+        legend.key.size = unit(0.4, "cm"),
+        legend.spacing.y = unit(0.05, "cm"))
 
 # ── 4. Hindcast ribbon panels ──────────────────────────────────────────────
 taxon_colors <- kingdom_colors  # from source.R
@@ -180,14 +192,13 @@ panel_hindcasts <- ggplot(plot_data, aes(x = dates)) +
   geom_vline(xintercept = cal_boundary, linetype = "dashed", color = "grey40", linewidth = 0.3) +
   # Observed points
   geom_point(aes(y = truth), color = "black", size = 1.2, alpha = 0.8) +
-  # plotID label inside each panel
-  geom_label(data = plot_data %>%
-               group_by(taxon_label, site_label, plotID) %>%
-               slice(1),
-             aes(x = -Inf, y = Inf, label = plotID),
-             vjust = 1.3, hjust = -0.1, size = 2.8, color = "gray30",
-             fill = "white", alpha = 0.8, linewidth = 0,
-             label.padding = unit(0.15, "lines")) +
+  # Panel tag (B/C/D/E) in top-left corner of each facet
+  geom_text(data = plot_data %>%
+              group_by(taxon_label, site_label, panel_tag) %>%
+              slice(1),
+            aes(x = -Inf, y = Inf, label = panel_tag),
+            vjust = 1.3, hjust = -0.5, size = 5, fontface = "bold",
+            color = "black") +
   facet_grid(rows = vars(taxon_label), cols = vars(site_label),
              scales = "free") +
   scale_fill_manual(values = taxon_colors) +
@@ -204,27 +215,19 @@ panel_hindcasts <- ggplot(plot_data, aes(x = dates)) +
   )
 
 # ── 5. Combine panels ───────────────────────────────────────────────────────
-fig <- plot_grid(
+fig_labeled <- plot_grid(
   panel_map, panel_hindcasts,
-  ncol = 1, rel_heights = c(0.38, 0.62),
-  labels = c("A", ""), label_size = 14
-)
-
-# Facet labels: 3 cols x 2 rows = B-G
-fig_labeled <- ggdraw(fig) +
-  theme(plot.background = element_rect(fill = "white", color = NA)) +
-  draw_label("B", x = 0.02, y = 0.59, fontface = "bold", size = 14) +
-  draw_label("C", x = 0.35, y = 0.59, fontface = "bold", size = 14) +
-  draw_label("D", x = 0.66, y = 0.59, fontface = "bold", size = 14) +
-  draw_label("E", x = 0.02, y = 0.30, fontface = "bold", size = 14) +
-  draw_label("F", x = 0.35, y = 0.30, fontface = "bold", size = 14) +
-  draw_label("G", x = 0.66, y = 0.30, fontface = "bold", size = 14)
+  ncol = 1, rel_heights = c(0.32, 0.68),
+  labels = c("A", ""), label_size = 14,
+  label_x = 0.02, label_y = 0.98
+) +
+  theme(plot.background = element_rect(fill = "white", color = NA))
 
 # ── 6. Save ─────────────────────────────────────────────────────────────────
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "fig_exampleHindcasts.png"), fig_labeled,
-       width = 12, height = 10, dpi = 200)
+       width = 10, height = 10, dpi = 200)
 
 cat("Saved: data/figures/fig_exampleHindcasts.png\n")

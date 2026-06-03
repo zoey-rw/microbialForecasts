@@ -12,17 +12,17 @@ library(Z10)
 fieldsites <- read.csv("https://www.neonscience.org/science-design/field-sites/export")
 
 ## Get SMV data (includes SCAN and SMAP) ##  
-smv_month <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/DAAC_SMV/monthly_SMV_allsites.rds")
+smv_month <- readRDS(here::here("data/raw/DAAC_SMV/monthly_SMV_allsites.rds"))
 # Only need surface zone from SCAN and SMAP, not GRACE or rootzones
 smv_month <- smv_month %>% dplyr::select(-c(mean_GRACE_s, min_GRACE_s, max_GRACE_s, min_SMAP_r, max_SMAP_r, mean_SMAP_r, min_SCAN_r, mean_SCAN_r, max_SCAN_r ))
 
 ## Get NEON moisture data ##
-neon <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/NEONSoilMois_monthly_allsites.rds")
+neon <- readRDS(here::here("data/clean/NEONSoilMois_monthly_allsites.rds"))
 neon <- neon %>% mutate(neon_mean = NEON_moist_mean*100,
                         neon_sd = NEON_moist_sd * 100) # units for everything else are 0-100 instead of 0-1
 
 ## Get SMOS data ##
-smos <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/SMOS/monthly_SMOS_allsites.rds")
+smos <- readRDS(here::here("data/raw/SMOS/monthly_SMOS_allsites.rds"))
 
 #### 2. Create dataframe with all of the sites/dates that we need data for #####
 # Get list of site/dates where we have microbial data
@@ -163,7 +163,7 @@ all_sources_merged <- merge(SMV_neon_merged, smos, by = c("siteID", "month"), al
 # Uncertainty increases for sites with less NEON data.
 # As expected, worse data sources have larger uncertainties.
   
-  saveRDS(soil.moisture.out, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/monthly_soil_moisture.rds")
+  saveRDS(soil.moisture.out, here::here("data/clean/monthly_soil_moisture.rds"))
 
 
   p <- ggplot(soil.moisture.out, aes(x = date, y = moisture_out, color = source)) + 
@@ -172,7 +172,7 @@ all_sources_merged <- merge(SMV_neon_merged, smos, by = c("siteID", "month"), al
   	guides(color = guide_legend(nrow = 1, byrow = TRUE, override.aes = list(size = 5, alpha = 1))) + ylab("Soil moisture")
   p
   
-  #ggsave(p, filename = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/figures/soil_moisture_calibration.png", device = "png", width = 15, height = 12, units = "in")
+  #ggsave(p, filename = here::here("figures/soil_moisture_calibration.png"), device = "png", width = 15, height = 12, units = "in")
   
   
   fit1 <- lm(SCAN_est ~ neon_mean, soil.moisture.out)

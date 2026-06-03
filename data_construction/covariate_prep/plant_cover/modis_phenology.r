@@ -1,7 +1,7 @@
 # downloaded from Appears portal using NEON lat/long from site info CSV
-source("/projectnb/dietzelab/zrwerbin/microbialForecasts/source.R")
+source(here::here("source.R"))
 
-modis_in <- read.csv("/projectnb/dietzelab/zrwerbin/microbialForecasts/data/clean/neon-allsites-MCD12Q2-006-results.csv")
+modis_in <- read.csv(here::here("data/clean/neon-allsites-MCD12Q2-006-results.csv"))
 
 modis_long <- modis_in %>% select(1:28) %>% 
 	pivot_longer(cols = 6:28) %>% 

@@ -4,7 +4,7 @@ library(ranomaly)
 library(phyloseq)
 library(dplyr)
 
-source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
+source(here::here("functions/helperFunctions.r"))
 
 #### Prep legacy ASV table (from old processing) ####
 library(dada2)

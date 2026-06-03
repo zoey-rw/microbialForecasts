@@ -2,7 +2,7 @@ library(ranomaly)
 library(easycsv)
 library(tidyverse)
 
-# all_mcc <- fread_folder(directory = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/mcc",
+# all_mcc <- fread_folder(directory = here::here("data/raw/mcc"),
 # 						 extension = "csv", showProgress=T, combine="data.frame")
 # 
 # mcc_16S <- all_mcc %>% dplyr::filter(kingdom=="Bacteria") 
@@ -32,10 +32,10 @@ library(tidyverse)
 # }
 # 
 # seqtab_joined <- mergeSequenceTables(tables = each_site_otu, tryRC = T)
-# saveRDS(seqtab_joined, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/MCC_otu_16S.rds")
+# saveRDS(seqtab_joined, here::here("data/raw/MCC_otu_16S.rds"))
 
 
-seqtab_joined <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/MCC_otu_16S.rds")
+seqtab_joined <- readRDS(here::here("data/raw/MCC_otu_16S.rds"))
 dada_res <- list()
 dada_res$seqtab.export <- seqtab_joined
 dada_res$seqtab.nochim <- seqtab_joined
@@ -49,4 +49,4 @@ tax.table = assign_taxo_fun(dada_res = dada_res, id_db = c(tax1,tax2),
 														verbose = 3, output = out.file)
 
 
-saveRDS(each_site_otu, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/MCC_otu_16S.rds")
+saveRDS(each_site_otu, here::here("data/raw/MCC_otu_16S.rds"))

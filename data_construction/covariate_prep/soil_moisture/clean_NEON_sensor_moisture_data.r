@@ -3,15 +3,15 @@ library(dplyr)
 library(neonstore)
 
 # 12 million rows. oy vey.
-#NEON_moist_30m_orig <- fread("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEONSoilMoist_daily/rawMoistStacked.rds/stackedFiles/SWS_30_minute.csv")
+#NEON_moist_30m_orig <- fread(here::here("data/raw/NEONSoilMoist_daily/rawMoistStacked.rds/stackedFiles/SWS_30_minute.csv"))
 
 
 # Read in data and see what's successfully downloaded.
-# existing_files <- list.files(path = "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEONSoilMoist_raw/", pattern = "z10_approach", full.names = T)
+# existing_files <- list.files(path = here::here("data/raw/NEONSoilMoist_raw/"), pattern = "z10_approach", full.names = T)
 # df.list <- lapply(existing_files, readRDS)
 # NEON_moist_30m_orig <- data.table(do.call(plyr::rbind.fill, df.list))) # combine into df of unique site/months
 
-NEON_moist_30m_orig <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/raw/NEONSoilMoist_raw_allsites.rds")
+NEON_moist_30m_orig <- readRDS(here::here("data/raw/NEONSoilMoist_raw_allsites.rds"))
 # subset to second shallowest depth, because this has the closest correlation with sampled moisture values.
 #NEON_moist_30m <- NEON_moist_30m_orig[NEON_moist_30m_orig$verticalPosition %in% c(502,2),] # JK something is wrong with the loading of these files so we have to use the shallowest sensors.
 NEON_moist_30m <- NEON_moist_30m_orig[NEON_moist_30m_orig$verticalPosition %in% c(501,1),]
@@ -83,7 +83,7 @@ for (s in 1:length(sites)) { #loop through all sites
   NEON_moist_monthly_allsite[[s]] <- NEON_moist_monthly
 }
 NEON_moist_monthly_all <- do.call(rbind, NEON_moist_monthly_allsite)  
-saveRDS(NEON_moist_monthly_all, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/NEONSoilMois_monthly_allsites.rds")
+saveRDS(NEON_moist_monthly_all, here::here("data/clean/NEONSoilMois_monthly_allsites.rds"))
 
 
 
@@ -159,5 +159,5 @@ saveRDS(NEON_moist_monthly_all, "/projectnb2/talbot-lab-data/zrwerbin/temporal_f
 #   NEON_moist_weekly_allsite[[s]] <- NEON_moist_weekly
 # }
 # NEON_moist_weekly_all <- do.call(rbind, NEON_moist_weekly_allsite)  
-# saveRDS(NEON_moist_weekly_all, "/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/NEONSoilMoist_weekly_5sites.rds")
+# saveRDS(NEON_moist_weekly_all, here::here("data/clean/NEONSoilMoist_weekly_5sites.rds"))
 

@@ -12,22 +12,29 @@ source("source.R")
 # ── Data loading ─────────────────────────────────────────────────────────────
 phenophase_in <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))
 
-# Element 1: one row per model_id — dominant (modal) phenophase + amplitude.
-# Used by Panel A (proportion of taxa peaking in each phenophase) and Panel C
-# (lollipop of seasonal amplitude). These are modal-peak questions.
-seasonality_mode_max <- phenophase_in[[1]]
-
-# Panel B asks a different question — "how does abundance shape within each
-# taxon look across the four phenophases" — which requires every monthly
-# estimate, not just the per-site-year peak. Aggregate element [[6]] (full
-# monthly view) to one row per model x phenophase. The shape matches the old
-# element [[5]] so Panel B's normalization logic still works.
+# Per-model x phenophase mean modeled abundance, derived from the full monthly
+# view (element 6). This is the foundation for all three panels: Panel B uses
+# the full shape; Panels A and C derive each model's "peak phenophase" as the
+# phenophase with the highest mean modeled abundance (mean-monthly approach),
+# rather than the modal annual-argmax (element 1). The mean-monthly definition
+# accounts for phenophase duration and matches the seasonal-niche
+# interpretation in the main text.
 seasonality_mode_all <- phenophase_in[[6]] %>%
   group_by(model_id, sampling_season, fcast_type, pretty_group, rank_only,
            model_name, taxon, amplitude, significant_sin, significant_cos) %>%
   summarise(mean_abun = mean(mean_modeled_abun, na.rm = TRUE),
             n = n(),
             .groups = "drop")
+
+# One row per model: the phenophase with highest mean modeled abundance.
+seasonality_mode_max <- seasonality_mode_all %>%
+  group_by(model_id, fcast_type, pretty_group, rank_only, model_name, taxon,
+           amplitude, significant_sin, significant_cos) %>%
+  slice_max(mean_abun, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(model_id, fcast_type, pretty_group, rank_only, model_name, taxon,
+         amplitude, significant_sin, significant_cos,
+         sampling_season, mean_abun)
 
 # ── Display settings ─────────────────────────────────────────────────────────
 pheno_levels <- c("greenup", "peak", "greendown", "dormancy")
@@ -57,7 +64,7 @@ sig_all <- seasonality_mode_all %>%
     fcast_type      = recode(fcast_type, !!!fcast_labels)
   )
 
-# ── Panel A: proportion of taxa with modal peak in each phenophase ────────────
+# ── Panel A: proportion of taxa whose mean-monthly peak falls in each phase ──
 prop_data <- sig_max %>%
   count(fcast_type, pretty_group, sampling_season) %>%
   group_by(fcast_type, pretty_group) %>%

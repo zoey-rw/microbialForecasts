@@ -4,7 +4,7 @@ require(tibble)
 require(purrr)
 require(dplyr)
 require(tidyr)
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
+source(here::here("source.R"))
 
 # # Read in covariate data chem_in <- readRDS("./data/clean/soilChemPlot.rds")
 moisture <- readRDS("./data/clean/monthly_soil_moisture.rds")
