@@ -94,9 +94,13 @@ data/raw/
 data/clean/
 data/processed/
 data/model_outputs/
+data/hindcasts/
 data/cache/
 *.rds
 *.RDS
+*.Rdata
+*.RData
+*.parquet
 *.csv
 *.tsv
 *.xlsx
