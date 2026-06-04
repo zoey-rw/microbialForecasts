@@ -63,8 +63,101 @@ if (nrow(scatter_data) > 0 && "pretty_group" %in% names(scatter_data) &&
 
 
 if (!is.null(scatter_overall)) {
-  png(here("figures","model_r2_by_kingdom.png"), width = 1200, height=800)
-  print(scatter_overall)
+  # ── Panel G: per-taxon benefit of adding environment to seasonality ──────────
+  # Paired ΔR² (env_cycl − cycl_only) for each taxon that converged under both
+  # predictor sets. Most taxa sit at or below zero: adding measured environmental
+  # drivers does not improve forecast R² beyond the seasonal cycle. Because the
+  # hindcasts supply observed forecast-period drivers (only measurement
+  # uncertainty propagated), this reflects collinearity of the dynamic drivers
+  # with season rather than an inability to forecast future drivers.
+  converged_base_delta <- gsub("_beta_regression$", "",
+                               scores_list$converged_strict_list)
+  delta_rsq <- scores_list$scoring_metrics %>%
+    filter(model_id %in% converged_base_delta,
+           site_prediction == "New time (observed site)",
+           !is.na(pretty_group)) %>%
+    select(species, pretty_group, model_name, RSQ) %>%
+    tidyr::pivot_wider(names_from = model_name, values_from = RSQ) %>%
+    filter(!is.na(cycl_only), !is.na(env_cycl)) %>%
+    mutate(d_rsq = env_cycl - cycl_only)
+
+  # Discrete y plots the first level at the bottom; list Fungi first so Bacteria
+  # sits on top, matching the Bacteria-top / Fungi-bottom order of panels A–F.
+  delta_rsq <- delta_rsq %>%
+    mutate(pretty_group = factor(pretty_group, levels = c("Fungi", "Bacteria")))
+
+  delta_annot <- delta_rsq %>%
+    group_by(pretty_group) %>%
+    summarise(n = n(),
+              pct_up = round(100 * mean(d_rsq > 0)),
+              p = wilcox.test(env_cycl, cycl_only, paired = TRUE)$p.value,
+              .groups = "drop") %>%
+    # Short in-figure label (p-value and n are reported in the caption); placed
+    # above the improved side, clear of the extreme-taxa labels.
+    mutate(lab  = paste0(pct_up, "% of taxa improved"),
+           ypos = as.integer(pretty_group) + 0.55)
+
+  # Label a few extreme taxa on each side of each violin (most-helped and
+  # most-hurt by adding environment). Names prettified for display.
+  n_label <- 3
+  extreme_taxa <- delta_rsq %>%
+    group_by(pretty_group) %>%
+    mutate(r_lo = rank(d_rsq,  ties.method = "first"),
+           r_hi = rank(-d_rsq, ties.method = "first")) %>%
+    filter(r_lo <= n_label | r_hi <= n_label) %>%
+    ungroup() %>%
+    mutate(label = gsub("_", " ", species),
+           label = paste0(toupper(substr(label, 1, 1)), substring(label, 2)))
+
+  if (requireNamespace("ggrepel", quietly = TRUE)) library(ggrepel)
+
+  # Horizontal violins (kingdom on y) so the wide panel is not squashed.
+  deltaR2_panel <- ggplot(delta_rsq, aes(d_rsq, pretty_group, fill = pretty_group)) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+    # Directional guide anchored at the zero line so it is immediately clear
+    # which side means "adding environment helped".
+    annotate("segment", x = 0.015, xend = 0.17, y = 0.28, yend = 0.28,
+             arrow = grid::arrow(length = unit(0.18, "cm")),
+             color = "grey25", linewidth = 0.5) +
+    annotate("text", x = 0.015, y = 0.06, hjust = 0, vjust = 1, size = 4.6,
+             fontface = "italic", color = "grey25",
+             label = "adding environment improves R²") +
+    annotate("segment", x = -0.015, xend = -0.17, y = 0.28, yend = 0.28,
+             arrow = grid::arrow(length = unit(0.18, "cm")),
+             color = "grey25", linewidth = 0.5) +
+    annotate("text", x = -0.015, y = 0.06, hjust = 1, vjust = 1, size = 4.6,
+             fontface = "italic", color = "grey25",
+             label = "adding environment lowers R²") +
+    geom_violin(alpha = 0.4, color = NA, show.legend = FALSE) +
+    geom_boxplot(width = 0.12, outlier.shape = NA, alpha = 0.8, show.legend = FALSE) +
+    geom_jitter(width = 0, height = 0.08, alpha = 0.3, size = 1.5, show.legend = FALSE) +
+    ggrepel::geom_text_repel(
+      data = extreme_taxa, aes(x = d_rsq, y = pretty_group, label = label),
+      inherit.aes = FALSE, size = 3.9, color = "grey15", segment.color = "grey65",
+      min.segment.length = 0, box.padding = 0.45, max.overlaps = Inf, seed = 1,
+      nudge_y = ifelse(extreme_taxa$d_rsq < 0, -0.30, 0.22), direction = "both") +
+    # Place the "% improved" summary on the improved (right / ΔR² > 0) side so it
+    # reads with the data it describes, not over the unimproved left tail.
+    geom_text(data = delta_annot, aes(x = Inf, y = ypos, label = lab),
+              hjust = 1.03, vjust = 0.5, size = 5, fontface = "bold",
+              inherit.aes = FALSE) +
+    scale_fill_manual(values = kingdom_colors) +
+    scale_x_continuous(expand = expansion(mult = c(0.16, 0.12))) +
+    scale_y_discrete(expand = expansion(add = c(1.5, 1.0))) +
+    labs(y = NULL,
+         x = expression(atop(
+           "Change in forecast "*italic(R)^2*" from adding environmental predictors",
+           Delta*italic(R)^2~"(env + seasonality − seasonality)"))) +
+    theme_classic(base_size = 18) +
+    theme(plot.margin = unit(c(0.5, 1, 0.5, 1), "cm"))
+
+  # Composite Figure 4: scatter grid (A–F) over the per-taxon ΔR² panel (G).
+  fig4_composite <- ggpubr::ggarrange(scatter_overall, deltaR2_panel,
+                                      nrow = 2, heights = c(2, 1.1),
+                                      labels = c("", "G"),
+                                      font.label = list(size = 20))
+  png(here("figures","model_r2_by_kingdom.png"), width = 1200, height = 1220)
+  print(fig4_composite)
   dev.off()
 
   # Forecast horizon by model type (same layout as R²: kingdom x model type)

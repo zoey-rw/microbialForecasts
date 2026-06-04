@@ -99,3 +99,19 @@ cat("  Fungal:   ", sum(fieldsites_samples$`Calibration fungal samples`,    na.r
 cat("Totals (validation", CAL_MAX, "->", VAL_MAX, "):\n")
 cat("  Bacterial:", sum(fieldsites_samples$`Validation bacterial samples`, na.rm = TRUE), "\n")
 cat("  Fungal:   ", sum(fieldsites_samples$`Validation fungal samples`,    na.rm = TRUE), "\n")
+
+# Raw ESV table sizes reported in the Methods ("Bioinformatics and Data
+# Processing"). The DADA2/singleton-removal ESV tables are the phyloseq objects
+# copied from the upstream HPC pipeline: ntaxa() is the number of ESVs and
+# nsamples() the number of samples, per kingdom.
+if (requireNamespace("phyloseq", quietly = TRUE)) {
+	ps_16s <- readRDS(here("data/clean/phyloseq_16S.rds"))
+	ps_its <- readRDS(here("data/clean/phyloseq_ITS.rds"))
+	cat("Raw ESV tables (after DADA2 processing and singleton removal):\n")
+	cat("  Bacterial:", phyloseq::ntaxa(ps_16s), "ESVs across",
+			phyloseq::nsamples(ps_16s), "samples\n")
+	cat("  Fungal:   ", phyloseq::ntaxa(ps_its), "ESVs across",
+			phyloseq::nsamples(ps_its), "samples\n")
+} else {
+	cat("phyloseq not installed; skipping raw ESV table size report\n")
+}
