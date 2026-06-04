@@ -209,6 +209,9 @@ response_to_reviewers.tex
 model_descriptions.tex
 convert_manuscript.py
 add_linelabels.py
+apply_figure_ref_conversion.py
+audit_manuscript_figures.py
+Response to reviewers*.md
 zotero_references.bib
 *.loc
 *.soc
