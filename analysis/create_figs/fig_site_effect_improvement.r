@@ -3,7 +3,9 @@
 # Positive = modeled site effect is more accurate than random.
 #
 # Panel A: Distribution of improvement (%) across taxa, faceted by model type
-# Panel B: Overall mean ± SD improvement by model type and kingdom
+# Panel B: Mean improvement by model type and kingdom, with 95% CI of the mean
+#          (1.96*SE). SE, not SD: the bars show uncertainty in the mean, not the
+#          taxon-to-taxon spread (which is wide because some taxa worsen).
 # Panel C: Prediction vs truth scatter (env_cycl, unobserved sites)
 
 source("source.R")
@@ -76,19 +78,21 @@ improvement_summary <- scores_wide %>%
     sd_pct   = sd(improvement_pct,   na.rm = TRUE),
     pct_improved = 100 * mean(improved, na.rm = TRUE),
     n        = n(),
+    se_pct   = sd_pct / sqrt(n),
+    ci_pct   = 1.96 * se_pct,
     .groups  = "drop"
   )
 
 panel_b <- ggplot(improvement_summary,
                   aes(x = model_label, y = mean_pct, color = pretty_group)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
-  geom_pointrange(aes(ymin = mean_pct - sd_pct,
-                      ymax = mean_pct + sd_pct),
+  geom_pointrange(aes(ymin = mean_pct - ci_pct,
+                      ymax = mean_pct + ci_pct),
                   position = position_dodge(width = 0.4),
                   linewidth = 0.8, size = 0.7) +
   scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(x = "Model type",
-       y = "Mean CRPS improvement (%)") +
+       y = "Mean CRPS improvement (%) ± 95% CI") +
   base_theme +
   theme(legend.position = "right")
 

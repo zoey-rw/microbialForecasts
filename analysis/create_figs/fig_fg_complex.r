@@ -20,9 +20,13 @@ pheno_data <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))[[6]]
 fungal_guilds <- c("saprotroph", "ectomycorrhizal", "plant_pathogen",
                    "animal_pathogen")
 
+# Restrict to env_cycl so dormancy predictions are anchored to year-round soil
+# temperature and moisture sensors, not pure sinusoidal extrapolation from the
+# Apr-Oct-dominated NEON sampling window.
 guild_data <- pheno_data %>%
   filter(taxon %in% fungal_guilds,
-         model_id %in% converged) %>%
+         model_id %in% converged,
+         model_name == "env_cycl") %>%
   mutate(pretty_name = recode(taxon, !!!microbialForecast:::pretty_names))
 
 cat("Guild data:", nrow(guild_data), "observations across",

@@ -1,5 +1,7 @@
-# Combined figure: Precision parameter (A), Proportion significant predictors (B),
-# Forecast error by functional group source (C), Fungal guild phenology (D).
+# Main figure (fig3): Precision parameter (A), Proportion significant predictors (B),
+# Fungal guild phenology (C, formerly D).
+# Forecast error by functional group evidence source is now saved as a separate
+# supplementary figure (figS_fg_evidence_source) rather than a panel of fig3.
 # Source scripts: compare_core_sd_rho.r, fig5_eff_size.r, fig_compareFunctionalCategories.r
 
 source("source.R")
@@ -208,7 +210,8 @@ pB <- ggplot(sig_summary, aes(x = beta_pretty, y = sig_rate, fill = fcast_type))
         legend.key.size = unit(0.4, "cm"))
 
 # =============================================================================
-# Panel C: Forecast error by functional group source
+# Supplementary figure: Forecast error by functional group evidence source
+# (formerly panel C of fig3; now saved standalone as figS_fg_evidence_source)
 # =============================================================================
 scores_list <- readRDS(here("data", "summary/scoring_metrics_plsr2.rds"))
 
@@ -331,7 +334,7 @@ if (nrow(sig_tukey) > 0) {
   y_ceiling <- max_score * 3
 }
 
-pC <- ggplot(fg_source_data, aes(x = fg_source, y = as.numeric(score),
+p_fg_source <- ggplot(fg_source_data, aes(x = fg_source, y = as.numeric(score),
                                   color = pretty_group)) +
   geom_point(size = 2.5, alpha = 0.5,
              position = position_jitter(width = 0.15, height = 0, seed = 42)) +
@@ -351,7 +354,7 @@ pC <- ggplot(fg_source_data, aes(x = fg_source, y = as.numeric(score),
         legend.key.size = unit(0.4, "cm"))
 
 # =============================================================================
-# Panel D: Fungal guild seasonal phenology aligned to plant phenophase
+# Panel C (formerly D): Fungal guild seasonal phenology aligned to plant phenophase
 # =============================================================================
 converged <- scores_list$converged_list
 
@@ -364,9 +367,14 @@ pheno_data <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))[[6]]
 fungal_guilds <- c("saprotroph", "ectomycorrhizal", "plant_pathogen",
                    "animal_pathogen")
 
+# Restrict to env_cycl so dormancy predictions are anchored to year-round soil
+# temperature and moisture sensors, not pure sinusoidal extrapolation. NEON
+# cores are sampled mostly Apr-Oct, so cycl_only's dormancy predictions are
+# largely extrapolated and over-weight the long dormancy window.
 guild_data <- pheno_data %>%
   filter(taxon %in% fungal_guilds,
-         model_id %in% converged) %>%
+         model_id %in% converged,
+         model_name == "env_cycl") %>%
   mutate(pretty_name = recode(taxon, !!!microbialForecast:::pretty_names))
 
 # Aggregate: mean abundance per guild x phenophase, min-max scaled
@@ -445,18 +453,29 @@ pD <- ggplot(guild_pheno, aes(x = season_label, y = scaled,
   theme(axis.text.x = element_text(size = BASE_SIZE))
 
 # =============================================================================
-# Assemble: 2-row layout — [A | B] over [C | D]
+# Assemble main figure: A (violin) full width on top, B (bars) + C (phenology)
+# below. tag_levels = "A" letters the panels A, B, C in patchwork order.
 # =============================================================================
-top_row <- pA + pB + plot_layout(widths = c(1, 2))
-bottom_row <- pC + pD + plot_layout(widths = c(1, 1))
-combined <- top_row / bottom_row +
-  plot_layout(heights = c(1, 1)) +
+bottom_row <- pB + pD + plot_layout(widths = c(2, 1.4))
+combined <- pA / bottom_row +
+  plot_layout(heights = c(0.85, 1.15)) +
   plot_annotation(tag_levels = "A")
 
 ggsave(here("figures", "fig3_functional_group_error.pdf"), combined,
-       width = 15, height = 10, dpi = 300)
+       width = 13, height = 11, dpi = 300)
 ggsave(here("figures", "fig3_functional_group_error.png"), combined,
-       width = 15, height = 10, dpi = 300)
+       width = 13, height = 11, dpi = 300)
 
-cat("Saved: figures/combined_precision_significance_fg_source.pdf\n")
-cat("Saved: figures/combined_precision_significance_fg_source.png\n")
+cat("Saved: figures/fig3_functional_group_error.pdf\n")
+cat("Saved: figures/fig3_functional_group_error.png\n")
+
+# =============================================================================
+# Supplementary figure: forecast error by functional group evidence source
+# =============================================================================
+ggsave(here("figures", "figS_fg_evidence_source.pdf"), p_fg_source,
+       width = 9, height = 7, dpi = 300)
+ggsave(here("figures", "figS_fg_evidence_source.png"), p_fg_source,
+       width = 9, height = 7, dpi = 300)
+
+cat("Saved: figures/figS_fg_evidence_source.pdf\n")
+cat("Saved: figures/figS_fg_evidence_source.png\n")

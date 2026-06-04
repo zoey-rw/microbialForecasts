@@ -22,6 +22,7 @@ tree_for_k = results$tree_for_k
 trait_data = results$trait_data
 full_phylo_res = results$res_out
 phylo_res_means = results$phylo_res_means
+null_ses = results$null_ses
 
 # Filter to environmental traits only (exclude scoring metrics)
 traits_to_keep <- c("Temperature", "Moisture", "pH", "pC", "LAI", "Ecto")
@@ -33,6 +34,15 @@ trait_labels <- c(Temperature = "Temperature", Moisture = "Moisture",
 phylo_res_means <- phylo_res_means %>%
 	filter(!is.na(rank) & trait.name %in% traits_to_keep) %>%
 	mutate(trait.name = factor(trait.name, levels = traits_to_keep))
+
+# Clade-size-matched null expectation (from the permutation test) for the overlay
+# band on the contribution-index figure and the standardized-effect-size panel.
+null_overlay <- null_ses %>%
+	filter(trait.name %in% traits_to_keep) %>%
+	mutate(trait.name = factor(trait.name, levels = traits_to_keep),
+				 rank = factor(as.character(rank),
+				 							levels = c("phylum", "class", "order", "family", "genus"),
+				 							ordered = TRUE))
 
 full_phylo_res <- full_phylo_res %>%
 	filter(!is.na(rank) & trait.name %in% traits_to_keep) %>%
@@ -76,6 +86,14 @@ phylo_ci <- ggplot(phylo_res_means,
 			 aes(x = as.numeric(rank),
 			 		y = mean_ContributionIndex,
 			 		color = trait.name))  +
+	# Grey band = central 95% of the clade-size-matched null; dashed line = null mean.
+	# Observed points above the band exceed the clade-size expectation.
+	geom_ribbon(data = null_overlay,
+							aes(x = as.numeric(rank), ymin = null_lower, ymax = null_upper),
+							inherit.aes = FALSE, fill = "grey70", alpha = 0.35) +
+	geom_line(data = null_overlay,
+						aes(x = as.numeric(rank), y = null_mean),
+						inherit.aes = FALSE, color = "grey40", linetype = "dashed", linewidth = 0.6) +
 	geom_pointrange(aes(ymax = upper_limit, ymin = lower_limit),
 									size = 1.2, linewidth = 1.5, show.legend = FALSE) +
 	facet_wrap(~trait.name, scales = "free_y", ncol = 3,
@@ -99,6 +117,33 @@ phylo_ci <- ggplot(phylo_res_means,
 
 ggsave(here("figures","phylo_ci.png"), phylo_ci, width = 9, height = 7, dpi = 300)
 cat("Saved: figures/phylo_ci.png\n")
+
+# Standardized-effect-size panel: observed contribution index vs the clade-size
+# matched null, expressed as (observed - null mean) / null SD. Points above the
+# dotted line at +1.96 exceed the null at ~95%; points below 0 are less
+# conserved than random (the genus-rank signature of trait conservatism).
+phylo_ses <- ggplot(null_overlay,
+			 aes(x = as.numeric(rank), y = SES, color = trait.name)) +
+	geom_hline(yintercept = 0, color = "grey50") +
+	geom_hline(yintercept = c(-1.96, 1.96), color = "grey80", linetype = "dotted") +
+	geom_point(size = 2.5, show.legend = FALSE) +
+	geom_line(linewidth = 0.8, show.legend = FALSE) +
+	facet_wrap(~trait.name, ncol = 3, labeller = labeller(trait.name = trait_labels)) +
+	scale_x_continuous(breaks = 1:5,
+										 labels = c("Phylum", "Class", "Order", "Family", "Genus")) +
+	scale_color_manual(values = c(Temperature = "#D55E00", Moisture = "#56B4E9",
+																pH = "#0072B2", pC = "#009E73",
+																LAI = "#E69F00", Ecto = "#CC79A7")) +
+	xlab("Taxonomic rank") +
+	ylab("Standardized effect size\n(observed − null) / null SD") +
+	theme_bw(base_size = 14) +
+	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+				strip.background = element_rect(fill = "white"),
+				strip.text = element_text(face = "bold", size = 12),
+				panel.grid.minor = element_blank())
+
+ggsave(here("figures","phylo_ci_ses.png"), phylo_ses, width = 9, height = 7, dpi = 300)
+cat("Saved: figures/phylo_ci_ses.png\n")
 
 # Tree visualization using the phylo tree object with trait annotations
 library(ape)

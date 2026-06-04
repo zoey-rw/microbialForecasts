@@ -129,7 +129,10 @@ rmse_rank_plot <- ggplot(rmse_values,
   facet_wrap(~pretty_group, scales = "free_y", nrow = 1) +
   scale_color_manual(values = kingdom_colors) +
   scale_fill_manual(values  = kingdom_colors) +
-  scale_y_continuous(trans = pseudolog10_trans) +
+  # Extra top headroom so the Tukey letters (placed at 1.3x the group max)
+  # are not pressed into or clipped by the panel ceiling.
+  scale_y_continuous(trans = pseudolog10_trans,
+                     expand = expansion(mult = c(0.04, 0.15))) +
   labs(x = NULL, y = "Relative forecast error (nRMSE)") +
   base_theme +
   theme(plot.margin = margin(0.3, 0.5, 0.3, 0.3, "cm"))
@@ -155,21 +158,27 @@ rmse_fb_plot <- ggplot(rmse_values,
 
 # ── Panel D: new-site transferability by kingdom ───────────────────────────────
 skill_score_species_data <- scores_list$skill_score_species %>%
-  filter(model_id %in% converged_base)
+  filter(model_id %in% converged_base) %>%
+  # Clip the plotted value to ±100% (as the axis label states) so points and
+  # the significance bracket share one bounded range.
+  mutate(skill_pct = pmax(pmin(skill_score * 100, 100), -100))
 
 newsite_fb_plot <- ggplot(skill_score_species_data,
-                          aes(x = pretty_group, y = skill_score * 100,
+                          aes(x = pretty_group, y = skill_pct,
                               fill = pretty_group, color = pretty_group)) +
   geom_violin(alpha = 0.45, quantiles = 0.5, show.legend = FALSE) +
   geom_point(shape = 21, fill = "white", size = 2,
              position = position_jitter(width = 0.1, height = 0),
              alpha = 0.35, show.legend = FALSE) +
   geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.7) +
+  # Pin the bracket below the top of the (expanded) view, leaving room above it
+  # for the asterisk text so neither the bracket nor the label is clipped.
   stat_compare_means(comparisons = comparisons_kingdom,
-                     method = "wilcox.test", label = "p.signif", size = 5) +
+                     method = "wilcox.test", label = "p.signif", size = 5,
+                     label.y = 106) +
   scale_color_manual(values = kingdom_colors) +
   scale_fill_manual(values  = kingdom_colors) +
-  coord_cartesian(ylim = c(-100, 100)) +
+  coord_cartesian(ylim = c(-100, 128)) +
   labs(x = NULL,
        y = "Transferability to new sites\n(% change in CRPS, clipped ±100%)") +
   base_theme +
@@ -191,7 +200,10 @@ crps_rank_plot <- ggplot(plotting_df_rank_scores %>% filter(metric == "mean_crps
   facet_wrap(~pretty_group, scales = "free_y", nrow = 1) +
   scale_color_manual(values = kingdom_colors) +
   scale_fill_manual(values  = kingdom_colors) +
-  scale_y_continuous(trans = pseudolog10_trans) +
+  # Extra top headroom so the Tukey letters (placed at 1.3x the group max)
+  # are not pressed into or clipped by the panel ceiling.
+  scale_y_continuous(trans = pseudolog10_trans,
+                     expand = expansion(mult = c(0.04, 0.15))) +
   labs(x = NULL, y = "Absolute forecast error (CRPS)") +
   base_theme +
   theme(plot.margin = margin(0.3, 0.5, 0.3, 0.3, "cm"))
@@ -258,14 +270,18 @@ horizon_plot_f <- ggplot(fcast_horizon_data,
                          aes(y = pretty_group, x = forecast_horizon,
                              fill = pretty_group, color = pretty_group)) +
   geom_violin(alpha = 0.45, quantiles = 0.5, show.legend = FALSE) +
+  # Horizon values are discrete (whole/half months), so points pile up at each
+  # value — jitter on both axes spreads the overlap while staying near the value.
   geom_point(shape = 21, fill = "white", size = 2,
-             position = position_jitter(width = 0, height = 0.1),
+             position = position_jitter(width = 0.1, height = 0.18),
              alpha = 0.45, show.legend = FALSE) +
   annotate("text",
            x = max(fcast_horizon_data$forecast_horizon, na.rm = TRUE) * 1.02,
            y = 1.5, label = .horizon_signif, size = 5) +
   scale_color_manual(values = kingdom_colors) +
   scale_fill_manual(values  = kingdom_colors) +
+  # Right-side headroom so the significance annotation isn't clipped at the edge.
+  scale_x_continuous(expand = expansion(mult = c(0.04, 0.10))) +
   labs(y = NULL, x = "Forecast horizon (months since last observation)") +
   base_theme +
   theme(axis.text.x        = element_text(angle = 0, hjust = 0.5),
@@ -340,7 +356,13 @@ ggsave(file.path(out_dir, "supp_figure_2_kingdom.png"), fig_kingdom_supp,
        width = 8, height = 5, dpi = 300, units = "in")
 cat("Saved: supp_figure_2_kingdom.png\n")
 
-# ── Supplementary S2: all metrics × groups × model types ──────────────────────
+# ── Supplementary S1: forecast metrics by rank + how the metrics relate ────────
+# Panel A: the four forecast metrics across taxonomic ranks and functional
+#   groups, restricted to the env_cycl model so the panels are legible (the
+#   previous version overplotted all three predictor sets).
+# Panel B: Spearman correlations among the metrics (also env_cycl), showing they
+#   fall into a few families — the absolute-error metrics are redundant, while
+#   the R-squared family and nRMSE measure separate things.
 metric.labs.full <- c(
   RMSE.norm      = "Relative forecast\nerror (nRMSE)",
   mean_crps      = "Absolute forecast\nerror (CRPS)",
@@ -351,34 +373,77 @@ metric.labs.full <- c(
 
 rank_models_data <- scores_list$scoring_metrics_long %>%
   filter(model_id %in% converged_base,
+         model_name == "env_cycl",
          metric %in% c("CRPS_truncated", "RMSE.norm", "RSQ", "RSQ.1"),
          site_prediction == "New time (observed site)") %>%
-  create_rank_grouping()
+  create_rank_grouping() %>%
+  # Order the metric facets logically (error metrics, then the R-squared pair).
+  mutate(metric = factor(metric,
+                         levels = c("CRPS_truncated", "RMSE.norm", "RSQ", "RSQ.1")))
 
+# 2x2 layout (metric facets) with the two kingdoms dodged within each panel —
+# far more compact than the previous 4x2 grid, so it balances the heatmap below.
 rank_models <- ggplot(rank_models_data,
-                      aes(x = pretty_name, y = score, color = model_name)) +
-  geom_violin(quantiles = 0.5, show.legend = FALSE) +
-  geom_point(size = 2,
-             position = position_jitterdodge(jitter.width = 0.2),
-             alpha = 0.3) +
-  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.6, color = "grey40") +
-  facet_grid(metric ~ pretty_group, scales = "free_y",
+                      aes(x = pretty_name, y = score,
+                          color = pretty_group, fill = pretty_group)) +
+  geom_violin(alpha = 0.30, linewidth = 0.5, quantiles = 0.5,
+              position = position_dodge(width = 0.8)) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.12, dodge.width = 0.8),
+             size = 1.3, alpha = 0.30, show.legend = FALSE) +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.5, color = "grey40") +
+  facet_wrap(~ metric, scales = "free_y", nrow = 2,
              labeller = labeller(metric = metric.labs.full)) +
-  scale_color_manual(values = model_colors,
-                     labels = model.labs,
-                     name   = "Model predictors") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
+  scale_fill_manual(values  = kingdom_colors, name = NULL) +
+  scale_x_discrete(labels = function(x) sub("Functional group", "Func. group", x)) +
   scale_y_continuous(trans = pseudolog10_trans) +
-  labs(x = NULL, y = "Forecast metric") +
+  labs(x = NULL, y = "Forecast metric value") +
   base_theme +
-  theme(plot.margin     = margin(1, 2, 1, 1, "cm"),
-        legend.position = "right") +
-  tag_facets() +
-  theme(tagger.panel.tag.text       = element_text(size = 14),
-        tagger.panel.tag.background = element_rect(fill = "white", color = "white"))
+  theme(legend.position = "top",
+        legend.text     = element_text(size = 13),
+        panel.spacing   = unit(0.6, "lines"),
+        plot.margin     = margin(0.2, 0.4, 0.2, 0.2, "cm"))
 
-rank_models
-ggsave(file.path(out_dir, "figS1_forecast_metrics_rank.png"), rank_models,
-       width = 10, height = 20, dpi = 300, units = "in")
+# ── Panel B: metric correlation heatmap (env_cycl) ────────────────────────────
+metric_pretty <- c(RSQ = "R²", RSQ.1 = "R² vs 1:1", CRPS_truncated = "CRPS",
+                   RMSE = "RMSE", MAE = "MAE", BIAS = "|BIAS|", RMSE.norm = "nRMSE")
+heat_in <- scores_list$scoring_metrics %>%
+  filter(model_id %in% converged_base,
+         model_name == "env_cycl",
+         site_prediction == "New time (observed site)") %>%
+  transmute(RSQ, RSQ.1, CRPS_truncated, RMSE, MAE,
+            BIAS = abs(BIAS), RMSE.norm) %>%
+  filter(if_all(everything(), is.finite))
+cmat      <- cor(heat_in, method = "spearman")
+ord       <- hclust(as.dist(1 - abs(cmat)))$order   # group metrics that covary
+heat_labs <- metric_pretty[colnames(cmat)[ord]]
+cdf <- as.data.frame(as.table(cmat[ord, ord])) %>%
+  setNames(c("m1", "m2", "rho")) %>%
+  mutate(m1 = factor(metric_pretty[as.character(m1)], levels = heat_labs),
+         m2 = factor(metric_pretty[as.character(m2)], levels = heat_labs))
+
+# No coord_equal: let the tiles fill the panel width so the heatmap is not a
+# small square floating in whitespace under the wider panel A.
+heat_plot <- ggplot(cdf, aes(m1, m2, fill = rho)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = sprintf("%.2f", rho)), size = 4.3) +
+  scale_fill_gradient2(low = "#3A6CA8", mid = "white", high = "#B2182B",
+                       midpoint = 0, limits = c(-1, 1), name = "Spearman ρ") +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  labs(x = NULL, y = NULL) +
+  theme_bw(base_size = 14) +
+  theme(axis.text.x     = element_text(angle = 35, hjust = 1),
+        panel.grid      = element_blank(),
+        legend.position = "right",
+        plot.margin     = margin(0.2, 0.4, 0.4, 0.6, "cm"))
+
+figS1_combined <- ggpubr::ggarrange(rank_models, heat_plot,
+                                    nrow = 2, heights = c(1.55, 1),
+                                    labels = c("A", "B"),
+                                    font.label = list(size = 18))
+ggsave(file.path(out_dir, "figS1_forecast_metrics_rank.png"), figS1_combined,
+       width = 10, height = 13, dpi = 300, units = "in")
 cat("Saved: figures/figS1_forecast_metrics_rank.png\n")
 
 # ============================================================================

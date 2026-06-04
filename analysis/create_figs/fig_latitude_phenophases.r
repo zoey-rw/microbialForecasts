@@ -5,6 +5,8 @@
 
 library(tidyverse)
 library(ggpubr)
+library(lme4)
+library(lmerTest)   # Satterthwaite p-values for the two-way mixed model in panel B
 
 source("source.R")
 
@@ -26,13 +28,13 @@ lat_df <- site_descr %>%
   select(siteID, latitude, MAT, MAP) %>%
   mutate(
     latitude_category = case_when(
-      latitude > 44  ~ "High (>44\u00b0N)",
-      latitude < 31  ~ "Low (<31\u00b0N)",
-      TRUE           ~ "Mid (31-44\u00b0N)"
+      latitude > 44  ~ "High (>44°N)",
+      latitude < 31  ~ "Low (<31°N)",
+      TRUE           ~ "Mid (31-44°N)"
     ),
     latitude_category = factor(
       latitude_category,
-      levels = c("Low (<31\u00b0N)", "Mid (31-44\u00b0N)", "High (>44\u00b0N)")
+      levels = c("Low (<31°N)", "Mid (31-44°N)", "High (>44°N)")
     )
   )
 
@@ -47,9 +49,9 @@ pheno_colors <- c(
 )
 
 lat_colors <- c(
-  "Low (<31\u00b0N)"  = "#D55E00",
-  "Mid (31-44\u00b0N)" = "#E69F00",
-  "High (>44\u00b0N)" = "#56B4E9"
+  "Low (<31°N)"  = "#D55E00",
+  "Mid (31-44°N)" = "#E69F00",
+  "High (>44°N)" = "#56B4E9"
 )
 
 # ── Panel A: seasonal relative-abundance profiles for focal FGs × latitude ────
@@ -66,7 +68,9 @@ fg_labels <- c(
 
 pA_data <- abun_data %>%
   filter(
-    model_name  == "cycl_only",
+    # env_cycl: dormancy predictions are anchored to year-round soil sensors
+    # rather than extrapolated from the Apr-Oct-dominated NEON sampling window.
+    model_name  == "env_cycl",
     fcast_type  == "Functional",
     taxon       %in% focal_fg,
     !is.na(mean_modeled_abun),
@@ -107,10 +111,16 @@ pA <- ggplot(pA_data,
     legend.position   = "right"
   )
 
-# ── Panel C: seasonal CV by latitude — Bacteria and Fungi combined ────────────
-# For each site × significantly seasonal taxon, compute seasonal CV.
-# Bacteria and Fungi are shown together (colored), faceted by model type.
-# Kruskal-Wallis p-value tests whether CV differs across latitude bands.
+# ── Panel B: latitude × kingdom interaction in seasonal variability ───────────
+# Seasonal CV (SD / mean of modeled abundance across phenophases) measures how
+# strongly a taxon's abundance swings over the season. We test whether that
+# variability depends on latitude, on kingdom, and -- the key question -- whether
+# the fungi-vs-bacteria difference itself changes across latitude bands.
+#
+# Unit of analysis is one CV per taxon per latitude band (median across the
+# sites it occupies in that band). This avoids the pseudoreplication of the
+# previous per-taxon-by-site version, where the same taxon counted once per site
+# and inflated the sample size into automatic significance.
 sig_models <- mode_data %>%
   filter(model_name == "env_cycl",
          significant_sin == 1 | significant_cos == 1) %>%
@@ -119,7 +129,7 @@ sig_models <- mode_data %>%
 site_cv <- abun_data %>%
   filter(model_id %in% sig_models,
          !is.na(mean_modeled_abun), !is.na(sampling_season)) %>%
-  group_by(model_id, fcast_type, pretty_group, siteID) %>%
+  group_by(model_id, pretty_group, siteID) %>%
   summarise(
     seasonal_cv = sd(mean_modeled_abun, na.rm = TRUE) /
                   mean(mean_modeled_abun, na.rm = TRUE),
@@ -128,122 +138,86 @@ site_cv <- abun_data %>%
   left_join(lat_df, by = "siteID") %>%
   filter(!is.na(latitude_category), is.finite(seasonal_cv))
 
+# Collapse to one value per taxon per latitude band
+taxon_cv <- site_cv %>%
+  group_by(model_id, pretty_group, latitude_category) %>%
+  summarise(cv = median(seasonal_cv, na.rm = TRUE), .groups = "drop")
+
 # kingdom_colors comes from source.R
 
-# Compute KW p-values per fcast_type × pretty_group stratum
-kw_annot <- site_cv %>%
-  group_by(fcast_type, pretty_group) %>%
-  summarise(
-    p_val = kruskal.test(seasonal_cv ~ latitude_category)$p.value,
-    n     = n(),
-    .groups = "drop"
-  ) %>%
-  mutate(
-    label = paste0(pretty_group, " KW p=", format.pval(p_val, digits = 2, eps = 0.001)),
-    # Place annotation at top of each facet, centered on mid latitude
-    latitude_category = factor("Mid (31-44\u00b0N)",
-                               levels = levels(site_cv$latitude_category)),
-    seasonal_cv = max(site_cv$seasonal_cv, na.rm = TRUE) *
-                  ifelse(pretty_group == "Bacteria", 0.98, 0.88)
-  )
+# Two-way mixed model: tests latitude, kingdom, and their interaction, with
+# taxon as a random intercept so repeated bands of the same taxon aren't treated
+# as independent.
+cv_mod <- lmer(cv ~ latitude_category * pretty_group + (1 | model_id),
+               data = taxon_cv)
+cv_aov <- anova(cv_mod)   # Type III, Satterthwaite df via lmerTest
 
-pC <- ggplot(site_cv,
-             aes(x = latitude_category, y = seasonal_cv, fill = pretty_group)) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.55, width = 0.6,
+pfmt <- function(p) ifelse(p < 0.001, "p < 0.001",
+                           paste0("p = ", formatC(p, format = "f", digits = 3)))
+stat_lab <- paste0(
+  "Latitude: ", pfmt(cv_aov["latitude_category", "Pr(>F)"]), "\n",
+  "Kingdom: ", pfmt(cv_aov["pretty_group", "Pr(>F)"]), "\n",
+  "Latitude × Kingdom: ",
+  pfmt(cv_aov["latitude_category:pretty_group", "Pr(>F)"])
+)
+
+# Clip the y-axis so the bulk of the distribution is legible; only a couple of
+# taxon-band points (both high-CV fungi) fall above the cap.
+y_cap   <- 0.82
+n_above <- sum(taxon_cv$cv > y_cap)
+cap_txt <- if (n_above == 0) NULL else paste0(
+  n_above, " high-CV fungal ", if (n_above == 1) "taxon" else "taxa",
+  " above the axis cap"
+)
+
+pB <- ggplot(taxon_cv,
+             aes(x = latitude_category, y = cv,
+                 fill = pretty_group, color = pretty_group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.45, width = 0.6,
                position = position_dodge(width = 0.75)) +
-  geom_point(aes(color = pretty_group),
-             position = position_jitterdodge(jitter.width = 0.12, dodge.width = 0.75),
-             alpha = 0.15, size = 0.8) +
-  geom_text(data = kw_annot,
-            aes(x = latitude_category, y = seasonal_cv, label = label,
-                color = pretty_group),
-            inherit.aes = FALSE, size = 3, hjust = 0.5, show.legend = FALSE) +
-  facet_wrap(~fcast_type) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.12,
+                                             dodge.width = 0.75),
+             alpha = 0.35, size = 1) +
+  # Connect kingdom means across latitude so the interaction is visible: the
+  # fungi-bacteria gap is wide at low latitude and narrows toward the poles.
+  stat_summary(aes(group = pretty_group), fun = mean, geom = "line",
+               linewidth = 0.9, position = position_dodge(width = 0.75),
+               show.legend = FALSE) +
+  stat_summary(aes(group = pretty_group), fun = mean, geom = "point",
+               shape = 18, size = 3, position = position_dodge(width = 0.75),
+               show.legend = FALSE) +
+  annotate("text", x = 0.55, y = y_cap, label = stat_lab,
+           hjust = 0, vjust = 1, size = 3.3, lineheight = 0.95) +
   scale_fill_manual(values  = kingdom_colors, name = NULL) +
-  scale_color_manual(values = kingdom_colors, guide = "none") +
+  scale_color_manual(values = kingdom_colors, name = NULL) +
+  coord_cartesian(ylim = c(0, y_cap)) +
   labs(
     x = "Site latitude",
-    y = "Seasonal CV\n(SD / mean across phenophases)"
+    y = "Seasonal CV per taxon\n(SD / mean across phenophases)",
+    caption = cap_txt
   ) +
   theme_bw(base_size = 12) +
   theme(
-    strip.background   = element_rect(fill = "grey92", color = NA),
-    strip.text         = element_text(face = "bold"),
-    panel.grid.major.x = element_blank(),
-    legend.position    = "right"
-  )
-
-# ── Panel D: functional group lollipop (from fig_peak_phenophase Panel C) ─────
-# All functional groups ranked by cycl_only seasonal amplitude,
-# colored by peak phenophase, faded if not significant.
-pheno_levels <- c("greenup", "peak", "greendown", "dormancy")
-pheno_labels <- c("Green-up", "Peak", "Senescence", "Dormancy")
-pheno_colors <- c(
-  "Green-up"   = "#009E73",
-  "Peak"       = "#E69F00",
-  "Senescence" = "#D55E00",
-  "Dormancy"   = "#56B4E9"
-)
-
-# Derive each model's peak phenophase from mean-monthly abundance (element 6),
-# matching the seasonal-niche definition used in Panels A-B and Fig 3D.
-# mode_data's model_id retains the `_beta_regression` suffix while abun_data's
-# model_id has it stripped, so we strip both sides before joining.
-strip_suffix <- function(x) gsub("_beta_regression$|_combined$", "", x)
-
-mm_peak <- abun_data %>%
-  group_by(model_id, sampling_season) %>%
-  summarise(mean_abun = mean(mean_modeled_abun, na.rm = TRUE), .groups = "drop") %>%
-  group_by(model_id) %>%
-  slice_max(mean_abun, n = 1, with_ties = FALSE) %>%
-  ungroup() %>%
-  mutate(model_id_norm = strip_suffix(model_id)) %>%
-  select(model_id_norm, mm_sampling_season = sampling_season)
-
-fg_ranked <- mode_data %>%
-  filter(model_name == "cycl_only", fcast_type == "Functional",
-         significant_sin == 1 | significant_cos == 1,
-         !is.na(amplitude)) %>%
-  mutate(model_id_norm = strip_suffix(model_id)) %>%
-  left_join(mm_peak, by = "model_id_norm") %>%
-  arrange(desc(amplitude)) %>%
-  mutate(
-    label      = tools::toTitleCase(gsub("_", " ", taxon)),
-    peak_phase = factor(mm_sampling_season, levels = pheno_levels, labels = pheno_labels)
-  )
-
-pD <- ggplot(fg_ranked,
-             aes(x = amplitude,
-                 y = reorder(label, amplitude),
-                 color = peak_phase)) +
-  geom_segment(aes(xend = 0, yend = reorder(label, amplitude)),
-               color = "grey75", linewidth = 0.5) +
-  geom_point(aes(shape = pretty_group), size = 3) +
-  scale_color_manual(values = pheno_colors, name = "Peak phenophase",
-                     na.value = "grey60") +
-  scale_shape_manual(values = c(Bacteria = 16, Fungi = 17), name = NULL) +
-  labs(x = "Seasonal amplitude", y = NULL) +
-  theme_bw(base_size = 12) +
-  theme(
-    panel.grid.major.y = element_line(color = "grey90", linewidth = 0.3),
     panel.grid.major.x = element_blank(),
     legend.position    = "right",
-    axis.text.y        = element_text(size = 9)
+    plot.caption       = element_text(size = 8, color = "grey40")
   )
 
 # ── Combine and save ──────────────────────────────────────────────────────────
-# Single profile row (A) on top; seasonal CV (B) and amplitude lollipop (C) below.
-bottom_row <- ggarrange(pC, pD, ncol = 2, labels = c("B", "C"), widths = c(1, 1))
+# A: seasonal relative-abundance profiles (3 focal FGs) across latitude.
+# B: latitude x kingdom interaction in seasonal variability.
+# Panel B is centered at partial width so a single 3-group panel isn't stretched.
+pB_row <- ggarrange(NULL, pB, NULL, ncol = 3, widths = c(0.18, 0.64, 0.18))
 
 fig_lat <- ggarrange(
-  pA, bottom_row,
-  nrow = 2, heights = c(1, 1.1), labels = c("A", "")
+  pA, pB_row,
+  nrow = 2, heights = c(1, 0.95), labels = c("A", "B")
 )
 
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 ggsave(file.path(out_dir, "figS10_error_by_latitude.png"),
-       fig_lat, width = 15, height = 9, dpi = 200)
+       fig_lat, width = 13, height = 9, dpi = 200)
 
 cat("Saved: figures/figS10_error_by_latitude.png\n")

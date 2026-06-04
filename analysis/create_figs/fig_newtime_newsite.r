@@ -6,6 +6,11 @@
 #   "New time (observed site)"          — hindcast at a site seen during calibration
 #   "New time x site (modeled effect)"  — new site, PLSR-predicted site effect
 #   "New time x site (random effect)"   — new site, mean (random) site effect
+#
+# All three model types (cycl_only, env_cov, env_cycl) are pooled.
+# The modeled-vs-random comparison is paired within each taxon (same model_id has
+# both a modeled and a random forecast), so the significance bracket uses a PAIRED
+# test. An unpaired test would discard the pairing and hide the improvement.
 
 source("source.R")
 library(ggplot2)
@@ -31,7 +36,6 @@ site_pred_labels <- c(
 
 scores_df <- scores_list$scoring_metrics %>%
   filter(model_id %in% converged_base,
-         model_name == "env_cycl",
          site_prediction %in% site_pred_order,
          !is.na(pretty_group)) %>%
   mutate(
@@ -57,9 +61,42 @@ base_theme <- theme_bw(base_size = 12) +
     axis.text.x      = element_text(size = 9)
   )
 
-comparisons_mods <- list(
-  c("New time × site\n(modeled effect)", "New time × site\n(random effect)")
-)
+modeled_lab <- "New time × site\n(modeled effect)"
+random_lab  <- "New time × site\n(random effect)"
+
+# Paired test (modeled vs random) within each kingdom, paired by model_id.
+# Returns one bracket label per facet for stat_pvalue_manual().
+sig_stars <- function(p) as.character(cut(
+  p, breaks = c(-Inf, 1e-4, 1e-3, 1e-2, 0.05, Inf),
+  labels = c("****", "***", "**", "*", "ns")))
+
+paired_sig <- function(df, value_col) {
+  df %>%
+    filter(site_prediction %in% c(modeled_lab, random_lab),
+           is.finite(.data[[value_col]])) %>%
+    select(model_id, pretty_group, site_prediction, val = all_of(value_col)) %>%
+    pivot_wider(names_from = site_prediction, values_from = val,
+                values_fn = mean) %>%
+    filter(!is.na(.data[[modeled_lab]]), !is.na(.data[[random_lab]])) %>%
+    group_by(pretty_group) %>%
+    summarise(
+      p = wilcox.test(.data[[modeled_lab]], .data[[random_lab]],
+                      paired = TRUE)$p.value,
+      .groups = "drop") %>%
+    mutate(group1 = modeled_lab, group2 = random_lab, p.signif = sig_stars(p))
+}
+
+sig_rsq <- paired_sig(scores_df, "RSQ") %>%
+  left_join(scores_df %>% group_by(pretty_group) %>%
+              summarise(y.position = max(RSQ, na.rm = TRUE) * 1.05),
+            by = "pretty_group")
+sig_crps <- paired_sig(scores_df, "mean_crps_sample") %>%
+  left_join(scores_df %>% group_by(pretty_group) %>%
+              summarise(y.position = max(mean_crps_sample, na.rm = TRUE) * 1.05),
+            by = "pretty_group")
+
+cat("Paired RSQ p-values (modeled vs random):\n");  print(sig_rsq[, c("pretty_group", "p", "p.signif")])
+cat("Paired CRPS p-values (modeled vs random):\n"); print(sig_crps[, c("pretty_group", "p", "p.signif")])
 
 # ── Panel A: RSQ by prediction type ──────────────────────────────────────────
 panel_a <- ggplot(scores_df,
@@ -68,8 +105,7 @@ panel_a <- ggplot(scores_df,
   geom_point(aes(color = site_prediction),
              position = position_jitter(width = 0.15, height = 0),
              alpha = 0.25, size = 1) +
-  stat_compare_means(comparisons = comparisons_mods,
-                     method = "wilcox.test", label = "p.signif", size = 4) +
+  stat_pvalue_manual(sig_rsq, label = "p.signif", tip.length = 0.01, size = 4) +
   facet_wrap(~pretty_group) +
   scale_fill_manual(values  = site_colors, guide = "none") +
   scale_color_manual(values = site_colors, guide = "none") +
@@ -84,16 +120,15 @@ panel_b <- ggplot(scores_df %>% filter(!is.na(mean_crps_sample)),
   geom_point(aes(color = site_prediction),
              position = position_jitter(width = 0.15, height = 0),
              alpha = 0.25, size = 1) +
-  stat_compare_means(comparisons = comparisons_mods,
-                     method = "wilcox.test", label = "p.signif", size = 4) +
+  stat_pvalue_manual(sig_crps, label = "p.signif", tip.length = 0.01, size = 4) +
   facet_wrap(~pretty_group) +
   scale_fill_manual(values  = site_colors, guide = "none") +
   scale_color_manual(values = site_colors, guide = "none") +
   labs(x = NULL, y = "Probabilistic forecast error (CRPS)") +
   base_theme
 
-# ── Panel C: Paired slope graph — random → modeled per taxon (env_cycl) ──────
-# Each line = one taxon; blue = improved (modeled < random CRPS), red = worsened
+# ── Panel C: Paired slope graph — random → modeled per taxon (all models) ────
+# Each line = one taxon-model; blue = improved (modeled < random CRPS), red = worse
 paired <- scores_df %>%
   filter(site_prediction %in% c("New time × site\n(modeled effect)",
                                 "New time × site\n(random effect)"),

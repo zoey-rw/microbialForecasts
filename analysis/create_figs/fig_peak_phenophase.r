@@ -49,7 +49,7 @@ fcast_labels <- c(Functional = "Functional groups", Taxonomic = "Taxonomic group
 
 # ── Filtering ─────────────────────────────────────────────────────────────────
 sig_max <- seasonality_mode_max %>%
-  filter(model_name == "cycl_only",
+  filter(model_name == "env_cycl",
          significant_sin == 1 | significant_cos == 1) %>%
   mutate(
     sampling_season = factor(sampling_season, levels = pheno_levels, labels = pheno_labels),
@@ -57,7 +57,7 @@ sig_max <- seasonality_mode_max %>%
   )
 
 sig_all <- seasonality_mode_all %>%
-  filter(model_name == "cycl_only",
+  filter(model_name == "env_cycl",
          significant_sin == 1 | significant_cos == 1) %>%
   mutate(
     sampling_season = factor(sampling_season, levels = pheno_levels, labels = pheno_labels),
