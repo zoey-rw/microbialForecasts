@@ -229,3 +229,4 @@ response_to_reviewers.tex
 # Out-of-scope exploratory work (not part of this manuscript)
 analysis/mediation/
 analysis/explore_new_neon_data.r
+analysis/compare_new_vs_existing_data.r
