@@ -119,4 +119,12 @@ tax_full <- as.data.frame(lapply(data.frame(ps@tax_table), as.factor))[1:7]
 # In case of crash.
 save.image(here("data/phylo_workspace.Rdata"))
 
+# Slim, committable inputs (~0.2 MB) for the downstream phylogenetic analysis.
+# phylo_contribution.r reads this instead of the 214 MB workspace, so the null
+# model, taxon-level K, and figures reproduce from a small git clone. The full
+# workspace above is kept only as a local fallback / for the tree-fan figures.
+saveRDS(list(ASVs_for_phylogeny = ASVs_for_phylogeny, tree = tree, tax = tax),
+				here("data/clean/phylo_inputs_slim.rds"))
+cat("Saved: data/clean/phylo_inputs_slim.rds\n")
+
 

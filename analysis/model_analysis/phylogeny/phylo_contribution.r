@@ -7,8 +7,19 @@ library(ggtree)
 library(phylocomr) # remotes::install_github("ropensci/phylocomr")
 
 
-# Takes a minute to load, huge workspace file
-load(here("data/phylo_workspace.Rdata"))
+# Load the slim inputs (tree, tax, ASVs_for_phylogeny) -- ~0.2 MB, committable to
+# git for reproducibility. Fall back to the full 214 MB workspace only if the slim
+# file is absent (e.g. an old checkout before create_bacterial_phylogeny.r was rerun).
+slim_path <- here("data/clean/phylo_inputs_slim.rds")
+if (file.exists(slim_path)) {
+	phylo_inputs <- readRDS(slim_path)
+	ASVs_for_phylogeny <- phylo_inputs$ASVs_for_phylogeny
+	tree <- phylo_inputs$tree
+	tax  <- phylo_inputs$tax
+} else {
+	message("Slim inputs not found; loading full workspace (slow).")
+	load(here("data/phylo_workspace.Rdata"))
+}
 
 if ("package:speedyseq" %in% search()) detach("package:speedyseq", unload = TRUE)
 if ("package:phyloseq" %in% search()) detach("package:phyloseq", unload = TRUE)
@@ -42,16 +53,10 @@ merged_fort <- fortify(merged_tree) %>% dplyr::as_data_frame()
 ASVs_betas = ASVs_betas %>% filter(!grepl("other", taxon))
 ASVs_betas[!is.na(ASVs_betas$ASV), ]$ASV = janitor::make_clean_names(ASVs_betas[!is.na(ASVs_betas$ASV), ]$ASV)
 
-# Add in hindcast scores
-scores_list = readRDS(here("data/summary/scoring_metrics_plsr2.rds"))
-scores_to_merge = scores_list$scoring_metrics %>% filter(#pretty_group="Bacteria" &
-																												 	site_prediction=="New time (observed site)" &
-																												 		model_name=="env_cycl" &
-																												 		!pretty_name %in% c("Functional group", "Diversity")) %>%
-	ungroup() %>%
-	select(taxon = species, pretty_name, CRPS = CRPS_truncated, RSQ, RSQ.1)
-ASVs_betas_scores <- merge(ASVs_betas, scores_to_merge , all.x=T) %>% distinct()
-merged_fort_beta <- left_join(merged_fort, ASVs_betas_scores, by=c("label"="ASV"))
+# Forecast-score columns (CRPS/RSQ) and their phylogenetic contribution are handled
+# separately in phylo_contribution_scores.r, so the heavy scoring_metrics_plsr2.rds
+# (26 MB) is not a dependency of the environmental-predictor results below.
+merged_fort_beta <- left_join(merged_fort, ASVs_betas, by=c("label"="ASV"))
 merged_fort_beta$label = janitor::make_clean_names(merged_fort_beta$label)
 
 
@@ -94,7 +99,7 @@ MRCA_nodes <- merge(MRCA_nodes, unique_taxa)
 # Select traits for phylogenetic analysis — only require environmental betas (not scores)
 traits <- merged_fort_beta %>% filter(isTip) %>%
 	select(name = "label", "LAI", "pC", "pH", "Temperature",
-				 "Moisture", Ecto = "Ectomycorrhizal\ntrees", "CRPS", "RSQ", "RSQ.1") %>%
+				 "Moisture", Ecto = "Ectomycorrhizal\ntrees") %>%
 	filter(!is.na(LAI) & !is.na(pH) & !is.na(Temperature) & !is.na(Moisture) & !is.na(pC) & !is.na(Ecto)) %>%
 	distinct(name, .keep_all = T)
 traits <- apply(traits,2,as.character) %>% as.data.frame()
@@ -217,16 +222,15 @@ phylo_res_means = res_out_finite %>%
 # ============================================================================
 
 beta_cols = c("LAI", "pC", "pH", "Temperature", "Moisture", "Ecto")
-score_cols = c("CRPS", "RSQ", "RSQ.1")
 rank_levels = c("phylum", "class", "order", "family", "genus")
 
 # One signed effect-vector per taxon (the broadcast value). Mirror the column set
 # fed to the real ph_aot so the unpermuted harness reproduces it exactly. Assert
 # one row per taxon rather than slicing to dedupe.
-taxon_betas = ASVs_betas_scores %>%
+taxon_betas = ASVs_betas %>%
 	filter(!is.na(taxon) & !grepl("other", taxon)) %>%
 	select(taxon, rank_only, "LAI", "pC", "pH", "Temperature", "Moisture",
-				 Ecto = "Ectomycorrhizal\ntrees", "CRPS", "RSQ", "RSQ.1") %>%
+				 Ecto = "Ectomycorrhizal\ntrees") %>%
 	distinct()
 stopifnot(!any(duplicated(taxon_betas$taxon)))
 
@@ -243,7 +247,7 @@ build_traits = function(taxon_beta_tbl) {
 		left_join(taxon_beta_tbl, by = "taxon") %>%
 		filter(if_all(all_of(beta_cols), ~ !is.na(.))) %>%
 		distinct(name, .keep_all = TRUE) %>%
-		select(name, all_of(beta_cols), all_of(score_cols))
+		select(name, all_of(beta_cols))
 	tt = tt[tt$name %in% tree_for_aot$tip.label, , drop = FALSE]
 	tt = tt[order(match(tt$name, tree_for_aot$tip.label)), , drop = FALSE]
 	apply(tt, 2, as.character) %>% as.data.frame()
@@ -284,7 +288,7 @@ observed_means = phylo_res_means %>%
 
 # Null distribution: permute the taxon -> effect-vector assignment NSIM_NULL times.
 taxa_vec = taxon_betas$taxon
-NSIM_NULL = 199
+NSIM_NULL = 999   # finer p-resolution + stable SES (199 was too noisy near p~0.03)
 set.seed(1)
 null_dist = bind_rows(lapply(seq_len(NSIM_NULL), function(s) {
 	perm_tbl = taxon_betas
@@ -304,7 +308,13 @@ null_ses = null_dist %>%
 						null_lower = quantile(mean_CI, .025),
 						null_upper = quantile(mean_CI, .975),
 						n_null = n(),
+						# One-sided tails plus a two-sided test (deviation from the null mean
+						# in either direction). Phylum exceeds the null (upper tail); genus
+						# falls below it (lower tail) -- the two-sided p covers both.
 						p_greater = (sum(mean_CI >= first(observed)) + 1) / (n() + 1),
+						p_less = (sum(mean_CI <= first(observed)) + 1) / (n() + 1),
+						p_two_sided = (sum(abs(mean_CI - mean(mean_CI)) >=
+															abs(first(observed) - mean(mean_CI))) + 1) / (n() + 1),
 						.groups = "drop") %>%
 	mutate(SES = (observed - null_mean) / null_sd,
 				 rank = factor(rank, levels = rank_levels, ordered = TRUE)) %>%
@@ -368,8 +378,12 @@ results_to_save = list(phylogenetic_results = phylogenetic_results,
 											 null_dist = null_dist,
 											 null_ses = null_ses,
 											 sig_for_plot_taxon = sig_for_plot_taxon,
-											 sig_compare = sig_compare)
-											 #genus_treedata = genus_treedata)
+											 sig_compare = sig_compare,
+											 # Saved so phylo_contribution_scores.r can reuse the AOT tree and
+											 # the tip->taxon / rank lookups without rebuilding them.
+											 tree_for_aot = tree_for_aot,
+											 tax_long = tax_long,
+											 tip_taxon_map = tip_taxon_map)
 saveRDS(results_to_save, here("data/summary/phylo_analysis_results.rds"))
 saveRDS(results_to_save, here("data/summary/phylo_analysis_results_env_cov.rds"))
 
