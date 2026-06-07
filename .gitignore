@@ -230,3 +230,21 @@ response_to_reviewers.tex
 analysis/mediation/
 analysis/explore_new_neon_data.r
 analysis/compare_new_vs_existing_data.r
+
+# ====================
+# Reproducibility exception: commit the small phylogenetic-analysis inputs and
+# results so the null model, taxon-level K, and figures reproduce from a clone
+# without the 214 MB workspace or 26 MB scoring file. These negations are last so
+# they override the broad data/ and *.rds/*.csv ignores above; each "dir + dir/*"
+# pair satisfies git's rule that a file cannot be re-included while its parent
+# directory is excluded.
+# ====================
+!data/clean/
+data/clean/*
+!data/clean/phylo_inputs_slim.rds
+!data/summary/
+data/summary/*
+!data/summary/predictor_effects.rds
+!data/summary/phylo_analysis_results.rds
+!data/summary/phylo_contribution_null_ses.csv
+!data/summary/phylo_score_contribution_null_ses.csv
