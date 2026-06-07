@@ -45,6 +45,7 @@ RUN mkdir -p /opt/microbialForecasts/logs
 RUN Rscript -e 'options(Ncpus = max(1L, parallel::detectCores() - 1L)); install.packages("remotes", repos = "https://cloud.r-project.org", dependencies = FALSE)' \
  && Rscript -e 'options(Ncpus = max(1L, parallel::detectCores() - 1L)); remotes::install_local("/opt/microbialForecasts/microbialForecast", dependencies = TRUE, upgrade = "never")' \
  && Rscript /opt/microbialForecasts/docker/install_extra_pkgs.R \
+ && Rscript /opt/microbialForecasts/analysis/model_analysis/phylogeny/install_phylo_deps.R \
  && Rscript -e 'stopifnot(requireNamespace("microbialForecast", quietly = TRUE))'
 
 ENV MICROBIAL_FORECASTS_ROOT=/opt/microbialForecasts

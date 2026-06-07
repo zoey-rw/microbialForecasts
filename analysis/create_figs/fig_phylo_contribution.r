@@ -7,8 +7,14 @@ library(ggtree)
 library(scales)
 library(ggrepel)
 
-# Load phylo workspace for tree visualization variables (tax_long, ASVs_betas_scores, etc.)
-load(here("data/phylo_workspace.Rdata"))
+# Slim inputs (the fan-tree plots need the `tax` table for tip->phylum mapping).
+# Falls back to the full workspace only if the slim file is absent.
+slim_path <- here("data/clean/phylo_inputs_slim.rds")
+if (file.exists(slim_path)) {
+	tax <- readRDS(slim_path)$tax
+} else {
+	load(here("data/phylo_workspace.Rdata"))
+}
 if ("package:speedyseq" %in% search()) detach("package:speedyseq", unload = TRUE)
 if ("package:phyloseq" %in% search()) detach("package:phyloseq", unload = TRUE)
 
@@ -122,27 +128,49 @@ cat("Saved: figures/phylo_ci.png\n")
 # matched null, expressed as (observed - null mean) / null SD. Points above the
 # dotted line at +1.96 exceed the null at ~95%; points below 0 are less
 # conserved than random (the genus-rank signature of trait conservatism).
+# Single panel, one line per predictor, so the shared trend (signal high at deep
+# ranks, dropping below the null by genus) is the picture rather than something the
+# reader assembles from six facets. Each line is labelled directly at its Phylum
+# (start) end so the audience does not need colour to tell lines apart.
+start_lab <- c(Temperature = "Temperature", Moisture = "Moisture", pH = "pH",
+							 pC = "Percent C", LAI = "LAI", Ecto = "EM trees")
+start_labels <- null_overlay %>% filter(rank == "phylum") %>%
+	mutate(lab = start_lab[as.character(trait.name)])
+
 phylo_ses <- ggplot(null_overlay,
-			 aes(x = as.numeric(rank), y = SES, color = trait.name)) +
-	geom_hline(yintercept = 0, color = "grey50") +
-	geom_hline(yintercept = c(-1.96, 1.96), color = "grey80", linetype = "dotted") +
-	geom_point(size = 2.5, show.legend = FALSE) +
-	geom_line(linewidth = 0.8, show.legend = FALSE) +
-	facet_wrap(~trait.name, ncol = 3, labeller = labeller(trait.name = trait_labels)) +
+			 aes(x = as.numeric(rank), y = SES, color = trait.name, group = trait.name)) +
+	# Null band: SES within +/-1.96 is indistinguishable from the clade-size null.
+	annotate("rect", xmin = -Inf, xmax = Inf, ymin = -1.96, ymax = 1.96,
+					 fill = "grey85", alpha = 0.9) +
+	annotate("text", x = 5.5, y = 0, label = "null", hjust = 0, fontface = "italic",
+					 color = "grey45", size = 3.3) +
+	annotate("text", x = 3, y = 6.1, label = "↑ variation concentrated at deep lineages",
+					 color = "grey25", size = 3.5) +
+	annotate("text", x = 3, y = -6.1, label = "↓ close relatives respond alike",
+					 color = "grey25", size = 3.5) +
+	geom_hline(yintercept = 0, color = "grey55", linewidth = 0.3) +
+	geom_line(linewidth = 1.1) +
+	geom_point(size = 3) +
+	geom_text_repel(data = start_labels, aes(label = lab),
+									nudge_x = -0.45, hjust = 1, direction = "y", seed = 1,
+									size = 4, fontface = "bold", box.padding = 0.25,
+									segment.size = 0.3, segment.color = "grey65",
+									min.segment.length = 0, show.legend = FALSE) +
 	scale_x_continuous(breaks = 1:5,
-										 labels = c("Phylum", "Class", "Order", "Family", "Genus")) +
+										 labels = c("Phylum", "Class", "Order", "Family", "Genus"),
+										 expand = expansion(mult = c(0.30, 0.13))) +
+	scale_y_continuous(breaks = seq(-6, 6, 3)) +
+	coord_cartesian(ylim = c(-6.6, 6.6), clip = "off") +
 	scale_color_manual(values = c(Temperature = "#D55E00", Moisture = "#56B4E9",
 																pH = "#0072B2", pC = "#009E73",
-																LAI = "#E69F00", Ecto = "#CC79A7")) +
-	xlab("Taxonomic rank") +
-	ylab("Standardized effect size\n(observed − null) / null SD") +
+																LAI = "#E69F00", Ecto = "#CC79A7"),
+										 guide = "none") +
+	labs(x = "Taxonomic rank  (broad → fine)",
+			 y = "Standardized effect size  (observed − null) / null SD") +
 	theme_bw(base_size = 14) +
-	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
-				strip.background = element_rect(fill = "white"),
-				strip.text = element_text(face = "bold", size = 12),
-				panel.grid.minor = element_blank())
+	theme(panel.grid.minor = element_blank())
 
-ggsave(here("figures","phylo_ci_ses.png"), phylo_ses, width = 9, height = 7, dpi = 300)
+ggsave(here("figures","phylo_ci_ses.png"), phylo_ses, width = 9, height = 6.4, dpi = 300)
 cat("Saved: figures/phylo_ci_ses.png\n")
 
 # Tree visualization using the phylo tree object with trait annotations
