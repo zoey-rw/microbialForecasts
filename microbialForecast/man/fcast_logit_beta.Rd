@@ -9,15 +9,18 @@ fcast_logit_beta(
   model.inputs,
   param_samples,
   truth.plot.long,
-  plot_summary,
+  plot_summary = NULL,
   Nmc = 1000,
-  drop_other = T,
   predict_site_effects = NULL,
   rank.name = NULL,
   model_id,
+  metadata = NULL,
+  col_idx = NULL,
   ...
 )
 }
 \description{
 Forecast functional groups at NEON plots and sites, using beta regression output
+
+Unified forecasting function for observed and unobserved sites
 }

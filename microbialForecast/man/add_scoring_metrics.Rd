@@ -15,5 +15,6 @@ add_scoring_metrics(
 )
 }
 \description{
-Score models and forecasts
+Score models and forecasts. Handles edge cases (infinite values,
+  zero SDs, short vectors) gracefully by filtering and using tryCatch.
 }

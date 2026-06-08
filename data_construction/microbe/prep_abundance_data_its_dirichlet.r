@@ -10,8 +10,8 @@ library(ggplot2)
 library(dplyr)
 library(data.table)
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/binTaxGroups.r")
-source(here::here("functions/helperFunctions.r"))
-source(here::here("functions/assign_funfun_new.r"))
+# Helper functions and assign_fungal_guilds() now come from the package.
+library(microbialForecast)
 
 
 #### 16S #####
