@@ -10,6 +10,7 @@ library(rstatix)
 library(ggpubr)
 library(ggh4x)
 library(ggrepel)
+library(ggsignif)
 library(patchwork)
 library(data.table)
 library(lubridate)
@@ -215,15 +216,14 @@ pB <- ggplot(sig_summary, aes(x = beta_pretty, y = sig_rate, fill = fcast_type))
 # =============================================================================
 scores_list <- readRDS(here("data", "summary/scoring_metrics_plsr2.rds"))
 
-functional_taxa <- c(
-  "cellulose_complex", "acetogen_anaerobic", "assim_nitrate_reduction", "assim_nitrite_reduction",
-  "benomyl_antibiotic", "cellobiose_complex", "chitin_complex", "chitinolytic", "copiotroph",
-  "dissim_nitrate_reduction", "dissim_nitrite_reduction", "erythromycin_antibiotic",
-  "gentamycin_antibiotic", "glucose_simple", "glycerol_simple", "heat_stress", "herbicide_stress",
-  "lignolytic", "n_fixation", "oligotroph", "animal_pathogen", "lichenized",
-  "streptomycin_antibiotic", "sucrose_complex", "talaromyces",
-  "saprotroph", "ectomycorrhizal", "plant_pathogen", "endophyte"
-)
+# Use the canonical functional-group list rather than a hardcoded subset, so
+# the Tukey test below sees every converged FG (including substrate
+# enrichments like acetate_simple, light_stress, salt_stress, xylose_simple,
+# and bacterial N-cyclers like nitrification that the old hardcoded list
+# omitted). The hardcoded list silently dropped ~10 bacterial FGs and
+# shrank the experimental-enrichment vs. literature-review p-value
+# difference, hiding one of the two significant Tukey comparisons.
+functional_taxa <- microbialForecast:::keep_fg_names
 
 # Determine the taxon column name
 taxon_col <- intersect(c("taxon", "rank_name", "species"),
@@ -288,63 +288,164 @@ fg_source_data$fg_source <- recode(fg_source_data$fg_source,
   "Scientific consensus (FUNGuild)" = "Scientific consensus\n(FUNGuild)"
 )
 
-# Tukey test on fg_source
+# Split the comparison into two questions, each with the appropriate test:
+#  (1) Kingdom-level: does FUNGuild (the sole fungal assignment method) differ
+#      from bacterial FGs as a whole? Pooled Bacteria vs Fungi Wilcoxon, since
+#      the fungal side has only one category.
+#  (2) Within bacteria: does the evidence type used to assign bacterial FGs
+#      predict forecast accuracy? Tukey HSD across the 3 bacterial categories.
+# Running them jointly inflates the multiple-comparison correction across
+# unrelated questions and conflates the kingdom effect (fungi are systematically
+# harder to forecast — see Fig 2) with the evidence-type effect.
+
 stat_pvalue_fg_source <- fg_source_data %>%
+  filter(pretty_group == "Bacteria") %>%
   rstatix::tukey_hsd(score ~ fg_source)
 
-# One label per unique functional group
-fg_label_data <- fg_source_data %>%
-  distinct(pretty_fg, fg_source, pretty_group, .keep_all = TRUE)
+king_test <- wilcox.test(score ~ pretty_group, data = fg_source_data)
+king_meds <- fg_source_data %>%
+  group_by(pretty_group) %>%
+  summarise(med = median(score, na.rm = TRUE), n = n(), .groups = "drop")
 
-# Identify significant Tukey comparisons
 sig_tukey <- stat_pvalue_fg_source %>% filter(p.adj < 0.05)
 
-# Build manual bracket data for log-scale compatibility
 fg_levels <- levels(factor(fg_source_data$fg_source))
-x_map <- setNames(seq_along(fg_levels), fg_levels)
 max_score <- max(fg_source_data$score, na.rm = TRUE)
+log_max <- log10(max_score)
 
-bracket_annotations <- list()
-if (nrow(sig_tukey) > 0) {
-  sig_tukey <- sig_tukey %>%
-    filter(grepl("Scientific consensus", group1) | grepl("Scientific consensus", group2))
-
-  bracket_y_start <- max_score * 1.8
-  step_mult <- 1.5
-
-  for (i in seq_len(nrow(sig_tukey))) {
-    g1 <- sig_tukey$group1[i]
-    g2 <- sig_tukey$group2[i]
-    x1 <- x_map[g1]
-    x2 <- x_map[g2]
-    y_bar <- bracket_y_start * step_mult^(i - 1)
-    y_tick <- y_bar * 0.85
-    lab <- sig_tukey$p.adj.signif[i]
-
-    bracket_annotations <- c(bracket_annotations, list(
-      annotate("segment", x = x1, xend = x2, y = y_bar, yend = y_bar, linewidth = 0.35),
-      annotate("segment", x = x1, xend = x1, y = y_bar, yend = y_tick, linewidth = 0.35),
-      annotate("segment", x = x2, xend = x2, y = y_bar, yend = y_tick, linewidth = 0.35),
-      annotate("text", x = (x1 + x2) / 2, y = y_bar * 1.1, label = lab,
-               size = 3.5, hjust = 0.5, vjust = 0)
-    ))
-  }
-  y_ceiling <- bracket_y_start * step_mult^nrow(sig_tukey) * 1.3
-} else {
-  y_ceiling <- max_score * 3
+# Build inset text panel showing both the kingdom-level Wilcoxon and the
+# within-bacteria Tukey results. Use scientific notation for very small
+# p-values and an explicit "<" comparison so the direction of each significant
+# difference (which side has lower nRMSE, i.e. better forecasts) is visible
+# without having to decode signed estimates or compare medians visually.
+fmt_p <- function(p) {
+  if (p < 0.001) sprintf("p = %.1e", p) else sprintf("p = %.3f", p)
 }
 
-p_fg_source <- ggplot(fg_source_data, aes(x = fg_source, y = as.numeric(score),
+# Direction of each Tukey comparison: positive estimate means group2_mean
+# exceeds group1_mean (so group1 has lower nRMSE, i.e. better forecasts).
+sig_tukey <- sig_tukey %>%
+  mutate(
+    better = ifelse(estimate > 0, group1, group2),
+    worse  = ifelse(estimate > 0, group2, group1)
+  )
+
+bact_med <- king_meds$med[king_meds$pretty_group == "Bacteria"]
+fungi_med <- king_meds$med[king_meds$pretty_group == "Fungi"]
+king_better <- ifelse(bact_med < fungi_med, "Bacteria", "Fungi/FUNGuild")
+king_worse  <- ifelse(bact_med < fungi_med, "Fungi/FUNGuild", "Bacteria")
+
+# Compact the inset text: drop "Wilcoxon:" / "Kingdom:" verbiage that's obvious
+# from the labels, abbreviate the bacterial categories, and break into two
+# stanzas so the longest line is short enough to fit inside x=0.55–~1.7 and
+# clear the Lit.+pathway column's labels.
+abbr_cat <- function(x) {
+  x <- gsub("Experimental enrichment",            "Exp. enr.",   x)
+  x <- gsub("Literature review \\+ genomic pathway", "Lit.+pathway", x)
+  x <- gsub("Literature review",                  "Lit. review", x)
+  x
+}
+
+king_line <- sprintf(
+  "Kingdom (Wilcoxon)\n%s (n=%d) < %s (n=%d), %s",
+  ifelse(king_better == "Fungi/FUNGuild", "Fungi", king_better),
+  king_meds$n[king_meds$pretty_group=="Bacteria"],
+  ifelse(king_worse == "Fungi/FUNGuild", "Fungi", king_worse),
+  king_meds$n[king_meds$pretty_group=="Fungi"],
+  fmt_p(king_test$p.value)
+)
+
+if (nrow(sig_tukey) > 0) {
+  bact_lines <- paste(
+    sprintf("%s < %s: %s",
+            abbr_cat(gsub("\n", " ", sig_tukey$better)),
+            abbr_cat(gsub("\n", " ", sig_tukey$worse)),
+            vapply(sig_tukey$p.adj, fmt_p, character(1))),
+    collapse = "\n")
+  sig_text <- paste0(
+    king_line,
+    "\n\nWithin bacteria (Tukey HSD)\n", bact_lines
+  )
+} else {
+  sig_text <- king_line
+}
+
+# Tighten the y-axis to the actual data range (max score ~1.5) instead of
+# letting the inset push the ceiling out to 100.
+y_ceiling <- 10^(log_max + 0.7)
+
+# Precompute the jittered x positions so the same value drives both the points
+# and the repelled labels — using position_jitter() separately on each layer
+# would assign independent random offsets and the leader lines would point to
+# the wrong dot. A continuous x scale lets us share x_jit across layers and
+# place the inset label at an arbitrary numeric coordinate.
+fg_levels_order <- fg_levels
+fg_source_data <- fg_source_data %>%
+  mutate(x_factor = factor(fg_source, levels = fg_levels_order),
+         x_int    = as.numeric(x_factor))
+set.seed(42)
+fg_source_data$x_jit <- fg_source_data$x_int +
+  runif(nrow(fg_source_data), -0.15, 0.15)
+
+# Carry the jitter through to the label-anchor table: one row per group, so
+# distinct() collapses each group's many rows to the first observation's x_jit
+# (and matching score), which the label then anchors to via a leader line.
+fg_label_data <- fg_source_data %>%
+  distinct(pretty_fg, fg_source, pretty_group, .keep_all = TRUE) %>%
+  mutate(pretty_fg = gsub("_antibiotic$", "-res.", pretty_fg),
+         pretty_fg = gsub("_simple$",     "-enr.", pretty_fg),
+         pretty_fg = gsub("_complex$",    "-enr.", pretty_fg),
+         pretty_fg = gsub("_stress$",     " stress", pretty_fg),
+         pretty_fg = gsub("_",            " ", pretty_fg),
+         pretty_fg = sub("^(.)", "\\U\\1", pretty_fg, perl = TRUE))
+
+# Label only the 3 best and 3 worst groups per evidence-type column so the
+# Experimental-enrichment cluster (22 groups) doesn't drown the others, while
+# the bottom-of-rank and top-of-rank exemplars in each category are still
+# named. Categories with <= 6 groups get every group labelled.
+fg_label_extremes <- fg_label_data %>%
+  group_by(fg_source) %>%
+  arrange(score, .by_group = TRUE) %>%
+  mutate(rk_low = row_number(), rk_high = n() - rk_low + 1) %>%
+  filter(rk_low <= 3 | rk_high <= 3) %>%
+  ungroup() %>%
+  select(-rk_low, -rk_high)
+
+# Anchor the inset in the upper-left empty space: high enough on the y-axis to
+# clear the repelled labels in the Experimental-enrichment column (which reach
+# up to ~y=0.4) and in the Lit.+pathway column (Nitrification at ~y=0.75), but
+# below y_ceiling so it sits in the panel rather than clipping the top. With
+# the compact two-stanza text, the box is narrow enough to fit between the left
+# axis and the Lit.+pathway label column.
+inset_x <- 0.55
+inset_y <- 10^(log_max + 0.55)
+bracket_annotations <- list(
+  annotate("label", x = inset_x, y = inset_y,
+           label = sig_text, size = 2.9, hjust = 0, vjust = 1,
+           color = "grey15", fill = "white",
+           label.r = unit(0.15, "lines"),
+           label.padding = unit(0.4, "lines"))
+)
+
+p_fg_source <- ggplot(fg_source_data, aes(x = x_jit, y = as.numeric(score),
                                   color = pretty_group)) +
-  geom_point(size = 2.5, alpha = 0.5,
-             position = position_jitter(width = 0.15, height = 0, seed = 42)) +
-  geom_text_repel(data = fg_label_data,
+  geom_point(size = 2.5, alpha = 0.5) +
+  geom_text_repel(data = fg_label_extremes,
                   aes(label = pretty_fg),
-                  size = 2.5, max.overlaps = 25,
-                  box.padding = 0.35, point.padding = 0.2, min.segment.length = 0.2,
+                  size = 3.2, max.overlaps = Inf,
+                  box.padding = 0.5, point.padding = 0.3,
+                  min.segment.length = 0,
+                  force = 3, force_pull = 0.7,
+                  max.iter = 30000, max.time = 2,
+                  segment.size = 0.25, segment.alpha = 0.7,
+                  segment.color = "grey50",
                   show.legend = FALSE, seed = 42) +
   scale_color_manual(values = c("Bacteria" = BACT_COLOR, "Fungi" = FUNGI_COLOR),
                      name = NULL) +
+  scale_x_continuous(breaks = seq_along(fg_levels_order),
+                     labels = fg_levels_order,
+                     limits = c(0.5, length(fg_levels_order) + 0.5),
+                     expand = expansion(0)) +
   scale_y_log10(limits = c(min(fg_source_data$score, na.rm = TRUE) * 0.8, y_ceiling)) +
   labs(x = NULL, y = "Forecast error (nRMSE, log scale)") +
   bracket_annotations +
@@ -461,21 +562,15 @@ combined <- pA / bottom_row +
   plot_layout(heights = c(0.85, 1.15)) +
   plot_annotation(tag_levels = "A")
 
-ggsave(here("figures", "fig3_functional_group_error.pdf"), combined,
-       width = 13, height = 11, dpi = 300)
 ggsave(here("figures", "fig3_functional_group_error.png"), combined,
        width = 13, height = 11, dpi = 300)
 
-cat("Saved: figures/fig3_functional_group_error.pdf\n")
 cat("Saved: figures/fig3_functional_group_error.png\n")
 
 # =============================================================================
 # Supplementary figure: forecast error by functional group evidence source
 # =============================================================================
-ggsave(here("figures", "figS_fg_evidence_source.pdf"), p_fg_source,
-       width = 9, height = 7, dpi = 300)
 ggsave(here("figures", "figS_fg_evidence_source.png"), p_fg_source,
        width = 9, height = 7, dpi = 300)
 
-cat("Saved: figures/figS_fg_evidence_source.pdf\n")
 cat("Saved: figures/figS_fg_evidence_source.png\n")

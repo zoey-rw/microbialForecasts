@@ -224,7 +224,7 @@ panel_f <- ggplot(site_avg,
   geom_smooth(method = "lm", se = TRUE, linewidth = 1, color = "grey30") +
   ggrepel::geom_text_repel(aes(label = siteID), size = 2.5, alpha = 0.7,
                            max.overlaps = 10) +
-  labs(x = "Latitude (\u00b0N)", y = "Proportion of taxa\nwith skilled forecasts") +
+  labs(x = "Latitude (\u00b0N)", y = "Proportion of groups\nwith skilled forecasts") +
   ylim(c(0, 1)) +
   base_theme
 

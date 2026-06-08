@@ -1,7 +1,14 @@
 # Peak phenophase figure
-# Shows which plant phenological season microbial taxa peak in
-# Uses cycl_only model (seasonality-only, no env predictors) for clearest signal
-# Filters to significantly seasonal taxa (significant sin or cos component)
+# Shows which plant phenological season microbial taxa peak in.
+# Uses the env_cycl (seasonality + environment) model: its monthly abundance is
+# anchored to year-round soil temperature/moisture sensors, so winter (dormancy)
+# predictions are data-constrained. The seasonality-only model has no off-season
+# data to anchor it and extrapolates peaks into dormancy for ~70% of taxa.
+# Peak timing comes from modeled abundance; seasonal magnitude (Panel C) is the
+# realized seasonal CV of modeled abundance, NOT the sin/cos harmonic amplitude
+# (the env_cycl harmonic is inflated by collinearity with the seasonal
+# temperature/moisture predictors and misranks how seasonal a guild really is).
+# Filters to significantly seasonal taxa (significant sin or cos component).
 
 library(tidyverse)
 library(ggpubr)
@@ -35,6 +42,22 @@ seasonality_mode_max <- seasonality_mode_all %>%
   select(model_id, fcast_type, pretty_group, rank_only, model_name, taxon,
          amplitude, significant_sin, significant_cos,
          sampling_season, mean_abun)
+
+# ── Seasonal CV per taxon (realized seasonal magnitude) ───────────────────────
+# Fractional swing in modeled abundance across phenophases, computed within site
+# (SD / mean across phenophases) then taken as the median across sites, so it
+# reflects temporal seasonality rather than site-to-site spatial spread. This is
+# the same metric used in the latitude figure, and replaces the sin/cos harmonic
+# amplitude for Panel C (see header note).
+seasonal_cv_tax <- phenophase_in[[6]] %>%
+  filter(model_name == "env_cycl",
+         !is.na(mean_modeled_abun), !is.na(sampling_season)) %>%
+  group_by(model_id, siteID) %>%
+  summarise(cv = sd(mean_modeled_abun, na.rm = TRUE) /
+                 mean(mean_modeled_abun, na.rm = TRUE), .groups = "drop") %>%
+  filter(is.finite(cv)) %>%
+  group_by(model_id) %>%
+  summarise(seasonal_cv = median(cv, na.rm = TRUE), .groups = "drop")
 
 # ── Display settings ─────────────────────────────────────────────────────────
 pheno_levels <- c("greenup", "peak", "greendown", "dormancy")
@@ -78,7 +101,7 @@ pA <- ggplot(prop_data,
   scale_fill_manual(values = pheno_colors, name = "Peak phenophase") +
   scale_y_continuous(labels = scales::percent_format(),
                      expand = expansion(mult = c(0, 0.03))) +
-  labs(x = NULL, y = "Proportion of taxa") +
+  labs(x = NULL, y = "Proportion of groups") +
   theme_bw(base_size = 12) +
   theme(
     legend.position    = "right",
@@ -133,27 +156,29 @@ pB <- ggplot() +
     panel.grid.major.x = element_blank()
   )
 
-# ── Panel C: labeled dot plot of functional groups by amplitude ───────────────
-# One point per functional group taxon, x = amplitude, color = peak phenophase
+# ── Panel C: labeled dot plot of functional groups by seasonal CV ─────────────
+# One point per functional group taxon, x = seasonal CV, color = peak phenophase
 # Shows WHICH functional groups are most seasonal and WHEN they peak
 fg_amp <- sig_max %>%
   filter(fcast_type == "Functional groups") %>%
-  arrange(pretty_group, desc(amplitude)) %>%
+  left_join(seasonal_cv_tax, by = "model_id") %>%
+  filter(is.finite(seasonal_cv)) %>%
+  arrange(pretty_group, desc(seasonal_cv)) %>%
   mutate(
     label = gsub("_", " ", taxon),
     label = tools::toTitleCase(label)
   )
 
 pC <- ggplot(fg_amp,
-             aes(x = amplitude, y = reorder(label, amplitude),
+             aes(x = seasonal_cv, y = reorder(label, seasonal_cv),
                  color = sampling_season, shape = pretty_group)) +
-  geom_segment(aes(xend = 0, yend = reorder(label, amplitude)),
+  geom_segment(aes(xend = 0, yend = reorder(label, seasonal_cv)),
                color = "grey75", linewidth = 0.5) +
   geom_point(size = 3.5) +
   scale_color_manual(values = pheno_colors, name = "Peak phenophase") +
   scale_shape_manual(values = c(Bacteria = 16, Fungi = 17), name = NULL) +
   labs(
-    x = "Seasonal amplitude",
+    x = "Seasonal CV (SD / mean across phenophases)",
     y = NULL
   ) +
   theme_bw(base_size = 12) +

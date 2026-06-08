@@ -62,7 +62,7 @@ pA <- ggplot(pct_sig,
     expand = expansion(mult = c(0, 0))
   ) +
   labs(x = NULL,
-       y = "% of taxa with significant seasonality") +
+       y = "% of groups with significant seasonality") +
   theme_bw(base_size = 13) +
   theme(
     strip.background   = element_rect(fill = "grey92",

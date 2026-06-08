@@ -204,7 +204,7 @@ panel_c <- ggplot(site_eval,
   geom_text_repel(aes(label = siteID), size = 2.5, max.overlaps = 20) +
   theme_bw(base_size = 14) +
   xlab("Number of calibration time points") +
-  ylab("Proportion of taxa\nwith skilled forecasts")
+  ylab("Proportion of groups\nwith skilled forecasts")
 
 tryCatch({
   ct <- cor.test(site_eval$n_timepoints, site_eval$prop_skilled)
@@ -220,7 +220,7 @@ panel_d <- ggplot(site_eval,
   geom_text_repel(aes(label = siteID), size = 2.5, max.overlaps = 20) +
   theme_bw(base_size = 14) +
   xlab("Latitude (°N)") +
-  ylab("Proportion of taxa\nwith skilled forecasts")
+  ylab("Proportion of groups\nwith skilled forecasts")
 
 tryCatch({
   ct2 <- cor.test(site_eval$latitude, site_eval$prop_skilled)
@@ -236,7 +236,7 @@ panel_e <- ggplot(site_eval %>% filter(!is.na(MAT)),
   geom_text_repel(aes(label = siteID), size = 2.5, max.overlaps = 20) +
   theme_bw(base_size = 14) +
   xlab("Mean Annual Temperature (scaled)") +
-  ylab("Proportion of taxa\nwith skilled forecasts")
+  ylab("Proportion of groups\nwith skilled forecasts")
 
 tryCatch({
   ct3 <- with(site_eval %>% filter(!is.na(MAT)), cor.test(MAT, prop_skilled))

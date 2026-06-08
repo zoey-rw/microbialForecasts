@@ -101,7 +101,7 @@ pA <- ggplot(pct_sig,
   scale_fill_manual(values = stage_colors, name = NULL) +
   coord_cartesian(ylim = c(0, max(pct_sig$pct_sig) * 1.15)) +
   labs(x = NULL,
-       y = "Taxa with significant\nspatial autocorrelation (%)",
+       y = "Groups with significant\nspatial autocorrelation (%)",
        tag = "A") +
   theme_bw(base_size = 14) +
   theme(panel.grid.major.x = element_blank(),
