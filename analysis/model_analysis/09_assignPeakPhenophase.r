@@ -338,8 +338,6 @@ cat("Phenology categories filtered to", length(unique(pheno_categories_long$ID))
 
 max_dates = seas_vals_short %>% mutate(dates = max_y_date)
 
-max_cycl <- max_dates %>%
-	mutate(dates = ymd(paste0("2014-", sprintf("%02d", max_dates$max_month), "-15")))
 
 # Process plot estimates in smaller chunks to avoid memory issues
 cat("Processing plot estimates for peak abundance analysis in chunks...\n")
@@ -497,83 +495,40 @@ if(nrow(all_monthly_abun) > 0) {
   all_monthly_abun$sampling_season <- factor(all_monthly_abun$site_cat, ordered = TRUE, levels = pheno_levels)
 }
 
-# Process max_cycl with optimized function
-cat("Processing max_cycl phenology assignment...\n")
-if(nrow(max_cycl) > 0) {
-  site_cats2 <- assign_pheno_date_vectorized(max_cycl$dates, pheno_categories_long)
-  
-  if(length(site_cats2) == nrow(max_cycl)) {
-    max_cycl <- cbind.data.frame(max_cycl, site_cats2)
-  } else {
-    cat("Warning: site_cats2 length", length(site_cats2), "does not match max_cycl rows", nrow(max_cycl), "\n")
-    max_cycl$site_cats2 <- NA
-  }
-} else {
-  cat("Warning: max_cycl is empty\n")
-  max_cycl$site_cats2 <- character(0)
-}
-
-max_cycl$sampling_season = factor(max_cycl$site_cats2, ordered = T, levels = c("dormancy","dormancy_greenup",
-																																						 "greenup","greenup_peak",
-																																						 "peak", "greendown_peak",
-																																						 "greendown","dormancy_greendown"
-))
-max_cycl <- merge(max_cycl, max_dates[,c("model_id","fcast_type","pretty_group","rank_only","model_name","taxon","amplitude")], all.x=T)
 
 
-# Get most frequently-assigned phenophase per group
-# BUT: Use abundance-weighted approach - prefer phenophase with highest mean abundance
-# This prevents dormancy from being dominant when summer peaks have higher abundance
+# Build per-model metadata for downstream figures (group columns, amplitude, and
+# seasonality-significance flags). The peak-of-peaks per-guild "peak phenophase"
+# that used to be computed here -- an abundance-weighted argmax over per-site-year
+# peak months (seasonality_mode2), plus a >50%-frequency variant (seasonality_mode3)
+# -- has been REMOVED. It was not robust (it disagreed with the mean-abundance peak
+# definition and with itself across sites) and no downstream script used it;
+# consumers read only metadata from element [[1]].
 if(nrow(max_abun) > 0) {
-  cat("Calculating seasonality modes...\n")
-  
-  # Calculate both frequency and mean abundance per phenophase
-  seasonality_mode = max_abun %>%
-  	filter(!is.na(sampling_season)) %>%
-  	group_by(model_id, sampling_season) %>%
-  	summarise(
-  	  n = n(),
-  	  mean_abun = mean(mean_modeled_abun, na.rm=TRUE),
-  	  .groups = "drop"
-  	) %>%
-  	mutate(freq = n / sum(n))
-  
-  # Use abundance-weighted selection: prefer phenophase with highest mean abundance
-  # If tied, use most frequent
-  seasonality_mode2 = seasonality_mode %>% 
-    group_by(model_id) %>% 
-    arrange(desc(mean_abun), desc(freq)) %>%
-    slice(1) %>%
-    select(-n, -mean_abun)
-  
-  # Normalize model_ids for merging (remove _beta_regression suffix)
-  # max_dates has model_ids with _beta_regression, but seasonality_mode2 doesn't
+  cat("Building per-model metadata table...\n")
+
+  # Amplitude + significance flags keyed by normalized model_id
   max_dates_for_merge <- max_dates %>%
     mutate(model_id_normalized = gsub("_beta_regression$|_combined$", "", model_id)) %>%
     select(model_id_normalized, fcast_type, pretty_group, rank_only, model_name, taxon, amplitude, significant_sin, significant_cos) %>%
     distinct(model_id_normalized, .keep_all = TRUE)
-  
-  # Get metadata from plot_estimates (already loaded)
-  # Extract unique model_id combinations for metadata
+
   cat("Extracting metadata from plot_estimates...\n")
-  # Ensure plot_estimates is a data.table for this operation
   if(!data.table::is.data.table(plot_estimates)) {
     plot_estimates <- data.table::as.data.table(plot_estimates)
   }
   plot_estimates_unique <- unique(plot_estimates[, .(model_id, model_id_normalized, model_name, taxon, fcast_type, pretty_group, rank_only, species)])
   plot_estimates_df <- as.data.frame(plot_estimates_unique)
-  
-  # Infer fcast_type from taxon if missing (Functional if taxon is in functional groups)
+
   fg_names <- microbialForecast:::keep_fg_names
   all_bacteria <- unlist(microbialForecast:::rank_spec_names[grepl("_bac$", names(microbialForecast:::rank_spec_names))])
   all_fungi <- unlist(microbialForecast:::rank_spec_names[grepl("_fun$", names(microbialForecast:::rank_spec_names))])
-  
+
   plot_estimates_df <- plot_estimates_df %>%
     mutate(
       fcast_type = ifelse(is.na(fcast_type) & !is.na(taxon),
                          ifelse(taxon %in% fg_names, "Functional", "Taxonomic"),
                          fcast_type),
-      # Infer pretty_group from taxon if missing
       pretty_group = ifelse(is.na(pretty_group) & !is.na(taxon),
                            ifelse(taxon %in% fg_names,
                                  ifelse(taxon %in% all_fungi, "Fungi", "Bacteria"),
@@ -581,24 +536,17 @@ if(nrow(max_abun) > 0) {
                                        ifelse(taxon %in% all_bacteria, "Bacteria", NA))),
                            pretty_group)
     )
-  
-  # Create metadata with normalized model_ids
+
   plot_estimates_metadata <- plot_estimates_df %>%
     mutate(model_id_normalized = gsub("_beta_regression$|_combined$", "", model_id)) %>%
     filter(!is.na(fcast_type) | !is.na(pretty_group) | !is.na(model_name)) %>%
     select(model_id_normalized, fcast_type, pretty_group, rank_only, model_name, taxon) %>%
-    # For each model_id, prefer rows with complete metadata
     arrange(model_id_normalized, !is.na(fcast_type), !is.na(pretty_group), !is.na(model_name)) %>%
     distinct(model_id_normalized, .keep_all = TRUE)
-  
-  cat("plot_estimates_metadata after inference: has", sum(!is.na(plot_estimates_metadata$fcast_type)), "rows with fcast_type out of", nrow(plot_estimates_metadata), "\n")
-  
-  # Combine both sources - max_dates has amplitude, plot_estimates has env_cov models
-  # Use full_join to get all models from both sources
+
   all_metadata <- plot_estimates_metadata %>%
     full_join(max_dates_for_merge %>% select(model_id_normalized, amplitude, significant_sin, significant_cos),
               by = "model_id_normalized") %>%
-    # For models in max_dates but not plot_estimates, keep max_dates metadata
     mutate(
       fcast_type = ifelse(is.na(fcast_type) & model_id_normalized %in% max_dates_for_merge$model_id_normalized,
                          max_dates_for_merge$fcast_type[match(model_id_normalized, max_dates_for_merge$model_id_normalized)],
@@ -617,38 +565,18 @@ if(nrow(max_abun) > 0) {
                     taxon)
     ) %>%
     distinct(model_id_normalized, .keep_all = TRUE)
-  
-  cat("Combined metadata: plot_estimates has", nrow(plot_estimates_metadata), "models, max_dates has", nrow(max_dates_for_merge), "models, combined has", nrow(all_metadata), "models\n")
-  
-  seasonality_mode2_normalized <- seasonality_mode2 %>%
-    mutate(model_id_normalized = gsub("_beta_regression$|_combined$", "", model_id))
-  
-  # Debug: check matches before merge
-  cat("Before merge: seasonality_mode2 has", nrow(seasonality_mode2_normalized), "rows\n")
-  cat("all_metadata has", nrow(all_metadata), "unique model_ids\n")
-  cat("Matches:", sum(seasonality_mode2_normalized$model_id_normalized %in% all_metadata$model_id_normalized), "out of", nrow(seasonality_mode2_normalized), "\n")
-  
-  seasonality_mode2 <- merge(seasonality_mode2_normalized, all_metadata, 
-                              by.x = "model_id_normalized", by.y = "model_id_normalized", all.x = TRUE)
-  
-  # Check merge results
-  cat("After merge: rows with fcast_type:", sum(!is.na(seasonality_mode2$fcast_type)), "out of", nrow(seasonality_mode2), "\n")
-  
-  seasonality_mode2 <- seasonality_mode2 %>% select(-model_id_normalized)
 
-  seasonality_mode3 = seasonality_mode %>% group_by(model_id) %>% filter(freq > .5)
-  seasonality_mode3_normalized <- seasonality_mode3 %>%
-    mutate(model_id_normalized = gsub("_beta_regression$|_combined$", "", model_id))
-  seasonality_mode3 <- merge(seasonality_mode3_normalized, all_metadata,
-                             by.x = "model_id_normalized", by.y = "model_id_normalized", all.x = TRUE) %>%
-    select(-model_id_normalized)
+  # Element [[1]]: per-model metadata (model_id + group cols + amplitude + sig flags)
+  model_metadata <- all_metadata %>% rename(model_id = model_id_normalized)
 
+  # Element [[4]]: per-site-year peak month rows + metadata
   max_abun_normalized <- max_abun %>%
     mutate(model_id_normalized = gsub("_beta_regression$|_combined$", "", model_id))
   max_abun_to_plot <- merge(max_abun_normalized, all_metadata,
                             by.x = "model_id_normalized", by.y = "model_id_normalized", all.x = TRUE) %>%
     select(-model_id_normalized)
 
+  # Element [[6]]: every model x site x month estimate + phenophase + metadata
   if(nrow(all_monthly_abun) > 0) {
     all_monthly_abun_normalized <- all_monthly_abun %>%
       mutate(model_id_normalized = gsub("_beta_regression$|_combined$", "", model_id))
@@ -658,34 +586,26 @@ if(nrow(max_abun) > 0) {
   } else {
     all_monthly_abun_to_plot <- data.frame()
   }
-
-  seasonality_mode_normalized <- seasonality_mode %>%
-    mutate(model_id_normalized = gsub("_beta_regression$|_combined$", "", model_id))
-  seasonality_mode_to_plot <- merge(seasonality_mode_normalized, all_metadata,
-                                    by.x = "model_id_normalized", by.y = "model_id_normalized", all.x = TRUE) %>%
-    select(-model_id_normalized)
-  
-  cat("Merged metadata: seasonality_mode2 has", sum(!is.na(seasonality_mode2$fcast_type)), "rows with fcast_type out of", nrow(seasonality_mode2), "\n")
 } else {
   cat("No max_abun data available\n")
-  seasonality_mode2 <- data.frame()
-  seasonality_mode3 <- data.frame()
+  model_metadata <- data.frame()
   max_abun_to_plot <- data.frame()
-  seasonality_mode_to_plot <- data.frame()
   all_monthly_abun_to_plot <- data.frame()
 }
 
 cat("\n=== SAVING RESULTS ===\n")
-# Element layout:
-#   [[1]] seasonality_mode2          — one row per model, most-abundant phenophase
-#   [[2]] max_abun                   — per site-year peak month with phenophase
-#   [[3]] seasonality_mode3          — models where one phenophase > 50% of peaks
-#   [[4]] max_abun_to_plot           — max_abun + metadata (peak-month view)
-#   [[5]] seasonality_mode_to_plot   — seasonality_mode + metadata
-#   [[6]] all_monthly_abun_to_plot   — every model x site x month estimate +
+# Element layout. The former peak-of-peaks summaries were removed; [[3]] and [[5]]
+# are kept as empty placeholders so positional indexing of [[4]] and [[6]] in
+# downstream scripts is unchanged.
+#   [[1]] model_metadata            -- one row per model: group cols, amplitude, sig flags
+#   [[2]] max_abun                  -- per site-year peak month with phenophase
+#   [[3]] (removed: seasonality_mode3)
+#   [[4]] max_abun_to_plot          -- max_abun + metadata (peak-month view)
+#   [[5]] (removed: seasonality_mode_to_plot)
+#   [[6]] all_monthly_abun_to_plot  -- every model x site x month estimate +
 #                                      phenophase + metadata (full seasonal profile)
-saveRDS(list(seasonality_mode2, max_abun, seasonality_mode3,
-             max_abun_to_plot, seasonality_mode_to_plot,
+saveRDS(list(model_metadata, max_abun, data.frame(),
+             max_abun_to_plot, data.frame(),
              all_monthly_abun_to_plot),
         here("data/clean/pheno_group_peak_phenophases.rds"))
 

@@ -44,17 +44,20 @@ seasonality_mode_max <- seasonality_mode_all %>%
          sampling_season, mean_abun)
 
 # ── Seasonal CV per taxon (realized seasonal magnitude) ───────────────────────
-# Fractional swing in modeled abundance across phenophases, computed within site
-# (SD / mean across phenophases) then taken as the median across sites, so it
-# reflects temporal seasonality rather than site-to-site spatial spread. This is
-# the same metric used in the latitude figure, and replaces the sin/cos harmonic
-# amplitude for Panel C (see header note).
+# Fractional swing in modeled abundance over the seasonal cycle: per site,
+# SD / mean across the month-of-year climatology (replicate years collapsed to a
+# 12-point cycle), then the median across sites, so it reflects temporal
+# seasonality rather than site-to-site spatial spread or interannual scatter.
+# Same metric used in the latitude figure and Fig 6; replaces the sin/cos
+# harmonic amplitude for Panel C (see header note).
 seasonal_cv_tax <- phenophase_in[[6]] %>%
-  filter(model_name == "env_cycl",
-         !is.na(mean_modeled_abun), !is.na(sampling_season)) %>%
+  filter(model_name == "env_cycl", !is.na(mean_modeled_abun)) %>%
+  mutate(moy = lubridate::month(dates)) %>%
+  group_by(model_id, siteID, moy) %>%
+  summarise(moy_mean = mean(mean_modeled_abun, na.rm = TRUE), .groups = "drop") %>%
   group_by(model_id, siteID) %>%
-  summarise(cv = sd(mean_modeled_abun, na.rm = TRUE) /
-                 mean(mean_modeled_abun, na.rm = TRUE), .groups = "drop") %>%
+  summarise(cv = sd(moy_mean, na.rm = TRUE) / mean(moy_mean, na.rm = TRUE),
+            .groups = "drop") %>%
   filter(is.finite(cv)) %>%
   group_by(model_id) %>%
   summarise(seasonal_cv = median(cv, na.rm = TRUE), .groups = "drop")

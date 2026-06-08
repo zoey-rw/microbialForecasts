@@ -161,51 +161,47 @@ pB <- build_band_panel(
 )
 
 # =============================================================================
-# Panel C — Seasonal CV by functional group (which guilds are most seasonal,
-# and when they peak)
+# Panel C — Seasonal magnitude (CV) by functional group
 # =============================================================================
-# Magnitude = realized seasonal CV of env_cycl modeled abundance: within-site
-# SD/mean across phenophases, median over sites (same metric as the per-taxon
-# seasonality used elsewhere). This replaces the sin/cos harmonic amplitude,
-# which under env_cycl is inflated by collinearity with the (also-seasonal)
-# temperature/moisture predictors and misranks how seasonal a guild really is.
-# Color = peak phenophase (phase with the highest mean modeled abundance).
-pheno_colors <- c("Green-up" = "#009E73", "Peak" = "#E69F00",
-                  "Senescence" = "#D55E00", "Dormancy" = "#56B4E9")
-pheno_disp_levels <- c("greenup", "peak", "greendown", "dormancy")
-pheno_disp_labels <- c("Green-up", "Peak", "Senescence", "Dormancy")
-
+# Magnitude = realized seasonal CV of env_cycl modeled abundance: per site,
+# SD/mean across the month-of-year climatology (replicate years collapsed to a
+# 12-point seasonal cycle), then the median across sites. Collapsing years
+# isolates the repeatable seasonal swing from interannual/measurement scatter.
+# This replaces the sin/cos harmonic amplitude, which under env_cycl is inflated
+# by collinearity with the (also-seasonal) temperature/moisture predictors and
+# misranks how seasonal a guild really is.
+#
+# This panel intentionally encodes magnitude only, NOT a "peak phenophase":
+# a single peak phase is not well defined for most guilds. Pooling modeled
+# abundance across sites, the four phenophase means are nearly tied for all but
+# the most strongly seasonal guilds, and a per-site argmax agrees with the modal
+# phase at >=50% of sites for only 8 of 33 groups (e.g. nitrification's peak
+# falls in green-up at just 32% of sites). Coloring every guild by an argmax
+# phase therefore asserts a continental phenological niche that the data do not
+# support and contradicts the per-band curves in panels A-B. Where a guild does
+# have a robust, consistent peak it is shown directly in A-B.
 seasonal_cv_tax <- abun_data %>%
-  filter(model_name == "env_cycl",
-         !is.na(mean_modeled_abun), !is.na(sampling_season)) %>%
+  filter(model_name == "env_cycl", !is.na(mean_modeled_abun)) %>%
+  mutate(moy = lubridate::month(dates)) %>%
+  group_by(model_id, siteID, moy) %>%
+  summarise(moy_mean = mean(mean_modeled_abun, na.rm = TRUE), .groups = "drop") %>%
   group_by(model_id, siteID) %>%
-  summarise(cv = sd(mean_modeled_abun, na.rm = TRUE) /
-                 mean(mean_modeled_abun, na.rm = TRUE), .groups = "drop") %>%
+  summarise(cv = sd(moy_mean, na.rm = TRUE) / mean(moy_mean, na.rm = TRUE),
+            .groups = "drop") %>%
   filter(is.finite(cv)) %>%
   group_by(model_id) %>%
   summarise(seasonal_cv = median(cv, na.rm = TRUE), .groups = "drop")
 
-# Show every converged functional group, not only those with a significant
-# env_cycl sin/cos term: the panel's metric is realized seasonal CV, which does
-# not depend on harmonic significance. (Under env_cycl the explicit harmonic can
-# be non-significant because temperature/moisture absorb the seasonal signal --
-# this is exactly why ectomycorrhizal and nitrification, both featured in panels
-# A-B and clearly seasonal by CV, were previously dropped.)
-fg_peak <- abun_data %>%
+# Every converged functional group (kingdom lookup). No significance filter:
+# the metric is realized CV, independent of env_cycl harmonic significance.
+fg_meta <- abun_data %>%
   filter(model_name == "env_cycl", fcast_type == "Functional") %>%
-  group_by(model_id, taxon, pretty_group, sampling_season) %>%
-  summarise(mean_abun = mean(mean_modeled_abun, na.rm = TRUE),
-            .groups = "drop") %>%
-  group_by(model_id, taxon, pretty_group) %>%
-  slice_max(mean_abun, n = 1, with_ties = FALSE) %>%
-  ungroup()
+  distinct(model_id, taxon, pretty_group)
 
-fg_cv <- fg_peak %>%
-  left_join(seasonal_cv_tax, by = "model_id") %>%
+fg_cv <- seasonal_cv_tax %>%
+  inner_join(fg_meta, by = "model_id") %>%
   filter(is.finite(seasonal_cv)) %>%
   mutate(
-    peak_phase = factor(sampling_season, levels = pheno_disp_levels,
-                        labels = pheno_disp_labels),
     label = tools::toTitleCase(gsub("_", " ", taxon)),
     # Bold the guilds featured in panels A-B (rendered via ggtext markdown).
     label_md = ifelse(taxon %in% featured_guilds,
@@ -214,13 +210,12 @@ fg_cv <- fg_peak %>%
 
 pCV <- ggplot(fg_cv,
               aes(x = seasonal_cv, y = reorder(label_md, seasonal_cv),
-                  color = peak_phase, shape = pretty_group)) +
+                  shape = pretty_group)) +
   geom_segment(aes(xend = 0, yend = reorder(label_md, seasonal_cv)),
                color = "grey75", linewidth = 0.5) +
-  geom_point(size = 3) +
-  scale_color_manual(values = pheno_colors, name = "Peak phenophase") +
+  geom_point(size = 2.8, color = "grey20") +
   scale_shape_manual(values = c(Bacteria = 16, Fungi = 17), name = NULL) +
-  labs(x = "Seasonal CV (SD / mean across phenophases)", y = NULL) +
+  labs(x = "Seasonal CV (SD / mean of monthly climatology)", y = NULL) +
   base_theme +
   theme(axis.text.y        = ggtext::element_markdown(),
         panel.grid.major.y = element_line(color = "grey90", linewidth = 0.3),
@@ -330,8 +325,5 @@ out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 ggsave(file.path(out_dir, "fig6_seasonality_and_skill.png"),
        fig6, width = 12, height = 15, dpi = 300)
-ggsave(file.path(out_dir, "fig6_seasonality_and_skill.pdf"),
-       fig6, width = 12, height = 15, dpi = 300)
 
 cat("Saved: figures/fig6_seasonality_and_skill.png\n")
-cat("Saved: figures/fig6_seasonality_and_skill.pdf\n")

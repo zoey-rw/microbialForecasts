@@ -20,7 +20,9 @@ site_descr    <- readRDS(here("data/clean/site_effect_predictors.rds"))
 # phenophase, not just the per-site-year peak month (which is element 4).
 abun_data <- phenophase_in[[6]]
 
-# Element 1 has per-model modal phenophase + amplitude
+# Element 1 is per-model metadata (amplitude + seasonality-significance flags);
+# used here only for the significant_sin/cos flags. (It no longer carries a
+# per-guild "peak phenophase" -- that non-robust peak-of-peaks summary was removed.)
 mode_data <- phenophase_in[[1]]   # one row per model_id
 
 # ── Latitude categories ───────────────────────────────────────────────────────
@@ -112,10 +114,12 @@ pA <- ggplot(pA_data,
   )
 
 # ── Panel B: latitude × kingdom interaction in seasonal variability ───────────
-# Seasonal CV (SD / mean of modeled abundance across phenophases) measures how
-# strongly a taxon's abundance swings over the season. We test whether that
-# variability depends on latitude, on kingdom, and -- the key question -- whether
-# the fungi-vs-bacteria difference itself changes across latitude bands.
+# Seasonal CV (SD / mean of the month-of-year climatology) measures how strongly
+# a taxon's abundance swings over the seasonal cycle. Replicate years are
+# collapsed to a 12-point month-of-year cycle so interannual/measurement scatter
+# does not inflate it. We test whether that variability depends on latitude, on
+# kingdom, and -- the key question -- whether the fungi-vs-bacteria difference
+# itself changes across latitude bands.
 #
 # Unit of analysis is one CV per taxon per latitude band (median across the
 # sites it occupies in that band). This avoids the pseudoreplication of the
@@ -127,12 +131,13 @@ sig_models <- mode_data %>%
   pull(model_id)
 
 site_cv <- abun_data %>%
-  filter(model_id %in% sig_models,
-         !is.na(mean_modeled_abun), !is.na(sampling_season)) %>%
+  filter(model_id %in% sig_models, !is.na(mean_modeled_abun)) %>%
+  mutate(moy = lubridate::month(dates)) %>%
+  group_by(model_id, pretty_group, siteID, moy) %>%
+  summarise(moy_mean = mean(mean_modeled_abun, na.rm = TRUE), .groups = "drop") %>%
   group_by(model_id, pretty_group, siteID) %>%
   summarise(
-    seasonal_cv = sd(mean_modeled_abun, na.rm = TRUE) /
-                  mean(mean_modeled_abun, na.rm = TRUE),
+    seasonal_cv = sd(moy_mean, na.rm = TRUE) / mean(moy_mean, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   left_join(lat_df, by = "siteID") %>%
@@ -161,9 +166,10 @@ stat_lab <- paste0(
   pfmt(cv_aov["latitude_category:pretty_group", "Pr(>F)"])
 )
 
-# Clip the y-axis so the bulk of the distribution is legible; only a couple of
-# taxon-band points (both high-CV fungi) fall above the cap.
-y_cap   <- 0.82
+# Clip the y-axis so the bulk of the distribution is legible; a few extreme
+# taxon-band points fall above the cap. Cap adapts to the data (98th percentile)
+# so it tracks the metric's scale.
+y_cap   <- as.numeric(quantile(taxon_cv$cv, 0.98, na.rm = TRUE))
 n_above <- sum(taxon_cv$cv > y_cap)
 cap_txt <- if (n_above == 0) NULL else paste0(
   n_above, " high-CV fungal ", if (n_above == 1) "taxon" else "taxa",
@@ -193,7 +199,7 @@ pB <- ggplot(taxon_cv,
   coord_cartesian(ylim = c(0, y_cap)) +
   labs(
     x = "Site latitude",
-    y = "Seasonal CV per taxon\n(SD / mean across phenophases)",
+    y = "Seasonal CV per taxon\n(SD / mean of monthly climatology)",
     caption = cap_txt
   ) +
   theme_bw(base_size = 12) +
