@@ -241,3 +241,6 @@ data/summary/*
 !data/summary/phylo_analysis_results.rds
 !data/summary/phylo_contribution_null_ses.csv
 !data/summary/phylo_score_contribution_null_ses.csv
+
+# Zenodo upload staging (local artifacts to upload; not tracked)
+/zenodo_upload/
