@@ -11,32 +11,9 @@ tryCatch({
   cat("Note: Could not increase memory limit:", e$message, "\n")
 })
 
-# Read in hindcasts - try Parquet first for memory efficiency
-parquet_file <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
-rds_file <- here("data/summary/all_hindcasts_plsr2.rds")
-
-if (file.exists(parquet_file)) {
-  # Try arrow first, then nanoparquet, then fallback to RDS
-  if (requireNamespace("arrow", quietly = TRUE)) {
-    cat("Using Parquet file with arrow for memory efficiency...\n")
-    hindcast_data <- arrow::read_parquet(parquet_file)
-  } else if (requireNamespace("nanoparquet", quietly = TRUE)) {
-    cat("Using Parquet file with nanoparquet for memory efficiency...\n")
-    hindcast_data <- nanoparquet::read_parquet(parquet_file)
-  } else {
-    cat("Parquet file exists but neither arrow nor nanoparquet available, using RDS file...\n")
-    if (file.exists(rds_file)) {
-      hindcast_data <- readRDS(rds_file)
-    } else {
-      stop("RDS file not found!")
-    }
-  }
-} else if (file.exists(rds_file)) {
-  cat("Parquet file not found, using RDS file...\n")
-  hindcast_data <- readRDS(rds_file)
-} else {
-  stop("Neither Parquet nor RDS hindcast files found!")
-}
+# Read in hindcasts via the package loader (reads + unions the per-model parquet
+# files through duckdb, memory-efficient)
+hindcast_data <- load_hindcasts()
 
 # Read in hindcast scores
 scores_list = readRDS(here("data", paste0("summary/scoring_metrics_plsr2.rds")))

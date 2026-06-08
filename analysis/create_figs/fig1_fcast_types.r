@@ -127,15 +127,8 @@ cat("Saved: figures/fig1_forecast_map_examples.png\n")
 #   (a) abundance normalization inflating/deflating nRMSE, or
 #   (b) forecast spread (sd) differing between functional vs taxonomic groups.
 cat("\n── Metric inversion diagnostic ──\n")
-parquet_file <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
-rds_file <- here("data/summary/all_hindcasts_plsr2.rds")
-if (file.exists(parquet_file) && requireNamespace("nanoparquet", quietly = TRUE)) {
-  hindcast_data <- nanoparquet::read_parquet(parquet_file)
-} else if (file.exists(parquet_file) && requireNamespace("arrow", quietly = TRUE)) {
-  hindcast_data <- arrow::read_parquet(parquet_file)
-} else {
-  hindcast_data <- readRDS(rds_file)
-}
+# Hindcasts via the package loader (reads + unions the per-model parquet files)
+hindcast_data <- load_hindcasts()
 hindcast_diag <- hindcast_data %>%
   as_tibble() %>%
   filter(model_name == "env_cycl",

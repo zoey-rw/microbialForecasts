@@ -11,21 +11,8 @@ tryCatch(mem.maxVSize(Inf), error = function(e) invisible(NULL))
 scores_list <- readRDS(here("data", "summary/scoring_metrics_plsr2.rds"))
 sum.all     <- readRDS(here("data", "summary/predictor_effects.rds"))
 
-parquet_file <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
-rds_file     <- here("data/summary/all_hindcasts_plsr2.rds")
-if (file.exists(parquet_file)) {
-  if (requireNamespace("arrow",       quietly = TRUE)) {
-    hindcast_in <- arrow::read_parquet(parquet_file)
-  } else if (requireNamespace("nanoparquet", quietly = TRUE)) {
-    hindcast_in <- nanoparquet::read_parquet(parquet_file)
-  } else {
-    hindcast_in <- readRDS(rds_file)
-  }
-} else if (file.exists(rds_file)) {
-  hindcast_in <- readRDS(rds_file)
-} else {
-  stop("Neither Parquet nor RDS hindcast files found!")
-}
+# Hindcasts via the package loader (reads + unions the per-model parquet files)
+hindcast_in <- load_hindcasts()
 
 converged      <- scores_list$converged_strict_list
 converged_base <- gsub("_beta_regression$", "", converged)

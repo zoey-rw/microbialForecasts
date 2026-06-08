@@ -97,13 +97,8 @@ panel_b <- ggplot(improvement_summary,
   theme(legend.position = "right")
 
 # ── Panel C: Prediction vs truth scatter (env_cycl, unobserved sites) ─────────
-parquet_path <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
-rds_path <- here("data/summary/all_hindcasts_plsr2.rds")
-if (file.exists(parquet_path) && requireNamespace("nanoparquet", quietly = TRUE)) {
-  hindcasts <- nanoparquet::read_parquet(parquet_path)
-} else {
-  hindcasts <- readRDS(rds_path)
-}
+# Hindcasts via the package loader (reads + unions the per-model parquet files)
+hindcasts <- load_hindcasts()
 
 scatter_df <- hindcasts %>%
   filter(model_name == "env_cycl",
