@@ -9,7 +9,7 @@ library(cutpointr)
 library(tidyverse)
 library(gridExtra)
 
-source(here::here("functions/helperFunctions.r"))
+library(microbialForecast)  # helper functions (parseNEONsampleIDs, etc.)
 
 # Code outline: assumes you have already downloaded raw sensor data and sample data
 ## 1. Download bulk density/particle size data ##

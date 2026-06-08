@@ -4,7 +4,7 @@ library(ranomaly)
 library(phyloseq)
 library(dplyr)
 
-source(here::here("functions/helperFunctions.r"))
+library(microbialForecast)  # helper functions (parseNEONsampleIDs, etc.)
 
 #### Prep full ASV table (from Clara Qin's Google drive) ####
 library(dada2)

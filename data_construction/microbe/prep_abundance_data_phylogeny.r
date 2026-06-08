@@ -10,7 +10,7 @@ library(padr)
 library(ggplot2)
 library(dplyr)
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/binTaxGroups.r")
-source(here::here("functions/helperFunctions.r"))
+library(microbialForecast)  # helper functions (parseNEONsampleIDs, etc.)
 
 #### 16S #####
 

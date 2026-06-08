@@ -475,9 +475,9 @@ assign_fg_sources <- function (vector) {
 }
 
 
-#'  @title 			parseNEONsampleIDs
-#'  @description create sample information data.frame from NEON sample names
-#'  @export
+#' @title parseNEONsampleIDs
+#' @description create sample information data.frame from NEON sample names
+#' @export
 parseNEONsampleIDs <- function(sampleID){
   df <- data.frame(siteID = substr(sampleID, 1, 4), sampleID = sampleID, stringsAsFactors = F) %>%
   	mutate(sample = sapply(strsplit(sampleID, "-GEN|-gen"),  "[[" , 1)) %>%

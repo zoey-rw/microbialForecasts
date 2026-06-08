@@ -1,7 +1,7 @@
 library(ranomaly)
 library(dada2)
 
-source(here::here("functions/helperFunctions.r"))
+library(microbialForecast)  # helper functions (parseNEONsampleIDs, etc.)
 
 # legacy.seqtab <- readRDS("/projectnb/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/data/raw_seqs/16S/raw_from_neon/seq_tables/legacyOtuTable_16S.rds")
 # legacy.seqtab.df <- as.data.frame(legacy.seqtab)

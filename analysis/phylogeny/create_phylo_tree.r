@@ -1,7 +1,7 @@
 # Create phylogenetic tree for NEON bacteria 
 # From 29 taxa
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/helperFunctions.r")
-source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/functions/prepDirichletData.r")
+# Helper functions and prepDirichletData() now come from the microbialForecast
+# package, attached below via source.R.
 source("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 
 library(DECIPHER)

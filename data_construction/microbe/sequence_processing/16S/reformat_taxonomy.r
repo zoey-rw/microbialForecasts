@@ -1,5 +1,5 @@
 library(phyloseq)
-source(here::here("functions/helperFunctions.r"))
+library(microbialForecast)  # helper functions (parseNEONsampleIDs, etc.)
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/createTaxFunction.r")
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/addBacterialFunction.r")
 source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/binTaxGroups.r")

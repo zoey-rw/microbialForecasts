@@ -2,14 +2,10 @@
 % Please edit documentation in R/helperFunctions.r
 \name{parseNEONsampleIDs}
 \alias{parseNEONsampleIDs}
-\title{@title 			parseNEONsampleIDs
- @description create sample information data.frame from NEON sample names
- @export}
+\title{parseNEONsampleIDs}
 \usage{
 parseNEONsampleIDs(sampleID)
 }
 \description{
-@title 			parseNEONsampleIDs
- @description create sample information data.frame from NEON sample names
- @export
+create sample information data.frame from NEON sample names
 }
