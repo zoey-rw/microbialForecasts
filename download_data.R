@@ -15,9 +15,9 @@
 #   * example_hindcasts_HARV_CPER.tar.gz -> per-site hindcasts for the example
 #     forecast figure (extracted into data/hindcasts/driver_uncertainty/).
 #
-# NOTE: the aggregate hindcast parquet (all_hindcasts_plsr2.parquet, ~1 GB) used
-# by load_hindcasts() for pooled-R2 figures is NOT yet in this manifest — it is
-# being renamed/split by forecast type first; add it here once deposited.
+# The hindcasts that load_hindcasts() reads are split by model type into three
+# parquet files (hindcasts_env_cycl/cycl_only/env_cov.parquet, ~1 GB total);
+# load_hindcasts() reads and unions them for the pooled-R2 / accuracy figures.
 #
 # Setup: after the Zenodo deposit is published, set the record id below (or the
 # MF_ZENODO_BASE environment variable) to the record's file base URL, e.g.
@@ -65,7 +65,14 @@ files <- list(
 	list(name = "converged_taxa_list.rds",     dest = here("data", "summary", "converged_taxa_list.rds"),
 			 md5 = "531fa669b7c066ea585ab8ee4d6c3d95", note = "converged taxa; effect-size figures"),
 	list(name = "logit_beta_fixed_priors_summaries.rds", dest = here("data", "summary", "logit_beta_fixed_priors_summaries.rds"),
-			 md5 = "1de230a9df401ef07cd6c64524774557", note = "full parameter summary; reportModelParameters / legacy effect")
+			 md5 = "1de230a9df401ef07cd6c64524774557", note = "full parameter summary; reportModelParameters / legacy effect"),
+	# data/summary/parquet — hindcasts split by model type; load_hindcasts() unions them
+	list(name = "hindcasts_env_cycl.parquet",  dest = here("data", "summary", "parquet", "hindcasts_env_cycl.parquet"),
+			 md5 = "dc8f8e523aeee88aeb29495f45f23dbd", note = "hindcasts (env_cycl); load_hindcasts()"),
+	list(name = "hindcasts_cycl_only.parquet", dest = here("data", "summary", "parquet", "hindcasts_cycl_only.parquet"),
+			 md5 = "6aa4cb530ac7f2d36e35e1bc1fe03763", note = "hindcasts (cycl_only); load_hindcasts()"),
+	list(name = "hindcasts_env_cov.parquet",   dest = here("data", "summary", "parquet", "hindcasts_env_cov.parquet"),
+			 md5 = "a9fbf3b0c772eb00c868a4008d86d4e7", note = "hindcasts (env_cov); load_hindcasts()")
 )
 
 # Archives: tarballs whose members are repo-relative paths, extracted at the root.
