@@ -84,6 +84,9 @@ qsub*
 *.slurm
 *.out
 *.err
+# Exception: track the documented HPC model-run pipeline (overrides *.qsub above).
+# The .sh helpers in this dir are tracked by default.
+!analysis/model_analysis/hpc/*.qsub
 
 # ====================
 # Data Files

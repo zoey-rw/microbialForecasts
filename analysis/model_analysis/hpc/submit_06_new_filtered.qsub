@@ -1,0 +1,48 @@
+#!/bin/bash -l
+#$ -N hindcast_new_f
+#$ -P dietzelab
+#$ -l h_rt=02:00:00
+#$ -pe omp 2
+#$ -l mem_per_core=12G
+#$ -j y
+#$ -o /projectnb/dietzelab/zrwerbin/microbialForecasts/logs/hpc/06_new_f/$JOB_ID.$TASK_ID.log
+
+# Step 06 newsites restricted to the unique taxa with newly-converged models.
+# Uses new_converged_taxa.txt (one taxon per line) instead of full hpc_taxon_taskmap.txt.
+
+module load R/4.4.0
+export R_LIBS_USER="/projectnb/dietzelab/zrwerbin/microbialForecasts/R_library"
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+
+PROJECT=/projectnb/dietzelab/zrwerbin/microbialForecasts
+mkdir -p "$PROJECT/logs/hpc/06_new_f"
+
+TAXMAP="$PROJECT/data/summary/new_converged_taxa.txt"
+if [ ! -f "$TAXMAP" ]; then
+    echo "ERROR: Taxon map not found at $TAXMAP"
+    exit 1
+fi
+
+TAXON=$(sed -n "${SGE_TASK_ID}p" "$TAXMAP")
+if [ -z "$TAXON" ]; then
+    echo "Task $SGE_TASK_ID exceeds taxon map lines. Exiting."
+    exit 0
+fi
+
+echo "=== Step 06 newsites filtered: Task $SGE_TASK_ID ==="
+echo "Taxon: $TAXON"
+echo "Timestamp: $(date)"
+
+export TAXON_FILTER="$TAXON"
+export HINDCAST_CORES=2
+export FIGS=false
+
+cd "$PROJECT/analysis/model_analysis"
+Rscript 06_createHindcasts_newsites.r
+
+RC=$?
+echo "Exit code: $RC"
+echo "Completed: $(date)"
+exit $RC

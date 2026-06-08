@@ -1,5 +1,7 @@
 #!/bin/bash
-cd /Users/zoeywerbin/Documents/microbialForecasts
+# Run from the project root regardless of where this script is invoked.
+# This script lives in scripts/, so the project root is its parent directory.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 
 # Discover figure scripts (create_figs only; excludes subdirectories)
 # Include both .r and .R so all scripts run regardless of filename case

@@ -1,0 +1,31 @@
+#!/bin/bash -l
+#$ -N tidy_hindcasts
+#$ -P dietzelab
+#$ -l h_rt=24:00:00
+#$ -pe omp 4
+#$ -l mem_per_core=16G
+#$ -j y
+#$ -o /projectnb/dietzelab/zrwerbin/microbialForecasts/logs/hpc/07_tidy/$JOB_ID.log
+
+# Step 07: Tidy hindcasts into consolidated parquet dataset
+# Sequential batch processing, memory-efficient streaming.
+#
+# Submit: qsub -hold_jid hindcast_obs,hindcast_new submit_07_tidy_hindcasts.qsub
+
+module load R/4.4.0
+export R_LIBS_USER="/projectnb/dietzelab/zrwerbin/microbialForecasts/R_library"
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+
+PROJECT=/projectnb/dietzelab/zrwerbin/microbialForecasts
+mkdir -p "$PROJECT/logs/hpc/07_tidy"
+
+cd "$PROJECT/analysis/model_analysis"
+echo "=== Step 07: Tidy hindcasts ==="
+echo "Timestamp: $(date)"
+
+Rscript 07_tidyHindcasts.r
+
+echo "Exit code: $?"
+echo "Completed: $(date)"

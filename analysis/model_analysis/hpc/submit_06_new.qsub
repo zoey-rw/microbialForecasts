@@ -1,0 +1,54 @@
+#!/bin/bash -l
+#$ -N hindcast_new
+#$ -P dietzelab
+#$ -l h_rt=02:00:00
+#$ -pe omp 2
+#$ -l mem_per_core=12G
+#$ -j y
+#$ -o /projectnb/dietzelab/zrwerbin/microbialForecasts/logs/hpc/06_new/$JOB_ID.$TASK_ID.log
+
+# Step 06: Generate hindcasts for UNOBSERVED (new) sites
+# Array job -- one SGE task per unique taxon. Each task processes up to 3 models
+# (env_cycl, env_cov, cycl_only) for that taxon using internal foreach parallelism.
+#
+# Submit: qsub -t 1-N -hold_jid predict_site_effects submit_06_new.qsub
+#   where N = number of lines in hpc_taxon_taskmap.txt (run enumerate_models.sh first)
+
+module load R/4.4.0
+export R_LIBS_USER="/projectnb/dietzelab/zrwerbin/microbialForecasts/R_library"
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+
+PROJECT=/projectnb/dietzelab/zrwerbin/microbialForecasts
+mkdir -p "$PROJECT/logs/hpc/06_new"
+
+# Read taxon assignment from task map
+TAXMAP="$PROJECT/data/summary/hpc_taxon_taskmap.txt"
+if [ ! -f "$TAXMAP" ]; then
+    echo "ERROR: Taxon map not found at $TAXMAP"
+    echo "Run enumerate_models.sh first."
+    exit 1
+fi
+
+TAXON=$(sed -n "${SGE_TASK_ID}p" "$TAXMAP")
+if [ -z "$TAXON" ]; then
+    echo "Task $SGE_TASK_ID exceeds taxon map lines. Exiting."
+    exit 0
+fi
+
+echo "=== Step 06 newsites: Task $SGE_TASK_ID ==="
+echo "Taxon: $TAXON"
+echo "Timestamp: $(date)"
+
+export TAXON_FILTER="$TAXON"
+export HINDCAST_CORES=2
+export FIGS=false
+
+cd "$PROJECT/analysis/model_analysis"
+Rscript 06_createHindcasts_newsites.r
+
+RC=$?
+echo "Exit code: $RC"
+echo "Completed: $(date)"
+exit $RC

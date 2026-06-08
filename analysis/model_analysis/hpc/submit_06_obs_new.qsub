@@ -1,0 +1,57 @@
+#!/bin/bash -l
+#$ -N hindcast_obs_new
+#$ -P dietzelab
+#$ -l h_rt=02:00:00
+#$ -pe omp 1
+#$ -l mem_per_core=30G
+#$ -j y
+#$ -o /projectnb/dietzelab/zrwerbin/microbialForecasts/logs/hpc/06_obs_new/$JOB_ID.$TASK_ID.log
+
+# Step 06 (restricted to newly converged models only).
+# Uses new_converged_taskmap.tsv (24 rows) instead of full hpc_model_taskmap.tsv.
+# Submit: qsub -t 1-24 submit_06_obs_new.qsub
+
+module load R/4.4.0
+export R_LIBS_USER="/projectnb/dietzelab/zrwerbin/microbialForecasts/R_library"
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+
+PROJECT=/projectnb/dietzelab/zrwerbin/microbialForecasts
+mkdir -p "$PROJECT/logs/hpc/06_obs_new"
+
+TASKMAP="$PROJECT/data/summary/new_converged_taskmap.tsv"
+if [ ! -f "$TASKMAP" ]; then
+    echo "ERROR: Task map not found at $TASKMAP"
+    exit 1
+fi
+
+LINE=$(sed -n "${SGE_TASK_ID}p" "$TASKMAP")
+if [ -z "$LINE" ]; then
+    echo "Task $SGE_TASK_ID exceeds task map lines. Exiting."
+    exit 0
+fi
+
+MODEL_NAME=$(echo "$LINE" | cut -f2)
+TAXON=$(echo "$LINE" | cut -f3)
+MODEL_ID=$(echo "$LINE" | cut -f4)
+
+echo "=== Step 06 observed (new): Task $SGE_TASK_ID ==="
+echo "Model: $MODEL_NAME | Taxon: $TAXON"
+echo "Model ID: $MODEL_ID"
+echo "Timestamp: $(date)"
+
+cd "$PROJECT/analysis/model_analysis"
+
+Rscript 06_createHindcasts_observed.r \
+    --model="$MODEL_ID" \
+    --mname="$MODEL_NAME" \
+    --sequential=true \
+    --figs=false \
+    --cores=1 \
+    --force=true
+
+RC=$?
+echo "Exit code: $RC"
+echo "Completed: $(date)"
+exit $RC

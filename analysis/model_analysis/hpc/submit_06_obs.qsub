@@ -1,0 +1,62 @@
+#!/bin/bash -l
+#$ -N hindcast_obs
+#$ -P dietzelab
+#$ -l h_rt=02:00:00
+#$ -pe omp 1
+#$ -l mem_per_core=30G
+#$ -j y
+#$ -o /projectnb/dietzelab/zrwerbin/microbialForecasts/logs/hpc/06_obs/$JOB_ID.$TASK_ID.log
+
+# Step 06: Generate hindcasts for OBSERVED sites
+# Array job -- one SGE task per model. Maximizes cluster parallelism.
+# Each task processes a single model sequentially (no internal fork).
+# Resume-safe: the R script skips models whose per-site RDS files already exist.
+#
+# Submit: qsub -t 1-N -hold_jid predict_site_effects submit_06_obs.qsub
+#   where N = number of lines in hpc_model_taskmap.tsv (run enumerate_models.sh first)
+
+module load R/4.4.0
+export R_LIBS_USER="/projectnb/dietzelab/zrwerbin/microbialForecasts/R_library"
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+
+PROJECT=/projectnb/dietzelab/zrwerbin/microbialForecasts
+mkdir -p "$PROJECT/logs/hpc/06_obs"
+
+# Read task assignment from task map
+TASKMAP="$PROJECT/data/summary/hpc_model_taskmap.tsv"
+if [ ! -f "$TASKMAP" ]; then
+    echo "ERROR: Task map not found at $TASKMAP"
+    echo "Run enumerate_models.sh first."
+    exit 1
+fi
+
+LINE=$(sed -n "${SGE_TASK_ID}p" "$TASKMAP")
+if [ -z "$LINE" ]; then
+    echo "Task $SGE_TASK_ID exceeds task map lines. Exiting."
+    exit 0
+fi
+
+MODEL_NAME=$(echo "$LINE" | cut -f2)
+TAXON=$(echo "$LINE" | cut -f3)
+MODEL_ID=$(echo "$LINE" | cut -f4)
+
+echo "=== Step 06 observed: Task $SGE_TASK_ID ==="
+echo "Model: $MODEL_NAME | Taxon: $TAXON"
+echo "Model ID: $MODEL_ID"
+echo "Timestamp: $(date)"
+
+cd "$PROJECT/analysis/model_analysis"
+
+Rscript 06_createHindcasts_observed.r \
+    --model="$MODEL_ID" \
+    --mname="$MODEL_NAME" \
+    --sequential=true \
+    --figs=false \
+    --cores=1
+
+RC=$?
+echo "Exit code: $RC"
+echo "Completed: $(date)"
+exit $RC

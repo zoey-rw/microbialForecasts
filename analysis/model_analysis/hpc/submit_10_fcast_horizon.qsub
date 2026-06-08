@@ -1,0 +1,31 @@
+#!/bin/bash -l
+#$ -N fcast_horizon
+#$ -P dietzelab
+#$ -l h_rt=04:00:00
+#$ -pe omp 2
+#$ -l mem_per_core=16G
+#$ -j y
+#$ -o /projectnb/dietzelab/zrwerbin/microbialForecasts/logs/hpc/10_horizon/$JOB_ID.log
+
+# Step 10: Calculate forecast horizon
+# Runs in parallel with steps 08 and 09 after step 07.
+#
+# Submit: qsub -hold_jid tidy_hindcasts submit_10_fcast_horizon.qsub
+
+module load R/4.4.0
+export R_LIBS_USER="/projectnb/dietzelab/zrwerbin/microbialForecasts/R_library"
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+
+PROJECT=/projectnb/dietzelab/zrwerbin/microbialForecasts
+mkdir -p "$PROJECT/logs/hpc/10_horizon"
+
+cd "$PROJECT/analysis/model_analysis"
+echo "=== Step 10: Forecast horizon ==="
+echo "Timestamp: $(date)"
+
+Rscript 10_calculateFcastHorizon.r
+
+echo "Exit code: $?"
+echo "Completed: $(date)"

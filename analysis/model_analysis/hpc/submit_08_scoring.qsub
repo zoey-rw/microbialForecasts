@@ -1,0 +1,31 @@
+#!/bin/bash -l
+#$ -N scoring_metrics
+#$ -P dietzelab
+#$ -l h_rt=04:00:00
+#$ -pe omp 2
+#$ -l mem_per_core=16G
+#$ -j y
+#$ -o /projectnb/dietzelab/zrwerbin/microbialForecasts/logs/hpc/08_scoring/$JOB_ID.log
+
+# Step 08: Calculate scoring metrics (CRPS, RMSE, RSQ)
+# Runs in parallel with steps 09 and 10 after step 07.
+#
+# Submit: qsub -hold_jid tidy_hindcasts submit_08_scoring.qsub
+
+module load R/4.4.0
+export R_LIBS_USER="/projectnb/dietzelab/zrwerbin/microbialForecasts/R_library"
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+
+PROJECT=/projectnb/dietzelab/zrwerbin/microbialForecasts
+mkdir -p "$PROJECT/logs/hpc/08_scoring"
+
+cd "$PROJECT/analysis/model_analysis"
+echo "=== Step 08: Scoring metrics ==="
+echo "Timestamp: $(date)"
+
+Rscript 08_calculateScoringMetrics.r
+
+echo "Exit code: $?"
+echo "Completed: $(date)"

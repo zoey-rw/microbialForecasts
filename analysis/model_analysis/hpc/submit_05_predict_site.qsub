@@ -1,0 +1,33 @@
+#!/bin/bash -l
+#$ -N predict_site_effects
+#$ -P dietzelab
+#$ -l h_rt=04:00:00
+#$ -pe omp 8
+#$ -l mem_per_core=8G
+#$ -j y
+#$ -o /projectnb/dietzelab/zrwerbin/microbialForecasts/logs/hpc/05_predict/$JOB_ID.log
+
+# Step 05: Predict site effects via PLSR + model averaging
+# Uses foreach parallelism internally; core count injected via TEST_CORES.
+#
+# Submit: qsub -hold_jid tidy_effects submit_05_predict_site.qsub
+
+module load R/4.4.0
+export R_LIBS_USER="/projectnb/dietzelab/zrwerbin/microbialForecasts/R_library"
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+
+PROJECT=/projectnb/dietzelab/zrwerbin/microbialForecasts
+mkdir -p "$PROJECT/logs/hpc/05_predict"
+
+cd "$PROJECT/analysis/model_analysis"
+echo "=== Step 05: Predict site effects ==="
+echo "Timestamp: $(date)"
+echo "Cores: $NSLOTS"
+
+# Inject TEST_CORES so the R script uses all allocated cores
+Rscript -e "TEST_CORES <- ${NSLOTS}; source('05_predictSiteEffects.r')"
+
+echo "Exit code: $?"
+echo "Completed: $(date)"
