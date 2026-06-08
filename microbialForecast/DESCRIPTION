@@ -29,6 +29,7 @@ Imports:
     plyr,
     tibble,
     doParallel,
+    foreach,
     data.table,
     Rfast,
     moments,
@@ -50,7 +51,15 @@ Suggests:
     nanoparquet,
     MuMIn,
     pls,
-    foreach
+    FUNGuildR,
+    fungaltraits,
+    rvest,
+    jsonlite,
+    neonstore,
+    vroom
+Remotes:
+    brendanf/FUNGuildR,
+    traitecoevo/fungaltraits
 Depends:
     R (>= 4.0.0)
 SystemRequirements: NIMBLE requires a C++ compiler

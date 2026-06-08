@@ -4,8 +4,8 @@ source("../../../../source.R")
 library(phyloseq)
 library(dplyr)
 library(tidyr)
-source(here("functions/assign_fungal_guilds.r"))
-source(here("functions/helperFunctions.r"))
+# assign_fungal_guilds() and the helper functions now live in the
+# microbialForecast package, attached above via source.R.
 # binTaxGroups.r from NEON_16S_ITS_data_construction repo — not available locally
 # source("/projectnb2/talbot-lab-data/zrwerbin/NEON_16S_ITS_data_construction/binTaxGroups.r")
 
