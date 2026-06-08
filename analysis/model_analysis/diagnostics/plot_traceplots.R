@@ -3,9 +3,10 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(patchwork)
+library(here)  # resolve project-root paths regardless of working directory
 
 # Identify worst parameters from new chain 1
-new_files <- sort(list.files("data/model_outputs/dirichlet_driver_uncertainty_reparam_75k/env_cycl/all_taxa",
+new_files <- sort(list.files(here("data/model_outputs/dirichlet_driver_uncertainty_reparam_75k/env_cycl/all_taxa"),
                               pattern="checkpoint.*chain1.*loop", full.names=TRUE))
 new1 <- readRDS(tail(new_files, 1))
 ess1 <- apply(new1$samples, 2, function(x) tryCatch(effectiveSize(as.mcmc(x)), error=function(e) NA))
@@ -13,11 +14,11 @@ worst_params <- names(sort(ess1[!is.na(ess1)]))[1:6]
 cat("Worst ESS params:", paste(worst_params, collapse=", "), "\n")
 
 # Load old 20k chains
-old_dir <- "data/model_outputs/dirichlet_driver_uncertainty_reparam_20k/env_cycl/all_taxa"
+old_dir <- here("data/model_outputs/dirichlet_driver_uncertainty_reparam_20k/env_cycl/all_taxa")
 old_chain_files <- sort(list.files(old_dir, pattern="^samples_.*chain[0-9].rds$", full.names=TRUE))
 
 # Load new chain checkpoints (latest for each chain)
-new_dir <- "data/model_outputs/dirichlet_driver_uncertainty_reparam_75k/env_cycl/all_taxa"
+new_dir <- here("data/model_outputs/dirichlet_driver_uncertainty_reparam_75k/env_cycl/all_taxa")
 
 # Build trace data
 trace_list <- list()
@@ -82,5 +83,5 @@ p <- ggplot(trace_df, aes(x = iteration, y = value, color = chain)) +
        subtitle = "Old = 20k cold start, New = 75k warm start",
        x = "Sample index (thinned)", y = "Value", color = "Chain")
 
-ggsave("figures/dirichlet_traceplots_comparison.png", p, width = 10, height = 8, dpi = 150)
+ggsave(here("figures", "dirichlet_traceplots_comparison.png"), p, width = 10, height = 8, dpi = 150)
 cat("Saved: figures/dirichlet_traceplots_comparison.png\n")

@@ -206,25 +206,15 @@ igraph/
 *.fdb_latexmk
 *.synctex.gz
 
-# Manuscript drafts, LaTeX, and bibliography
-Manuscript*.md
-manuscript.tex
-response_to_reviewers.tex
-model_descriptions.tex
-convert_manuscript.py
-add_linelabels.py
-apply_figure_ref_conversion.py
-audit_manuscript_figures.py
-Response to reviewers*.md
-zotero_references.bib
+# Manuscript: LaTeX sources, markdown->LaTeX tooling, bibliography, and build
+# products all live in manuscript/ (deliberately untracked internal tooling).
+/manuscript/
 *.loc
 *.soc
 unconverged_models_list.txt
-verify_manuscript_stats.R
 data/new_neon_microbe/
 data/clean/new_neon_*
 data/clean/phylum_name_mapping.rds
-response_to_reviewers.tex
 
 # Out-of-scope exploratory work (not part of this manuscript)
 analysis/mediation/

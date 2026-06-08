@@ -3,7 +3,15 @@
 # Installation script for microbialForecast package on HPC
 # This script handles the complete installation process with proper error handling
 
+# Resolve the project root from this script's own location (scripts/ is one level
+# below the root) so it works regardless of the caller's working directory. Avoids
+# depending on the 'here' package, which may not be installed yet at bootstrap.
+.args <- commandArgs(trailingOnly = FALSE)
+.script <- sub("^--file=", "", .args[grep("^--file=", .args)])
+PROJ_ROOT <- if (length(.script)) normalizePath(file.path(dirname(.script), "..")) else getwd()
+
 cat("=== Installing microbialForecast package on HPC ===\n")
+cat("Project root:", PROJ_ROOT, "\n")
 
 # Function to install packages with better error handling
 install_with_retry <- function(pkg, retries = 3) {
@@ -46,11 +54,12 @@ library(devtools)
 
 # Step 3: Set working directory and build package
 cat("\n2. Building package...\n")
-if (!file.exists("microbialForecast/DESCRIPTION")) {
-  stop("DESCRIPTION file not found. Make sure you're in the correct directory.")
+pkg_dir <- file.path(PROJ_ROOT, "microbialForecast")
+if (!file.exists(file.path(pkg_dir, "DESCRIPTION"))) {
+  stop("DESCRIPTION file not found at ", pkg_dir, ". Check the project layout.")
 }
 
-setwd("microbialForecast")
+setwd(pkg_dir)
 
 # Step 4: Document the package (this will regenerate .Rd files with correct format)
 cat("\n3. Generating documentation...\n")

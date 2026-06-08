@@ -1,5 +1,6 @@
 # Create warm-start file from the completed 20k Dirichlet run (3 chains)
-chain_dir <- "data/model_outputs/dirichlet_driver_uncertainty_reparam_20k/env_cycl/all_taxa"
+library(here)  # resolve project-root paths regardless of working directory
+chain_dir <- here("data/model_outputs/dirichlet_driver_uncertainty_reparam_20k/env_cycl/all_taxa")
 chain_files <- list.files(chain_dir, pattern="^samples_.*chain[0-9][.]rds$", full.names=TRUE)
 cat("Found", length(chain_files), "chain files\n")
 
