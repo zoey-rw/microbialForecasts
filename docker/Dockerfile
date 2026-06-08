@@ -7,6 +7,16 @@
 # Smoke test (amd64 image on Apple Silicon needs explicit platform):
 #   docker run --rm --platform=linux/amd64 microbial-forecasts:latest
 #
+# Reproduce from the single image (committed inputs are baked in):
+#   # phylogenetic-signal analysis + figures — needs no external data:
+#   docker run --rm --platform=linux/amd64 -v "$(pwd)/figures:/opt/microbialForecasts/figures" \
+#     microbial-forecasts:latest Rscript analysis/create_figs/fig_phylo_contribution.r
+#   # downstream analyses that need the large Zenodo inputs: set MF_ZENODO_BASE and the
+#   # entrypoint fetches + md5-verifies them (via download_data.R) before the command runs:
+#   docker run --rm --platform=linux/amd64 -e MF_ZENODO_BASE="https://zenodo.org/records/<id>/files" \
+#     -v "$(pwd)/figures:/opt/microbialForecasts/figures" microbial-forecasts:latest \
+#     Rscript analysis/create_figs/fig_phylo_contribution.r
+#
 # Run a script with data mounted:
 #   docker run --rm --platform=linux/amd64 -v "$(pwd)/data:/opt/microbialForecasts/data" microbial-forecasts:latest \
 #     Rscript analysis/model_analysis/07_tidyHindcasts.r
@@ -42,7 +52,10 @@ COPY . /opt/microbialForecasts/
 RUN mkdir -p /opt/microbialForecasts/logs
 
 # R CMD INSTALL does not fetch CRAN dependencies; install_local(..., dependencies = TRUE) does.
-RUN Rscript -e 'options(Ncpus = max(1L, parallel::detectCores() - 1L)); install.packages("remotes", repos = "https://cloud.r-project.org", dependencies = FALSE)' \
+# All installs use the base image's pinned Posit Package Manager snapshot (rocker sets
+# a dated CRAN repo per R release) for reproducible package versions; GitHub deps are
+# pinned to commits inside the install scripts.
+RUN Rscript -e 'options(Ncpus = max(1L, parallel::detectCores() - 1L)); install.packages("remotes", dependencies = FALSE)' \
  && Rscript -e 'options(Ncpus = max(1L, parallel::detectCores() - 1L)); remotes::install_local("/opt/microbialForecasts/microbialForecast", dependencies = TRUE, upgrade = "never")' \
  && Rscript /opt/microbialForecasts/docker/install_extra_pkgs.R \
  && Rscript /opt/microbialForecasts/analysis/model_analysis/phylogeny/install_phylo_deps.R \
@@ -55,4 +68,8 @@ ENV OPENBLAS_NUM_THREADS=1
 ENV VECLIB_MAXIMUM_THREADS=1
 ENV NUMEXPR_NUM_THREADS=1
 
+# Entrypoint fetches Zenodo-hosted inputs at runtime when MF_ZENODO_BASE is set,
+# then runs the given command (defaults to the smoke test).
+RUN chmod +x /opt/microbialForecasts/docker/entrypoint.sh
+ENTRYPOINT ["/opt/microbialForecasts/docker/entrypoint.sh"]
 CMD ["Rscript", "docker/smoke_test.R"]

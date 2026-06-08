@@ -15,7 +15,11 @@
 #   (or set env MF_PHYLO_FROMRAW=true)
 
 options(Ncpus = max(1L, parallel::detectCores() - 1L))
-repos <- "https://cloud.r-project.org"
+# Prefer the session's configured repository (in the Docker image this is rocker's
+# dated Posit Package Manager snapshot -> reproducible versions). Fall back to CRAN
+# when run outside the image where repos may be unset ("@CRAN@").
+repos <- getOption("repos")
+if (is.null(repos) || any(repos %in% c("@CRAN@", ""))) repos <- "https://cloud.r-project.org"
 fromraw <- "--fromraw" %in% commandArgs(TRUE) ||
 	tolower(Sys.getenv("MF_PHYLO_FROMRAW")) %in% c("1", "true", "yes")
 
@@ -42,7 +46,7 @@ if (length(need(bioc))) {
 # speedyseq is optional (create_bacterial_phylogeny.r loads it only if present).
 if (fromraw && !have("speedyseq")) {
 	if (!have("remotes")) install.packages("remotes", repos = repos)
-	tryCatch(remotes::install_github("mikemc/speedyseq", upgrade = "never"),
+	tryCatch(remotes::install_github("mikemc/speedyseq@0057652ff7a4244ccef2b786dca58d901ec2fc62", upgrade = "never"),  # v0.2.0
 					 error = function(e)
 					 	message("speedyseq (optional) not installed: ", conditionalMessage(e)))
 }

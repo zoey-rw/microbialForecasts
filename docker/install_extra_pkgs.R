@@ -25,7 +25,12 @@ cran_pkgs <- c(
   "truncnorm"
 )
 
-install.packages(cran_pkgs, repos = "https://cloud.r-project.org", dependencies = NA)
+# Use the image's pinned repository snapshot (rocker/tidyverse sets a dated Posit
+# Package Manager CRAN snapshot) for reproducible versions; do NOT override it with
+# the always-latest cloud.r-project.org.
+install.packages(cran_pkgs, dependencies = NA)
 
-# PLSR helpers used by microbialForecast/R/spectra_site_eff_permutation_fixed.r (not on CRAN)
-remotes::install_github("plantphys/spectratrait", upgrade = "never", dependencies = NA)
+# PLSR helpers used by microbialForecast/R/spectra_site_eff_permutation_fixed.r (not on CRAN).
+# Pinned to spectratrait v1.2.6 for reproducible rebuilds.
+remotes::install_github("plantphys/spectratrait@d159c5dda9d6739105d95b357e48f7754daf4978",
+                        upgrade = "never", dependencies = NA)

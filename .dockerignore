@@ -1,6 +1,7 @@
-# Git and editor
+# Git, editor, agent state
 .git
 .cursor
+.claude
 *.code-workspace
 
 # Machine-specific .libPaths(); image uses /usr/local/lib/R/site-library only
@@ -8,6 +9,8 @@
 
 # Vendored / local artifacts not used by containerized R scripts
 igraph
+archive3
+manuscript
 
 # Local R library (image installs its own)
 R_library
@@ -21,24 +24,45 @@ data/figures
 data/phylo_workspace.Rdata
 logs
 
-# --- data/clean: only include inputs used by 05–06 (see exceptions below) ---
+# --- data/clean: include exactly the git-committed inputs ---
+# Keep this list in sync with `git ls-files data/clean`. These are the small
+# curated inputs the downstream pipeline + figures need; the image is then
+# deterministic (only committed data), with large Zenodo inputs fetched at runtime.
 data/clean/*
-!data/clean/site_effect_predictors.rds
+!data/clean/all_predictor_data.rds
+!data/clean/all_truth_data.rds
+!data/clean/all_truth_data_prepBetaReg.rds
+!data/clean/cal_groupAbundances_16S_2021.rds
+!data/clean/cal_groupAbundances_ITS_2021.rds
 !data/clean/dominantHorizonsSite.rds
 !data/clean/groupAbundances_16S_2023.rds
 !data/clean/groupAbundances_ITS_2023.rds
-!data/clean/all_predictor_data.rds
 !data/clean/model_input_df.csv
+!data/clean/modis_greenup.rds
+!data/clean/moran_stat.rds
+!data/clean/pheno_group_peak_phenophases.rds
+!data/clean/phylo_inputs_slim.rds
+!data/clean/site_effect_predictors.rds
+!data/clean/val_groupAbundances_16S_2021.rds
+!data/clean/val_groupAbundances_ITS_2021.rds
+# Heavy raw megapit dump is never needed in the image
 data/clean/NEON_soil-megapit
 
-# --- data/summary: only include site-effects inputs/artifacts for 05–06 (not hindcast aggregates) ---
+# --- data/summary: committed repro inputs + site-effect artifacts for 05–06 ---
 data/summary/*
+# git-committed reproducibility inputs (phylo analysis + effect sizes)
+!data/summary/phylo_analysis_results.rds
+!data/summary/phylo_contribution_null_ses.csv
+!data/summary/phylo_score_contribution_null_ses.csv
+!data/summary/predictor_effects.rds
+# site-effect inputs/artifacts for steps 05–06 (present locally / via Zenodo; no-op on a fresh clone)
 !data/summary/site_effects.rds
 !data/summary/site_effects_dredged.rds
 !data/summary/site_effects_unobserved.rds
 !data/summary/site_effects_unobserved_env_cycl.rds
 !data/summary/site_effects_unobserved_env_cov.rds
 !data/summary/site_effects_unobserved_cycl_only.rds
+# Never copy hindcast aggregates (huge; mount or fetch at runtime)
 data/summary/driver_uncertainty
 data/summary/parquet
 
