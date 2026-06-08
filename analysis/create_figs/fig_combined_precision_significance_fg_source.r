@@ -1,7 +1,7 @@
-# Main figure (fig3): Precision parameter (A), Proportion significant predictors (B),
-# Fungal guild phenology (C, formerly D).
+# Main figure (fig3): Precision parameter (A), Proportion significant predictors (B).
 # Forecast error by functional group evidence source is now saved as a separate
 # supplementary figure (figS_fg_evidence_source) rather than a panel of fig3.
+# Fungal guild phenology has been moved to fig6 (see fig6_seasonality_and_skill.r).
 # Source scripts: compare_core_sd_rho.r, fig5_eff_size.r, fig_compareFunctionalCategories.r
 
 source("source.R")
@@ -335,44 +335,41 @@ fungi_med <- king_meds$med[king_meds$pretty_group == "Fungi"]
 king_better <- ifelse(bact_med < fungi_med, "Bacteria", "Fungi/FUNGuild")
 king_worse  <- ifelse(bact_med < fungi_med, "Fungi/FUNGuild", "Bacteria")
 
-# Compact the inset text: drop "Wilcoxon:" / "Kingdom:" verbiage that's obvious
-# from the labels, abbreviate the bacterial categories, and break into two
-# stanzas so the longest line is short enough to fit inside x=0.55–~1.7 and
-# clear the Lit.+pathway column's labels.
+# Build two compact inset strings — one per test — so each take-home result
+# stands alone and can be rendered at a readable font size. The Wilcoxon
+# inset will sit above the FUNGuild column (the kingdom contrast involves the
+# fungal side); the Tukey inset will sit above the bacterial columns.
 abbr_cat <- function(x) {
-  x <- gsub("Experimental enrichment",            "Exp. enr.",   x)
+  x <- gsub("Experimental enrichment",               "Exp. enr.",   x)
   x <- gsub("Literature review \\+ genomic pathway", "Lit.+pathway", x)
-  x <- gsub("Literature review",                  "Lit. review", x)
+  x <- gsub("Literature review",                     "Lit. review", x)
   x
 }
 
-king_line <- sprintf(
-  "Kingdom (Wilcoxon)\n%s (n=%d) < %s (n=%d), %s",
+king_text <- sprintf(
+  "Bacteria vs Fungi (Wilcoxon):\n%s (n=%d) < %s (n=%d), %s",
   ifelse(king_better == "Fungi/FUNGuild", "Fungi", king_better),
-  king_meds$n[king_meds$pretty_group=="Bacteria"],
+  king_meds$n[king_meds$pretty_group == "Bacteria"],
   ifelse(king_worse == "Fungi/FUNGuild", "Fungi", king_worse),
-  king_meds$n[king_meds$pretty_group=="Fungi"],
+  king_meds$n[king_meds$pretty_group == "Fungi"],
   fmt_p(king_test$p.value)
 )
 
 if (nrow(sig_tukey) > 0) {
   bact_lines <- paste(
-    sprintf("%s < %s: %s",
+    sprintf("%s < %s, %s",
             abbr_cat(gsub("\n", " ", sig_tukey$better)),
             abbr_cat(gsub("\n", " ", sig_tukey$worse)),
             vapply(sig_tukey$p.adj, fmt_p, character(1))),
     collapse = "\n")
-  sig_text <- paste0(
-    king_line,
-    "\n\nWithin bacteria (Tukey HSD)\n", bact_lines
-  )
+  bact_text <- paste0("Within bacteria (Tukey HSD):\n", bact_lines)
 } else {
-  sig_text <- king_line
+  bact_text <- NA_character_
 }
 
 # Tighten the y-axis to the actual data range (max score ~1.5) instead of
 # letting the inset push the ceiling out to 100.
-y_ceiling <- 10^(log_max + 0.7)
+y_ceiling <- 10^(log_max + 0.4)
 
 # Precompute the jittered x positions so the same value drives both the points
 # and the repelled labels — using position_jitter() separately on each layer
@@ -411,21 +408,26 @@ fg_label_extremes <- fg_label_data %>%
   ungroup() %>%
   select(-rk_low, -rk_high)
 
-# Anchor the inset in the upper-left empty space: high enough on the y-axis to
-# clear the repelled labels in the Experimental-enrichment column (which reach
-# up to ~y=0.4) and in the Lit.+pathway column (Nitrification at ~y=0.75), but
-# below y_ceiling so it sits in the panel rather than clipping the top. With
-# the compact two-stanza text, the box is narrow enough to fit between the left
-# axis and the Lit.+pathway label column.
-inset_x <- 0.55
-inset_y <- 10^(log_max + 0.55)
+# Place two insets at the top, each near the data it summarises:
+#   - within-bacteria Tukey above the bacterial columns (top-left)
+#   - kingdom Wilcoxon above the FUNGuild column (top-right)
+# Both sit at the same y above all labels (Ectomycorrhizae at y~1.7,
+# Nitrification at y~0.75, Pyruvate-enr. at y~0.4), so the bigger font size
+# can't crowd any leader lines.
+inset_y <- 10^(log_max + 0.2)
+label_aes <- list(size = 3.5, color = "grey15", fill = "white",
+                  label.r = unit(0.15, "lines"),
+                  label.padding = unit(0.45, "lines"))
 bracket_annotations <- list(
-  annotate("label", x = inset_x, y = inset_y,
-           label = sig_text, size = 2.9, hjust = 0, vjust = 1,
-           color = "grey15", fill = "white",
-           label.r = unit(0.15, "lines"),
-           label.padding = unit(0.4, "lines"))
+  do.call(annotate, c(list("label", x = 0.55, y = inset_y,
+                           label = bact_text, hjust = 0, vjust = 1),
+                      label_aes)),
+  do.call(annotate, c(list("label",
+                           x = length(fg_levels_order) + 0.45, y = inset_y,
+                           label = king_text, hjust = 1, vjust = 1),
+                      label_aes))
 )
+if (is.na(bact_text)) bracket_annotations <- bracket_annotations[2]
 
 p_fg_source <- ggplot(fg_source_data, aes(x = x_jit, y = as.numeric(score),
                                   color = pretty_group)) +
@@ -455,115 +457,16 @@ p_fg_source <- ggplot(fg_source_data, aes(x = x_jit, y = as.numeric(score),
         legend.key.size = unit(0.4, "cm"))
 
 # =============================================================================
-# Panel C (formerly D): Fungal guild seasonal phenology aligned to plant phenophase
+# Assemble main figure: A (precision violin) and B (predictor significance) side
+# by side. Panel C (fungal guild phenology) was moved to fig6.
+# tag_levels = "A" letters the panels A, B in patchwork order.
 # =============================================================================
-converged <- scores_list$converged_list
-
-# Element [[6]] contains every model x site x month modeled estimate with its
-# assigned phenophase. We need this (not [[4]]) so the per-phenophase means
-# reflect modeled abundance across all months in each phenophase, not just the
-# single per-site-year peak month.
-pheno_data <- readRDS(here("data/clean/pheno_group_peak_phenophases.rds"))[[6]]
-
-fungal_guilds <- c("saprotroph", "ectomycorrhizal", "plant_pathogen",
-                   "animal_pathogen")
-
-# Restrict to env_cycl so dormancy predictions are anchored to year-round soil
-# temperature and moisture sensors, not pure sinusoidal extrapolation. NEON
-# cores are sampled mostly Apr-Oct, so cycl_only's dormancy predictions are
-# largely extrapolated and over-weight the long dormancy window.
-guild_data <- pheno_data %>%
-  filter(taxon %in% fungal_guilds,
-         model_id %in% converged,
-         model_name == "env_cycl") %>%
-  mutate(pretty_name = recode(taxon, !!!microbialForecast:::pretty_names))
-
-# Aggregate: mean abundance per guild x phenophase, min-max scaled
-guild_pheno <- guild_data %>%
-  group_by(taxon, pretty_name, sampling_season) %>%
-  summarise(mean_abun = mean(mean_modeled_abun, na.rm = TRUE),
-            n = n(), .groups = "drop") %>%
-  group_by(taxon) %>%
-  mutate(scaled = (mean_abun - min(mean_abun)) / (max(mean_abun) - min(mean_abun))) %>%
-  ungroup()
-
-season_labels <- c(dormancy = "Dormancy", greenup = "Green-up",
-                   peak = "Peak", greendown = "Senescence")
-guild_pheno <- guild_pheno %>%
-  mutate(season_label = factor(season_labels[as.character(sampling_season)],
-                               levels = season_labels))
-
-# Colors and linetypes for accessibility (labels placed directly on lines).
-# Avoids kingdom orange/blue (#E69F00, #0072B2) which are reserved for Bacteria/Fungi.
-guild_colors <- c(
-  "Saprotrophs"         = "#56B4E9",  # sky blue
-  "Ectomycorrhizae"     = "#009E73",  # green
-  "Plant pathogens"     = "#D55E00",  # vermillion
-  "Animal pathogens"    = "#CC79A7"   # pink
-)
-guild_linetypes <- c(
-  "Saprotrophs"         = "solid",
-  "Ectomycorrhizae"     = "dashed",
-  "Plant pathogens"     = "dotdash",
-  "Animal pathogens"    = "dotted"
-)
-
-# Phenophase background shading.
-# Peak uses Wong yellow (#F0E442) to avoid colliding with the reserved kingdom orange.
-phenophase_fills <- c(
-  "Dormancy"   = "grey85",
-  "Green-up"   = "#009E73",
-  "Peak"       = "#F0E442",
-  "Senescence" = "#D55E00"
-)
-
-# Labels at right end of each line (Senescence) using ggrepel for auto-separation
-label_data <- guild_pheno %>%
-  filter(season_label == "Senescence")
-
-pD <- ggplot(guild_pheno, aes(x = season_label, y = scaled,
-                               color = pretty_name, linetype = pretty_name,
-                               group = pretty_name)) +
-  # Phenophase background
-  geom_rect(data = data.frame(
-    season_label = factor(season_labels, levels = season_labels),
-    fill_label = names(phenophase_fills)
-  ),
-  aes(xmin = as.numeric(season_label) - 0.5,
-      xmax = as.numeric(season_label) + 0.5,
-      ymin = -Inf, ymax = Inf, fill = fill_label),
-  inherit.aes = FALSE, alpha = 0.12) +
-  scale_fill_manual(values = phenophase_fills, guide = "none") +
-  geom_line(linewidth = 1.1) +
-  geom_point(size = 2.5) +
-  # Labels at line endpoints, repelled to avoid overlap
-  geom_text_repel(data = label_data,
-                  aes(label = pretty_name),
-                  size = 3.2, fontface = "bold",
-                  direction = "y", hjust = 0, nudge_x = 0.15,
-                  segment.size = 0.3, segment.color = "grey50",
-                  show.legend = FALSE, seed = 42) +
-  scale_color_manual(values = guild_colors, guide = "none") +
-  scale_linetype_manual(values = guild_linetypes, guide = "none") +
-  scale_x_discrete(expand = expansion(mult = c(0.05, 0.25))) +
-  scale_y_continuous(labels = scales::percent_format(),
-                     breaks = seq(0, 1, 0.25)) +
-  labs(x = "Plant phenophase",
-       y = "Relative seasonal abundance\n(min-max scaled within guild)") +
-  base_theme +
-  theme(axis.text.x = element_text(size = BASE_SIZE))
-
-# =============================================================================
-# Assemble main figure: A (violin) full width on top, B (bars) + C (phenology)
-# below. tag_levels = "A" letters the panels A, B, C in patchwork order.
-# =============================================================================
-bottom_row <- pB + pD + plot_layout(widths = c(2, 1.4))
-combined <- pA / bottom_row +
-  plot_layout(heights = c(0.85, 1.15)) +
+combined <- pA + pB +
+  plot_layout(widths = c(1, 1.6)) +
   plot_annotation(tag_levels = "A")
 
 ggsave(here("figures", "fig3_functional_group_error.png"), combined,
-       width = 13, height = 11, dpi = 300)
+       width = 13, height = 6, dpi = 300)
 
 cat("Saved: figures/fig3_functional_group_error.png\n")
 

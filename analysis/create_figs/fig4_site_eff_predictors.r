@@ -140,7 +140,7 @@ overall_importance <- ggplot(pred_vals_plot,
 		aes(y = values, label = after_stat(p.signif)),
 		label.y = 0.68, show.legend = FALSE, hide.ns = TRUE, size = 3.5) +
 	scale_color_manual(values = kingdom_colors, name = NULL) +
-	coord_cartesian(ylim = c(0, 0.75)) +
+	coord_cartesian(ylim = c(0, 0.85)) +
 	labs(x = "Predictor", y = "Importance for\nexplaining site effects", tag = "A") +
 	shared_theme +
 	theme(
@@ -162,7 +162,7 @@ f_b_category <- ggplot(group_vals_plot,
 		aes(y = values, label = after_stat(p.signif)),
 		label.y = 0.68, show.legend = FALSE, hide.ns = TRUE, size = 3.5) +
 	scale_color_manual(values = kingdom_colors, name = NULL) +
-	coord_cartesian(ylim = c(0, 0.75)) +
+	coord_cartesian(ylim = c(0, 0.85)) +
 	labs(x = "Predictor category", y = NULL, tag = "B") +
 	shared_theme +
 	theme(
@@ -243,8 +243,6 @@ fig4_composite <- ggarrange(row1, ecdf_plot_tight,
 
 ggsave(here("figures", "fig4_predictor_sets_accuracy.png"), fig4_composite,
        width = 11, height = 8, dpi = 300, bg = "white")
-ggsave(here("figures", "fig4_predictor_sets_accuracy.pdf"), fig4_composite,
-       width = 11, height = 8, bg = "white")
 cat("Saved: figures/fig4_predictor_sets_accuracy.png\n")
 
 
