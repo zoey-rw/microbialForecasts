@@ -61,6 +61,9 @@ $RECYCLE.BIN/
 *.swp
 *.swo
 *~
+# Per-subsystem log directories (logs live next to the work they describe),
+# e.g. analysis/create_figs/logs/, analysis/model_analysis/logs/, .../hpc/logs/
+logs/
 /log/*
 /tmp/*
 /temp/*

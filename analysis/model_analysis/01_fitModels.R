@@ -12,7 +12,7 @@ if (!require(here)) {
 
 # Setup logging first
 source(here("analysis/model_analysis/logging.R"))
-log_setup(logfile = here("logs", paste0("model_fitting_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".log")))
+log_setup(logfile = here("analysis", "model_analysis", "logs", paste0("model_fitting_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".log")))
 
 # Set project root
 here::i_am("analysis/model_analysis/01_fitModels.R")
@@ -2655,7 +2655,7 @@ worker_init <- function(project_root, driver_uncertainty_mode) {
   ## if available, wire up your real logger (optional but nice)
   try({
     source(here::here("analysis/model_analysis/logging.R"))
-    log_setup(logfile = here::here("logs", sprintf("worker_%s.log", Sys.getpid())))
+    log_setup(logfile = here::here("analysis", "model_analysis", "logs", sprintf("worker_%s.log", Sys.getpid())))
   }, silent = TRUE)
 
   ## — packages and nimble options (must run on workers too) —

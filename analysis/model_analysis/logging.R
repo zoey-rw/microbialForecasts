@@ -9,6 +9,11 @@ if (has_logger) {
 
 # Setup logging configuration
 log_setup <- function(logfile = NULL, level = "INFO") {
+    # Ensure the log file's directory exists (logger's appender_tee won't create it)
+    if (!is.null(logfile)) {
+        log_dir <- dirname(logfile)
+        if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+    }
     if (has_logger) {
         # Set log level
         logger::log_threshold(level)

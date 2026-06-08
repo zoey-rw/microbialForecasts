@@ -11,9 +11,9 @@ SKIP_SCRIPTS=(
 )
 scripts=( $(find analysis/create_figs -maxdepth 1 \( -name "*.r" -o -name "*.R" \) | sort) )
 
-# Create log file
-log_file="logs/figure_generation_$(date +%Y%m%d_%H%M%S).log"
-mkdir -p logs
+# Create log file (logs live alongside the figure scripts they describe)
+log_file="analysis/create_figs/logs/figure_generation_$(date +%Y%m%d_%H%M%S).log"
+mkdir -p analysis/create_figs/logs
 echo "Figure generation log: $log_file" | tee "$log_file"
 
 success_count=0

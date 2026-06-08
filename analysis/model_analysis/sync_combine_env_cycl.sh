@@ -10,7 +10,7 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REMOTE_MOUNT="$HOME/remote_microbialForecasts/data/model_outputs/cloglog_beta_driver_uncertainty/env_cycl"
 LOCAL_BASE="$PROJECT_ROOT/data/model_outputs/cloglog_beta_driver_uncertainty/env_cycl"
-LOGDIR="$PROJECT_ROOT/logs/sync_combine"
+LOGDIR="$PROJECT_ROOT/analysis/model_analysis/logs/sync_combine"
 mkdir -p "$LOGDIR"
 
 # Verify remote mount is accessible

@@ -41,7 +41,7 @@ echo ""
 
 # Create log directories
 for d in 03_summarize 04_tidy 05_predict 06_obs 06_new 07_tidy 08_scoring 09_pheno 10_horizon; do
-    mkdir -p "$PROJECT/logs/hpc/$d"
+    mkdir -p "$PROJECT/analysis/model_analysis/hpc/logs/$d"
 done
 
 # --- Enumerate models (always runs) ---
@@ -142,4 +142,4 @@ fi
 echo ""
 echo "=== All jobs submitted ==="
 echo "Monitor with: qstat -u \$USER"
-echo "Logs in: $PROJECT/logs/hpc/"
+echo "Logs in: $PROJECT/analysis/model_analysis/hpc/logs/"
