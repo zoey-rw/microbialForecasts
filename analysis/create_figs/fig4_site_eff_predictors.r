@@ -61,22 +61,22 @@ pred_name_key = list("no2Satx" = "nitrite",
 										 "nitrogenTot" = "total nitrogen",
 										 "estimatedOC" = "organic carbon",
 										 "no3Satx" = "nitrate",
-										 "pMjelm"= "phosphorus (Mehlich)",
+										 "pMjelm"= "phosphorus",
 										 "alOxalate"= "aluminum",
-										 "feMjelm" = "iron (Mehlich)",
+										 "feMjelm" = "iron",
 										 "alKcl" = "aluminum",
 										 "cecdNh4" = "cation exchange",
 										 "mgNh4d" = "magnesium",
 										 "naNh4d" = "sodium",
-										 "mnMjelm" = "manganese (Mehlich)",
+										 "mnMjelm" = "manganese",
 										 "kNh4d"  = "potassium",
 										 "caNh4d" = "calcium",
-										 "MAT"	     = "mean annual temperature",
-										 "MAP"      = "mean annual precipitation",
+										 "MAT"	     = "temperature",
+										 "MAP"      = "precipitation",
 										 "latitude_scaled" = "latitude",
 										 "so4Satx"= "sulfate",
 										 "sulfurTot"= "sulfur",
-										 "siMjelm"  = "silicon (Mehlich)")
+										 "siMjelm"  = "silicon")
 
 # Now apply the recoding
 # The predictor importance data already has 'values' column from the dredged results
@@ -132,19 +132,34 @@ pred_vals_plot <- pred_vals %>%
 	filter(model_name %in% c("env_cycl")) %>%
 	mutate(predictor = str_title_case(predictor))
 
+# Per-predictor Bacteria-vs-Fungi t-test, placed just above the taller of the two
+# CIs so the (enlarged) asterisks are clearly visible and never overlap the data.
+sig_helper <- function(df, xcol) {
+	df %>% group_by(.data[[xcol]]) %>%
+		summarise(p = tryCatch(t.test(values ~ pretty_group)$p.value,
+		                       error = function(e) NA_real_),
+		          ytop = max(ymax, na.rm = TRUE), .groups = "drop") %>%
+		mutate(lab = case_when(is.na(p) ~ NA_character_, p < 1e-4 ~ "****",
+		                       p < 1e-3 ~ "***", p < 1e-2 ~ "**",
+		                       p < 0.05 ~ "*", TRUE ~ NA_character_)) %>%
+		filter(!is.na(lab))
+}
+
+sig_A <- sig_helper(pred_vals_plot, "predictor")
+
 overall_importance <- ggplot(pred_vals_plot,
 	aes(x = reorder(predictor, -values), y = values, color = pretty_group)) +
 	geom_pointrange(aes(y = mean_importance, ymin = ymin, ymax = ymax),
 		position = position_dodge(width = 0.5), size = 0.4, fatten = 2.5) +
-	stat_compare_means(method = "t.test",
-		aes(y = values, label = after_stat(p.signif)),
-		label.y = 0.68, show.legend = FALSE, hide.ns = TRUE, size = 3.5) +
+	geom_text(data = sig_A, inherit.aes = FALSE,
+		aes(x = predictor, y = ytop + 0.04, label = lab),
+		size = 6, vjust = 0, color = "grey15") +
 	scale_color_manual(values = kingdom_colors, name = NULL) +
-	coord_cartesian(ylim = c(0, 0.85)) +
+	coord_cartesian(ylim = c(0, 0.90)) +
 	labs(x = "Predictor", y = "Importance for\nexplaining site effects", tag = "A") +
 	shared_theme +
 	theme(
-		axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 10),
+		axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9),
 		legend.position = "none"
 	)
 
@@ -153,20 +168,22 @@ group_vals_plot <- group_vals %>%
 	filter(model_name %in% c("env_cycl")) %>%
 	mutate(predictor_category = str_title_case(predictor_category))
 
+sig_B <- sig_helper(group_vals_plot, "predictor_category")
+
 f_b_category <- ggplot(group_vals_plot,
 	aes(x = reorder(predictor_category, -mean_importance),
 		y = mean_importance, color = pretty_group)) +
 	geom_pointrange(aes(ymin = ymin, ymax = ymax),
 		position = position_dodge(width = 0.5), size = 0.5, fatten = 3) +
-	stat_compare_means(method = "t.test",
-		aes(y = values, label = after_stat(p.signif)),
-		label.y = 0.68, show.legend = FALSE, hide.ns = TRUE, size = 3.5) +
+	geom_text(data = sig_B, inherit.aes = FALSE,
+		aes(x = predictor_category, y = ytop + 0.04, label = lab),
+		size = 6, vjust = 0, color = "grey15") +
 	scale_color_manual(values = kingdom_colors, name = NULL) +
-	coord_cartesian(ylim = c(0, 0.85)) +
+	coord_cartesian(ylim = c(0, 0.90)) +
 	labs(x = "Predictor category", y = NULL, tag = "B") +
 	shared_theme +
 	theme(
-		axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 10)
+		axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9)
 	)
 
 # -- Composite figure --
@@ -210,10 +227,10 @@ ecdf_plot <- ggplot(sig_var_long, aes(x = pval, color = stage_label)) +
   geom_abline(slope = 1, intercept = 0, color = "grey50",
               linetype = "dotted", linewidth = 0.6) +
   geom_vline(xintercept = 0.05, linetype = "dashed", color = "grey70") +
-  annotate("text", x = 0.72, y = 0.42,
+  annotate("text", x = 0.62, y = 0.42,
            label = "Uniform reference\n(no autocorrelation)",
            color = "grey50", size = 3.2, fontface = "italic") +
-  annotate("text", x = 0.72, y = 0.28,
+  annotate("text", x = 0.62, y = 0.28,
            label = paste0("Significant (p<0.05):  ",
                           pct_sig_var$pct[pct_sig_var$stage_label == "Raw site effects"], "% raw  vs  ",
                           pct_sig_var$pct[pct_sig_var$stage_label == "After PLSR modeling"], "% after PLSR"),
@@ -231,7 +248,7 @@ ecdf_plot <- ggplot(sig_var_long, aes(x = pval, color = stage_label)) +
 
 # ── 3-panel composite (2 rows) ────────────────────────────────────────────────
 row1 <- ggarrange(overall_importance, f_b_category,
-                  widths = c(1.6, 1), align = "h",
+                  widths = c(1.9, 1), align = "h",
                   common.legend = TRUE, legend = "top") +
   theme(plot.margin = margin(t = 0, b = 0))
 
@@ -242,7 +259,7 @@ fig4_composite <- ggarrange(row1, ecdf_plot_tight,
                             nrow = 2, heights = c(1, 0.85))
 
 ggsave(here("figures", "fig4_predictor_sets_accuracy.png"), fig4_composite,
-       width = 11, height = 8, dpi = 300, bg = "white")
+       width = 7.5, height = 8, dpi = 300, bg = "white")
 cat("Saved: figures/fig4_predictor_sets_accuracy.png\n")
 
 
