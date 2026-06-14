@@ -72,8 +72,10 @@ check_file "$PROJECT/data/summary/site_effects_unobserved_env_cov.rds"
 check_file "$PROJECT/data/summary/site_effects_unobserved_cycl_only.rds"
 
 echo ""
-echo "--- Step 07 outputs (needed by 08-10) ---"
-check_file "$PROJECT/data/summary/parquet/all_hindcasts_plsr2.parquet"
+echo "--- Step 07 outputs (per-model hindcasts, needed by 08-10) ---"
+check_file "$PROJECT/data/summary/parquet/hindcasts_env_cycl.parquet"
+check_file "$PROJECT/data/summary/parquet/hindcasts_cycl_only.parquet"
+check_file "$PROJECT/data/summary/parquet/hindcasts_env_cov.parquet"
 
 echo ""
 echo "--- Step 09 dependencies ---"

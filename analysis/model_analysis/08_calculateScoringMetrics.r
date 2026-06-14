@@ -22,54 +22,11 @@ library(data.table)
 
 cat("Loading hindcast data...\n")
 
-# Check for parquet file first (preferred, more memory efficient)
-parquet_file <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
-rds_file <- here("data/summary/all_hindcasts_plsr2.rds")
-
-hindcast_data <- NULL
-
-# Try parquet first (preferred)
-if (file.exists(parquet_file)) {
-  cat("Found parquet file, loading with nanoparquet...\n")
-  if (requireNamespace("nanoparquet", quietly = TRUE)) {
-    tryCatch({
-      hindcast_data <- nanoparquet::read_parquet(parquet_file)
-      hindcast_data <- as.data.table(hindcast_data)
-      cat(sprintf("✓ Loaded from parquet: %d rows, %d cols\n", nrow(hindcast_data), ncol(hindcast_data)))
-    }, error = function(e) {
-      cat("⚠️  Failed to read parquet with nanoparquet:", e$message, "\n")
-      cat("  Falling back to RDS file...\n")
-    })
-  } else if (requireNamespace("arrow", quietly = TRUE)) {
-    tryCatch({
-      hindcast_data <- arrow::read_parquet(parquet_file)
-      hindcast_data <- as.data.table(hindcast_data)
-      cat(sprintf("✓ Loaded from parquet (arrow): %d rows, %d cols\n", nrow(hindcast_data), ncol(hindcast_data)))
-    }, error = function(e) {
-      cat("⚠️  Failed to read parquet with arrow:", e$message, "\n")
-      cat("  Falling back to RDS file...\n")
-    })
-  } else {
-    cat("⚠️  Parquet file exists but neither nanoparquet nor arrow available\n")
-    cat("  Falling back to RDS file...\n")
-  }
-}
-
-# Fall back to RDS if parquet didn't work or doesn't exist
-if (is.null(hindcast_data)) {
-  if (file.exists(rds_file)) {
-    cat("Loading from RDS file...\n")
-    hindcast_data <- readRDS(rds_file)
-    setDT(hindcast_data)
-    cat(sprintf("✓ Loaded from RDS: %d rows, %d cols\n", nrow(hindcast_data), ncol(hindcast_data)))
-  } else {
-    cat("❌ Neither parquet nor RDS file found!\n")
-    cat("  Expected parquet:", parquet_file, "\n")
-    cat("  Expected RDS:", rds_file, "\n")
-    cat("  Please run script 07_tidyHindcasts_v2.r first.\n")
-    stop("Hindcast file not found. Run script 07 first.")
-  }
-}
+# Load hindcasts via the package loader, which reads and unions the per-model
+# parquet files (hindcasts_<model>.parquet) written by step 07.
+hindcast_data <- as.data.table(load_hindcasts())
+cat(sprintf("✓ Loaded hindcasts: %d rows, %d cols\n",
+            nrow(hindcast_data), ncol(hindcast_data)))
 
 # Assign pretty_group if missing or any NA (fill in missing values)
 if (!"pretty_group" %in% names(hindcast_data) || any(is.na(hindcast_data$pretty_group))) {

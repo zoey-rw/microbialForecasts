@@ -10,8 +10,8 @@ source(file.path(root, "source.R"))
 
 req <- c(
   "microbialForecast", "here", "tidyverse", "nimble", "data.table",
-  "doParallel", "foreach", "nanoparquet", "MuMIn", "pls", "spectratrait",
-  "pacman", "ggallin"
+  "doParallel", "foreach", "nanoparquet", "duckdb", "MuMIn", "pls",
+  "spectratrait", "pacman", "ggallin"
 )
 missing <- req[!vapply(req, requireNamespace, logical(1), quietly = TRUE)]
 if (length(missing)) {

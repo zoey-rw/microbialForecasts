@@ -8,6 +8,7 @@ cran_pkgs <- c(
   "pacman",
   "remotes",
   "nanoparquet",
+  "duckdb",     # required by microbialForecast::load_hindcasts()
   "MuMIn",
   "pls",
   "forestplot",

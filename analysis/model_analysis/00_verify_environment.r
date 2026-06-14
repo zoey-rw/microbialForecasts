@@ -178,7 +178,9 @@ summary_files <- c(
   "data/summary/scoring_metrics_plsr2.rds",
   "data/summary/predictor_effects.rds",
   "data/summary/seasonal_amplitude.rds",
-  "data/summary/all_hindcasts_plsr2.rds",
+  "data/summary/parquet/hindcasts_env_cycl.parquet",
+  "data/summary/parquet/hindcasts_cycl_only.parquet",
+  "data/summary/parquet/hindcasts_env_cov.parquet",
   "data/summary/site_effects.rds"
 )
 

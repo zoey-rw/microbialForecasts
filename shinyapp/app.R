@@ -8,9 +8,9 @@
 # Only converged models are shown (weak convergence, Rhat < 1.2, is sufficient);
 # unconverged taxon/model combinations are omitted entirely.
 #
-# The 1.1 GB hindcast parquet is queried per-taxon on demand via duckdb so the
-# app does not have to hold all 19M rows in memory. Small summary tables are
-# loaded once at startup.
+# The per-model hindcast parquet files are queried per-taxon on demand via duckdb
+# (unioned) so the app does not have to hold all 19M rows in memory. Small summary
+# tables are loaded once at startup.
 #
 # Run from the project root or this directory:
 #   shiny::runApp("shinyapp", launch.browser = TRUE)
@@ -36,14 +36,21 @@ suppressPackageStartupMessages({
 })
 
 # --- Data paths ----------------------------------------------------------------
-parquet_path        <- here::here("data/summary/parquet/all_hindcasts_plsr2.parquet")
+parquet_dir         <- here::here("data/summary/parquet")
+parquet_files       <- file.path(parquet_dir,
+                                  sprintf("hindcasts_%s.parquet", c("env_cycl", "cycl_only", "env_cov")))
+parquet_files       <- parquet_files[file.exists(parquet_files)]
 predictor_eff_path  <- here::here("data/summary/predictor_effects.rds")
 scoring_path        <- here::here("data/summary/scoring_metrics_plsr2.rds")
 
-if (!file.exists(parquet_path)) {
-	stop("Hindcast parquet not found: ", parquet_path,
-			 "\nRun analysis/model_analysis/07_tidyHindcasts.r to generate it.")
+if (length(parquet_files) == 0) {
+	stop("Hindcast parquet files not found in ", parquet_dir,
+			 "\nRun analysis/model_analysis/07_tidyHindcasts.r or download_data.R.")
 }
+
+# duckdb read expression unioning the available per-model hindcast files
+hindcast_read <- sprintf("read_parquet([%s], union_by_name=true)",
+												 paste(sprintf("'%s'", parquet_files), collapse = ", "))
 
 # Model types (label = value). env_cycl is the preferred default when available.
 model_choices <- c("Seasonality + environment" = "env_cycl",
@@ -129,7 +136,7 @@ taxon_catalog <- local({
 	on.exit(dbDisconnect(con, shutdown = TRUE))
 	sql <- paste0(
 		"SELECT DISTINCT species, rank_name, pretty_group ",
-		"FROM read_parquet('", parquet_path, "') ",
+		"FROM ", hindcast_read, " ",
 		"WHERE species IS NOT NULL ORDER BY pretty_group, rank_name, species")
 	tc <- dbGetQuery(con, sql)
 	tc$pretty_group[is.na(tc$pretty_group)] <- "Unknown"
@@ -201,7 +208,7 @@ query_taxon <- function(con, taxon, model_name) {
 		"fcast_period, new_site, site_prediction, ",
 		"MIN(CASE WHEN med > 0 THEN dates END) ",
 		"OVER (PARTITION BY plotID, site_prediction) AS start_date ",
-		"FROM read_parquet('", parquet_path, "') ",
+		"FROM ", hindcast_read, " ",
 		"WHERE species = ", dbQuoteString(con, taxon),
 		" AND model_name = ", dbQuoteString(con, model_name))
 	sql <- paste0("SELECT * FROM (", inner, ") t ",

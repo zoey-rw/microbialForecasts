@@ -57,56 +57,10 @@ if (requireNamespace("parallel", quietly = TRUE)) {
   options(mc.cores = 1)
 }
 
-# Use Parquet format if available for memory efficiency, otherwise RDS
-# Try nanoparquet first (lightweight), then arrow, then fallback to RDS
-parquet_file <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
-rds_file <- here("data/summary/all_hindcasts_plsr2.rds")
-
-if (file.exists(parquet_file)) {
-  # Try nanoparquet first (lightweight, no heavy dependencies)
-  parquet_success <- FALSE
-  if (requireNamespace("nanoparquet", quietly = TRUE)) {
-    cat("Attempting to use Parquet file with nanoparquet (memory-efficient)...\n")
-    tryCatch({
-    hindcast_in <- nanoparquet::read_parquet(parquet_file)
-    cat("Loaded", nrow(hindcast_in), "rows from Parquet (nanoparquet)\n")
-      parquet_success <- TRUE
-    }, error = function(e) {
-      cat("WARNING: Failed to read Parquet file with nanoparquet:", e$message, "\n")
-      cat("  Falling back to RDS format...\n")
-    })
-  }
-  
-  if (!parquet_success && requireNamespace("arrow", quietly = TRUE)) {
-    cat("Attempting to use Parquet file with arrow (memory-efficient)...\n")
-    tryCatch({
-    hindcast_in <- arrow::read_parquet(parquet_file)
-    cat("Loaded", nrow(hindcast_in), "rows from Parquet (arrow)\n")
-      parquet_success <- TRUE
-    }, error = function(e) {
-      cat("WARNING: Failed to read Parquet file with arrow:", e$message, "\n")
-      cat("  Falling back to RDS format...\n")
-    })
-  }
-  
-  if (!parquet_success) {
-    cat("WARNING: Parquet file exists but could not be read or no parquet reader available.\n")
-    cat("  Falling back to RDS format (2.7GB)...\n")
-    if (file.exists(rds_file)) {
-      hindcast_in <- readRDS(rds_file)
-      cat("Loaded", nrow(hindcast_in), "rows from RDS\n")
-    } else {
-      stop("No hindcast file found! Please run script 07_tidyHindcasts_v2.r first.")
-    }
-  }
-} else if (file.exists(rds_file)) {
-  cat("Using RDS file (2.7GB) - loading into memory...\n")
-  cat("WARNING: Large file may hit memory limits. Consider converting to Parquet format.\n")
-  hindcast_in <- readRDS(rds_file)
-  cat("Loaded", nrow(hindcast_in), "rows from RDS\n")
-} else {
-  stop("No hindcast file found! Please run script 07_tidyHindcasts_v2.r first.")
-}
+# Load hindcasts via the package loader, which reads and unions the per-model
+# parquet files (hindcasts_<model>.parquet) written by step 07.
+hindcast_in <- load_hindcasts()
+cat("Loaded", nrow(hindcast_in), "rows from per-model parquet files\n")
 
 # Convert to data.table immediately for memory efficiency
 # If from Parquet, it may already be a data.frame - convert carefully
@@ -1156,32 +1110,8 @@ for (group_idx in seq_along(model_groups)) {
   
   # Load hindcast data for this group only
   cat("  Loading hindcast data for this group...\n")
-  parquet_path <- here('data/summary/parquet/all_hindcasts_plsr2.parquet')
-  rds_path <- here('data/summary/all_hindcasts_plsr2.rds')
-  
-  if (file.exists(parquet_path)) {
-    if (requireNamespace("nanoparquet", quietly = TRUE)) {
-      cat("    Using Parquet file with nanoparquet...\n")
-      hindcast_data_all <- as.data.table(nanoparquet::read_parquet(parquet_path))
-    } else if (requireNamespace("arrow", quietly = TRUE)) {
-      cat("    Using Parquet file with arrow...\n")
-      hindcast_data_all <- as.data.table(arrow::read_parquet(parquet_path))
-    } else {
-      cat("    WARNING: Parquet file exists but no reader available. Using RDS...\n")
-      if (file.exists(rds_path)) {
-        hindcast_data_all <- readRDS(rds_path)
-        setDT(hindcast_data_all)
-      } else {
-        stop("No hindcast data file found!")
-      }
-    }
-  } else if (file.exists(rds_path)) {
-    cat("    WARNING: Using full RDS file (2.7GB) - may hit memory limits...\n")
-    hindcast_data_all <- readRDS(rds_path)
-    setDT(hindcast_data_all)
-  } else {
-    stop("No hindcast data file found!")
-  }
+  # Reads + unions the per-model parquet files (filtered to this group below).
+  hindcast_data_all <- as.data.table(load_hindcasts())
   
   setDT(hindcast_data_all)
   hindcast_data_all[, model_id := gsub('_beta_regression$', '', model_id)]
