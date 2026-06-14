@@ -46,11 +46,10 @@ PARQUET_DIR  <- here("data/summary/parquet")
 DATASET_DIR  <- here("data/summary/parquet/_dataset_staging") # Intermediate parquet storage
 LOG_FILE     <- here("data/summary/parquet/_processed_log.rds") # Resume capability
 
-# Final Output Targets (Matches original script)
-OUT_RDS_COMBINED   <- here("data/summary/all_hindcasts_plsr2.rds")
+# Final Output Targets. The canonical hindcast outputs are the per-model-type
+# parquets (hindcasts_<model>.parquet); no combined parquet/RDS is written.
 OUT_RDS_OBSERVED   <- here("data/summary/all_hindcasts_observed_plsr2.rds")
 OUT_RDS_UNOBSERVED <- here("data/summary/all_hindcasts_unobserved_plsr2.rds")
-OUT_PARQUET_FULL   <- here("data/summary/parquet/all_hindcasts_plsr2.parquet")
 
 # Ensure directories exist
 dir.create(DATASET_DIR, recursive = TRUE, showWarnings = FALSE)
@@ -379,37 +378,11 @@ if (length(parquet_files) == 0) {
     cat(sprintf("    ✓ %s: %d rows\n", basename(out_path), n_rows))
   }
 
-  # --- Combine per-type parquets into the single combined file ---
-  # This is what downstream scripts expect at OUT_PARQUET_FULL
-  cat("  Assembling combined parquet from per-type files...\n")
+  # The per-model-type parquet files written above are the canonical hindcast
+  # outputs; load_hindcasts() and the pipeline read and union them. No combined
+  # all_hindcasts_plsr2.parquet is written (it was ~1 GB and is no longer used).
   type_parquets <- file.path(PARQUET_DIR, sprintf("hindcasts_%s.parquet", MODEL_TYPES))
   type_parquets <- type_parquets[file.exists(type_parquets)]
-
-  if (use_duckdb) {
-    ddb_con <- dbConnect(duckdb())
-    parquet_glob <- paste0("'", paste(type_parquets, collapse = "','"), "'")
-    dbExecute(ddb_con, sprintf(
-      "COPY (SELECT * FROM read_parquet([%s], union_by_name=true))
-       TO '%s' (FORMAT PARQUET)", parquet_glob, OUT_PARQUET_FULL
-    ))
-    final_stats <- dbGetQuery(ddb_con, sprintf(
-      "SELECT fcast_period, count(*) as n, count(truth) as n_truth
-       FROM read_parquet('%s') GROUP BY fcast_period", OUT_PARQUET_FULL
-    ))
-    dbDisconnect(ddb_con, shutdown = TRUE)
-  } else {
-    # Already have df_staging in memory from the per-type writes
-    if (!exists("df_staging")) df_staging <- read_all_staging()
-    nanoparquet::write_parquet(df_staging, OUT_PARQUET_FULL)
-    final_stats <- df_staging[, .(n = .N, n_truth = sum(!is.na(truth))), by = fcast_period]
-  }
-
-  cat(sprintf("  ✓ Saved %s\n", basename(OUT_PARQUET_FULL)))
-  cat("  fcast_period breakdown:\n")
-  for (r in seq_len(nrow(final_stats))) {
-    cat(sprintf("    %s: %d rows (%d with truth)\n",
-        final_stats$fcast_period[r], final_stats$n[r], final_stats$n_truth[r]))
-  }
 
   # --- Save observed/unobserved RDS splits ---
   for (mode_val in c("observed", "unobserved")) {
@@ -436,33 +409,8 @@ if (length(parquet_files) == 0) {
     }, error = function(e) cat("  Failed:", e$message, "\n"))
   }
 
-  # Combined RDS (may OOM on large datasets; parquet is the primary output)
-  cat("Saving Combined RDS...\n")
-  tryCatch({
-    if (exists("df_staging")) {
-      df_full <- df_staging
-    } else if (use_duckdb) {
-      ddb_con <- dbConnect(duckdb())
-      parquet_glob <- paste0("'", paste(type_parquets, collapse = "','"), "'")
-      df_full <- as.data.table(dbGetQuery(ddb_con, sprintf(
-        "SELECT * FROM read_parquet([%s], union_by_name=true)", parquet_glob
-      )))
-      dbDisconnect(ddb_con, shutdown = TRUE)
-    } else {
-      df_full <- as.data.table(nanoparquet::read_parquet(OUT_PARQUET_FULL))
-    }
-    df_full <- fill_pretty_group(df_full)
-    cat(sprintf("  Total Rows: %d\n", nrow(df_full)))
-    if ("truth" %in% names(df_full)) {
-      cat(sprintf("  Truth Coverage: %.1f%%\n",
-          100 * sum(!is.na(df_full$truth)) / nrow(df_full)))
-    }
-    saveRDS(df_full, OUT_RDS_COMBINED)
-    cat(sprintf("  ✓ Saved %s\n", basename(OUT_RDS_COMBINED)))
-    rm(df_full); gc(verbose = FALSE)
-  }, error = function(e) {
-    cat("\n  Could not save combined RDS (memory). Parquet and split files ARE saved.\n")
-  })
+  # (No combined RDS: the per-model parquets + observed/unobserved splits suffice,
+  # and building the full in-memory table here was OOM-prone.)
 
   if (exists("df_staging")) { rm(df_staging); gc(verbose = FALSE) }
 }
