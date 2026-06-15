@@ -71,6 +71,6 @@ full <- plot_grid(pA + theme(plot.margin = margin(5, 5, 5, 5)),
 
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
-ggsave(file.path(out_dir, "figS14_soil_temperature_gapfill.png"), full,
+ggsave(file.path(out_dir, "soil_temperature_gapfill.png"), full,
        width = 14, height = 9, dpi = 200, bg = "white")
-cat("Saved: figures/figS14_soil_temperature_gapfill.png\n")
+cat("Saved: figures/soil_temperature_gapfill.png\n")

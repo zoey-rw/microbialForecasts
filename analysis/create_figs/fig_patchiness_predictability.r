@@ -1,4 +1,4 @@
-# Fig 5: What predicts per-taxon forecast skill?
+# What predicts per-taxon forecast skill?
 # Forest plot of standardized regression coefficients from a model of forecast
 # R-squared on organism traits and predictor sensitivities. Uses only env_cycl
 # (seasonality + environment) models that converged at Rhat<1.1. Temperature
@@ -157,9 +157,6 @@ coef_df <- extract_coefs(pooled_mod)
 # =============================================================================
 # 6. Assign categories
 # =============================================================================
-# Three groups so the temperature / residual-seasonality decomposition is
-# visually obvious: the two paired seasonal predictors sit together.
-
 # Two top-level categories:
 #   - "Organism traits" = variables that exist independent of the forecasting
 #     model (group identity + raw-data summaries).
@@ -188,8 +185,8 @@ coef_df$sig_label <- case_when(
 )
 
 # Order: within each category, order by mean absolute estimate (smaller at
-# bottom, larger at top). Across categories, top-to-bottom = Seasonal forcing,
-# Other environmental sensitivities, Organism traits.
+# bottom, larger at top). Categories run Organism traits, then
+# Model-estimated parameters.
 category_order <- c("Organism traits", "Model-estimated\nparameters")
 
 term_order <- coef_df %>%
@@ -207,7 +204,6 @@ coef_df$category <- factor(coef_df$category, levels = category_order)
 # =============================================================================
 
 point_color <- "#444444"  # neutral dark grey for pooled coefficients
-group_colors <- c("Fungi" = "#0072B2", "Bacteria" = "#E69F00")  # for panel B
 
 coef_df$significant <- coef_df$pvalue < 0.05
 

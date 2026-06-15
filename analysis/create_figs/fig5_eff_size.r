@@ -91,7 +91,7 @@ df_cal_fg_tax_fixed <- df_cal_fg_tax %>%
   ))
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Figure 1: Bacteria vs Fungi effect sizes (env_cycl, faceted by fcast_type x predictor)
+# Bacteria vs Fungi effect sizes (env_cycl, faceted by fcast_type x predictor)
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Statistical tests (env_cycl only, groups with sufficient data)
@@ -145,11 +145,10 @@ b_vs_f_fcast_type_plot <- ggplot(
 
 ggsave(here("figures", "effsize_f_b.png"), b_vs_f_fcast_type_plot,
        width = 14, height = 7, dpi = 300)
-ggsave(here("figures", "effsize_f_b.pdf"), b_vs_f_fcast_type_plot,
-       width = 14, height = 7)
+cat("Saved: figures/effsize_f_b.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Figure 2: Taxonomic vs Functional effect sizes (Bacteria only, env_cycl)
+# Taxonomic vs Functional effect sizes (Bacteria only, env_cycl)
 # ══════════════════════════════════════════════════════════════════════════════
 
 df_cal_fg_tax_v2 <- df_cal_fg_tax %>%
@@ -202,11 +201,10 @@ tax_vs_func_plot <- ggplot(
 
 ggsave(here("figures", "effsize_tax_vs_func.png"), tax_vs_func_plot,
        width = 14, height = 5, dpi = 300)
-ggsave(here("figures", "effsize_tax_vs_func.pdf"), tax_vs_func_plot,
-       width = 14, height = 5)
+cat("Saved: figures/effsize_tax_vs_func.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Figure 3: Significance rates — Functional vs Taxonomic (Bacteria only, env_cycl)
+# Significance rates — Functional vs Taxonomic (Bacteria only, env_cycl)
 # ══════════════════════════════════════════════════════════════════════════════
 
 df_cal_fg_tax_sig <- df_cal_fg_tax_fixed %>%
@@ -258,11 +256,10 @@ sig_plot <- ggplot(sig_summary, aes(x = fcast_type, y = sig_rate, fill = fcast_t
 
 ggsave(here("figures", "significance_tax_vs_func.png"), sig_plot,
        width = 12, height = 5, dpi = 300)
-ggsave(here("figures", "significance_tax_vs_func.pdf"), sig_plot,
-       width = 12, height = 5)
+cat("Saved: figures/significance_tax_vs_func.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Figure 4: Significance rates — Bacteria vs Fungi (env_cycl)
+# Significance rates — Bacteria vs Fungi (env_cycl)
 # ══════════════════════════════════════════════════════════════════════════════
 
 df_cal_fg_tax_sig_bf <- df_cal_fg_tax_fixed %>%
@@ -312,13 +309,12 @@ sig_bf_plot <- ggplot(sig_summary_bf,
   scale_fill_manual(values = kingdom_colors) +
   scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2))
 
-ggsave(here("figures", "figS4_parameter_violin.png"), sig_bf_plot,
+ggsave(here("figures", "parameter_violin.png"), sig_bf_plot,
        width = 14, height = 5, dpi = 300)
-ggsave(here("figures", "figS4_parameter_violin.pdf"), sig_bf_plot,
-       width = 14, height = 5)
+cat("Saved: figures/parameter_violin.png\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Figures 5–7: Proportion of groups with >=1 or >=2 significant predictors
+# Proportion of groups with >=1 or >=2 significant predictors
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Shared counts: per-group number of significant predictors (env_cycl)
@@ -369,7 +365,7 @@ make_prop_plot <- function(data, threshold_col, ylab_text, fill_col, fill_values
     scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2))
 }
 
-# ── Figure 5: >=2 sig predictors, Functional vs Taxonomic ────────────────────
+# ── >=2 sig predictors, Functional vs Taxonomic ──────────────────────────────
 group_sig_counts_ft <- group_sig_counts_overall %>%
   mutate(fcast_type = factor(fcast_type, levels = c("Functional", "Taxonomic")))
 
@@ -381,10 +377,9 @@ group_sig_plot <- make_prop_plot(
 
 ggsave(here("figures", "groups_with_multiple_sig_predictors.png"), group_sig_plot,
        width = 4, height = 5, dpi = 300)
-ggsave(here("figures", "groups_with_multiple_sig_predictors.pdf"), group_sig_plot,
-       width = 4, height = 5)
+cat("Saved: figures/groups_with_multiple_sig_predictors.png\n")
 
-# ── Figure 6: >=1 sig predictor, Bacteria vs Fungi ──────────────────────────
+# ── >=1 sig predictor, Bacteria vs Fungi ─────────────────────────────────────
 group_sig_plot_1plus <- make_prop_plot(
   group_sig_counts_overall, "has_1plus_sig",
   "Proportion with \u22651 significant predictor",
@@ -393,10 +388,9 @@ group_sig_plot_1plus <- make_prop_plot(
 
 ggsave(here("figures", "groups_with_1plus_sig_predictors_bac_fun.png"), group_sig_plot_1plus,
        width = 4, height = 5, dpi = 300)
-ggsave(here("figures", "groups_with_1plus_sig_predictors_bac_fun.pdf"), group_sig_plot_1plus,
-       width = 4, height = 5)
+cat("Saved: figures/groups_with_1plus_sig_predictors_bac_fun.png\n")
 
-# ── Figure 7: >=2 sig predictors, Bacteria vs Fungi ─────────────────────────
+# ── >=2 sig predictors, Bacteria vs Fungi ────────────────────────────────────
 group_sig_plot_2plus <- make_prop_plot(
   group_sig_counts_overall, "has_2plus_sig",
   "Proportion with \u22652 significant predictors",
@@ -405,5 +399,4 @@ group_sig_plot_2plus <- make_prop_plot(
 
 ggsave(here("figures", "groups_with_2plus_sig_predictors_bac_fun.png"), group_sig_plot_2plus,
        width = 4, height = 5, dpi = 300)
-ggsave(here("figures", "groups_with_2plus_sig_predictors_bac_fun.pdf"), group_sig_plot_2plus,
-       width = 4, height = 5)
+cat("Saved: figures/groups_with_2plus_sig_predictors_bac_fun.png\n")

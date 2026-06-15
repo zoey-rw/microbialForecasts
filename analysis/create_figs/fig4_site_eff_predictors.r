@@ -255,41 +255,14 @@ row1 <- ggarrange(overall_importance, f_b_category,
 ecdf_plot_tight <- ecdf_plot +
   theme(plot.margin = margin(t = 0, r = 5, b = 5, l = 5))
 
-fig4_composite <- ggarrange(row1, ecdf_plot_tight,
-                            nrow = 2, heights = c(1, 0.85))
+fig_composite <- ggarrange(row1, ecdf_plot_tight,
+                           nrow = 2, heights = c(1, 0.85))
 
-ggsave(here("figures", "fig4_predictor_sets_accuracy.png"), fig4_composite,
+ggsave(here("figures", "predictor_sets_accuracy.png"), fig_composite,
        width = 7.5, height = 8, dpi = 300, bg = "white")
-cat("Saved: figures/fig4_predictor_sets_accuracy.png\n")
+cat("Saved: figures/predictor_sets_accuracy.png\n")
 
-
-ggplot(all.out,#  %>% filter(rank_only != "functional"),
-			 aes(x = pretty_group,
-			 		y = values,
-			 		color = fcast_type)) +
-	geom_violin(draw_quantiles = c(.5))+
-	geom_point(aes(x = pretty_group,
-								 y = values,
-								 color = fcast_type),
-						 size=3, alpha = .2,
-						 position=position_jitterdodge(dodge.width = 1, jitter.width = .1, jitter.height = 0)) +
-	facet_wrap(predictor~pretty_group, scales="free") +
-	theme_bw() + theme(
-		text = element_text(size = 16),
-		axis.text.x=element_blank(),
-		axis.title=element_text(size=22,face="bold")) + xlab(NULL) +
-	ylab("Variable importance") +
-	ggtitle("Variables best explaining site random effects") +
-	scale_color_discrete("Domain") +
-	stat_compare_means(method = "t.test", aes(label = ..p.signif..),
-										 label.x= 1.5, label.y.npc = .75,
-										 show.legend = F, hide.ns = T, size=8)
-
-##### Misc checks #####
-
-
-
-# FACET BY PREDICTOR, compare by MICROBIAL DOMAIN
+# ── Diagnostic (saved separately): predictor importance by domain ─────────────
 all_vars_domain <- ggplot(all.out %>% filter(model_name == "env_cycl"),
 													#  %>% filter(rank_only != "functional"),
 													aes(x = pretty_group,
@@ -323,49 +296,5 @@ all_vars_domain
 png(here("figures","site_effect_predictors.png"), width = 800, height=1000)
 print(all_vars_domain)
 dev.off()
-
-
-
-# FACET BY PREDICTOR across taxonomic ranks
-ggplot(all.out) + geom_point(aes(x = rank_only,
-																 y = values,
-																 color = pretty_group),
-														 size=3, alpha = .2,
-														 position=position_jitterdodge(dodge.width = 1, jitter.width = .1, jitter.height = .1)) +
-	facet_wrap(~predictor, scale="free") +
-	theme_bw() + theme(
-		text = element_text(size = 16),
-		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
-		axis.title=element_text(size=22,face="bold")) + xlab(NULL) +
-	ggtitle("Variables best explaining site random effects, across taxonomic ranks")
-
-
-
-### Overall predictability of site effects ###
-ggscatter(pred_sites %>% filter(model_name == "env_cycl") %>% filter(fcast_type != "Diversity"),
-					x = "Mean", y = "pred",color = "pretty_group",
-					add = "reg.line",                                 # Add regression line
-					conf.int = TRUE,                                  # Add confidence interval
-					add.params = list(color = "pretty_group", alpha=.3))+
-	stat_cor(method = "pearson", label.x = -2,  p.digits = 2) +
-	geom_abline(slope = 1, intercept = 0, linetype=2) +
-	xlab("Observed") + ylab("Predicted") + theme(
-		text = element_text(size = 16)) +
-	#ggtitle("Fungal functional group site effects are \nless predictable from soil chemistry and climate") +
-	facet_grid(pretty_group~fcast_type)
-
-### Visualize absolute size of site effects ###
-ggplot(data=pred_sites,
-			 aes(x = rank_only,y = abs(Mean)))+
-	geom_jitter(aes(color = pretty_group), size = 4, width=.2) +
-	labs(col = "Site", title = "Absolute site effect size") +
-	xlab("Rank")+ 	facet_grid(#rows = vars(only_rank),
-		rows = vars(pretty_group), drop = T,
-		scales = "free", space = "free_x") +
-	ylab(NULL)+
-	theme_bw() + theme(
-		text = element_text(size = 18),
-		axis.text.x=element_text(angle = 45, hjust = 1, vjust = 1),
-		axis.title=element_text(size=22,face="bold")
-	)
+cat("Saved: figures/site_effect_predictors.png\n")
 

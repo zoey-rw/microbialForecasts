@@ -1,8 +1,8 @@
-# Main figure (fig3): Precision parameter (A), Proportion significant predictors (B).
-# Forecast error by functional group evidence source is now saved as a separate
-# supplementary figure (figS_fg_evidence_source) rather than a panel of fig3.
-# Fungal guild phenology has been moved to fig6 (see fig6_seasonality_and_skill.r).
-# Source scripts: compare_core_sd_rho.r, fig5_eff_size.r, fig_compareFunctionalCategories.r
+# Main figure: Precision parameter (A), Proportion significant predictors (B).
+# Forecast error by functional group evidence source is saved as a separate
+# supplementary figure (fg_evidence_source.png).
+# Fungal guild phenology is in fig6_seasonality_and_skill.r.
+# Related scripts: compare_core_sd_rho.r, fig5_eff_size.r, fig_compareFunctionalCategories.r
 
 source("source.R")
 library(ggallin)
@@ -19,6 +19,7 @@ library(lubridate)
 # kingdom_colors and fcast_type_colors come from source.R.
 # Bacteria/Fungi = orange/blue (Wong); Taxonomic/Functional = green/pink (Wong).
 BASE_SIZE <- 12
+SIG_SIZE  <- 5.5   # shared significance-asterisk text size across panels
 BACT_COLOR  <- kingdom_colors[["Bacteria"]]
 FUNGI_COLOR <- kingdom_colors[["Fungi"]]
 TAX_COLOR   <- fcast_type_colors[["Taxonomic"]]
@@ -81,27 +82,33 @@ cap_val <- quantile(precision_plot_data$adj_sd, 0.99, na.rm = TRUE)
 precision_plot_data <- precision_plot_data %>%
   mutate(adj_sd_plot = pmin(adj_sd, cap_val))
 
+# Trim the violins to the data range so their smoothed tails don't run into
+# the significance bracket, then place the bracket above all plotted data
+# (points + trimmed violin) with clear headroom for the asterisks.
+data_max  <- max(precision_plot_data$adj_sd_plot, na.rm = TRUE)
+bracket_y <- data_max * 2.5    # bracket bar sits above the highest data
+y_ceiling <- data_max * 12     # headroom for the asterisks above the bar
+
 pA <- ggplot(precision_plot_data, aes(x = fcast_type, y = adj_sd_plot, fill = fcast_type)) +
-  geom_violin(alpha = 0.45, trim = FALSE, draw_quantiles = 0.5, show.legend = FALSE) +
+  geom_violin(alpha = 0.45, trim = TRUE, draw_quantiles = 0.5, show.legend = FALSE) +
   geom_point(shape = 21, fill = "white", size = 2,
              position = position_jitter(width = 0.1, height = 0),
              alpha = 0.35, show.legend = FALSE) +
   scale_y_log10(breaks = c(10, 100, 1000, 10000, 100000),
                 labels = scales::label_number(scale_cut = scales::cut_short_scale()),
-                limits = c(10, 2e6)) +
+                limits = c(10, y_ceiling)) +
   scale_fill_manual(values = c("Functional" = FUNC_COLOR, "Taxonomic" = TAX_COLOR)) +
   labs(x = NULL, y = "Core variability") +
   base_theme +
   theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
 
 if (nrow(precision_stats) > 0) {
-  bracket_y <- 500000
   pA <- pA +
-    annotate("segment", x = 1, xend = 2, y = bracket_y, yend = bracket_y, linewidth = 0.4) +
-    annotate("segment", x = 1, xend = 1, y = bracket_y, yend = bracket_y * 0.7, linewidth = 0.4) +
-    annotate("segment", x = 2, xend = 2, y = bracket_y, yend = bracket_y * 0.7, linewidth = 0.4) +
-    annotate("text", x = 1.5, y = bracket_y * 1.5, label = precision_stats$p.signif,
-             size = 4.5, hjust = 0.5)
+    annotate("segment", x = 1, xend = 2, y = bracket_y, yend = bracket_y, linewidth = 0.7) +
+    annotate("segment", x = 1, xend = 1, y = bracket_y, yend = bracket_y * 0.65, linewidth = 0.7) +
+    annotate("segment", x = 2, xend = 2, y = bracket_y, yend = bracket_y * 0.65, linewidth = 0.7) +
+    annotate("text", x = 1.5, y = bracket_y * 2.4, label = precision_stats$p.signif,
+             size = SIG_SIZE, fontface = "bold", hjust = 0.5)
 }
 
 # =============================================================================
@@ -199,7 +206,7 @@ pB <- ggplot(sig_summary, aes(x = beta_pretty, y = sig_rate, fill = fcast_type))
             position = position_dodge(width = 0.8), vjust = -0.4, size = 2.8) +
   geom_text(data = sig_test_results %>% filter(sig_label != ""),
             aes(x = beta_pretty, y = 1.05, label = sig_label),
-            size = 4, color = "black", inherit.aes = FALSE) +
+            size = SIG_SIZE, fontface = "bold", color = "black", inherit.aes = FALSE) +
   scale_fill_manual(values = c("Functional" = FUNC_COLOR, "Taxonomic" = TAX_COLOR),
                     name = "Forecast type") +
   scale_y_continuous(limits = c(0, 1.15), breaks = seq(0, 1, 0.25),
@@ -212,17 +219,12 @@ pB <- ggplot(sig_summary, aes(x = beta_pretty, y = sig_rate, fill = fcast_type))
 
 # =============================================================================
 # Supplementary figure: Forecast error by functional group evidence source
-# (formerly panel C of fig3; now saved standalone as figS_fg_evidence_source)
 # =============================================================================
 scores_list <- readRDS(here("data", "summary/scoring_metrics_plsr2.rds"))
 
-# Use the canonical functional-group list rather than a hardcoded subset, so
-# the Tukey test below sees every converged FG (including substrate
-# enrichments like acetate_simple, light_stress, salt_stress, xylose_simple,
-# and bacterial N-cyclers like nitrification that the old hardcoded list
-# omitted). The hardcoded list silently dropped ~10 bacterial FGs and
-# shrank the experimental-enrichment vs. literature-review p-value
-# difference, hiding one of the two significant Tukey comparisons.
+# Use the canonical functional-group list so the Tukey test below sees every
+# converged functional group (taxonomic groups, substrate enrichments, and
+# bacterial N-cyclers).
 functional_taxa <- microbialForecast:::keep_fg_names
 
 # Determine the taxon column name
@@ -296,7 +298,7 @@ fg_source_data$fg_source <- recode(fg_source_data$fg_source,
 #      predict forecast accuracy? Tukey HSD across the 3 bacterial categories.
 # Running them jointly inflates the multiple-comparison correction across
 # unrelated questions and conflates the kingdom effect (fungi are systematically
-# harder to forecast — see Fig 2) with the evidence-type effect.
+# harder to forecast — see the forecast-error figure) with the evidence-type effect.
 
 stat_pvalue_fg_source <- fg_source_data %>%
   filter(pretty_group == "Bacteria") %>%
@@ -458,22 +460,22 @@ p_fg_source <- ggplot(fg_source_data, aes(x = x_jit, y = as.numeric(score),
 
 # =============================================================================
 # Assemble main figure: A (precision violin) and B (predictor significance) side
-# by side. Panel C (fungal guild phenology) was moved to fig6.
+# by side. Fungal guild phenology lives in fig6_seasonality_and_skill.r.
 # tag_levels = "A" letters the panels A, B in patchwork order.
 # =============================================================================
 combined <- pA + pB +
   plot_layout(widths = c(1, 1.6)) +
   plot_annotation(tag_levels = "A")
 
-ggsave(here("figures", "fig3_functional_group_error.png"), combined,
+ggsave(here("figures", "functional_group_error.png"), combined,
        width = 13, height = 6, dpi = 300)
 
-cat("Saved: figures/fig3_functional_group_error.png\n")
+cat("Saved: figures/functional_group_error.png\n")
 
 # =============================================================================
 # Supplementary figure: forecast error by functional group evidence source
 # =============================================================================
-ggsave(here("figures", "figS_fg_evidence_source.png"), p_fg_source,
+ggsave(here("figures", "fg_evidence_source.png"), p_fg_source,
        width = 9, height = 7, dpi = 300)
 
-cat("Saved: figures/figS_fg_evidence_source.png\n")
+cat("Saved: figures/fg_evidence_source.png\n")

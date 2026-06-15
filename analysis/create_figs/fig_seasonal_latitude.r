@@ -169,6 +169,6 @@ fig_lat_grad <- panel_a / (panel_b | panel_c) +
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-ggsave(file.path(out_dir, "figS9_latitude_vs_accuracy.png"), fig_lat_grad,
+ggsave(file.path(out_dir, "latitude_vs_accuracy.png"), fig_lat_grad,
        width = 13, height = 9, dpi = 200)
-cat("Saved: figures/figS9_latitude_vs_accuracy.png\n")
+cat("Saved: figures/latitude_vs_accuracy.png\n")

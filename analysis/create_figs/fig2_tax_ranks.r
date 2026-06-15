@@ -310,13 +310,13 @@ if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 # conflicting or duplicated tags.
 tag_theme <- theme(plot.tag = element_text(size = 14, face = "bold"))
 
-# ── Figure 2 (main): 2 × 2 layout ─────────────────────────────────────────────
+# ── Main figure: 2 × 2 layout ─────────────────────────────────────────────────
 # Row 1: error by taxonomic rank — nRMSE (A) and CRPS (B) side-by-side.
 #   Each panel is faceted Bacteria | Fungi so kingdom differences are visible
 #   within the data, eliminating the need for a separate summary column.
 # Row 2: kingdom-level outcome summaries — forecast horizon (C) and
 #   new-site transferability (D) — same x-axis orientation as Row 1 facets.
-fig2_main <- ggarrange2(
+fig_main <- ggarrange2(
   ggarrange2(
     rmse_rank_plot + labs(tag = "A") + tag_theme,
     crps_rank_plot + labs(tag = "B") + tag_theme,
@@ -327,12 +327,12 @@ fig2_main <- ggarrange2(
     nrow = 1),
   nrow = 2, heights = c(1.3, 1))
 
-fig2_main
-ggsave(file.path(out_dir, "fig2_forecast_error_metrics.png"), fig2_main,
+fig_main
+ggsave(file.path(out_dir, "forecast_error_metrics.png"), fig_main,
        width = 13, height = 11, dpi = 300, units = "in")
-cat("Saved: figures/fig2_forecast_error_metrics.png\n")
+cat("Saved: figures/forecast_error_metrics.png\n")
 
-# ── Supplementary S1: kingdom-level nRMSE and CRPS ────────────────────────────
+# ── Supplementary: kingdom-level nRMSE and CRPS ───────────────────────────────
 # Shows the explicit Bacteria vs. Fungi Wilcoxon test that is implicit in the
 # faceted rank plots above. Two panels, equal width and height.
 fig_kingdom_supp <- ggarrange2(
@@ -341,12 +341,11 @@ fig_kingdom_supp <- ggarrange2(
   nrow = 1)
 ggsave(file.path(out_dir, "supp_figure_2_kingdom.png"), fig_kingdom_supp,
        width = 8, height = 5, dpi = 300, units = "in")
-cat("Saved: supp_figure_2_kingdom.png\n")
+cat("Saved: figures/supp_figure_2_kingdom.png\n")
 
-# ── Supplementary S1: forecast metrics by rank + how the metrics relate ────────
+# ── Supplementary: forecast metrics by rank + how the metrics relate ──────────
 # Panel A: the four forecast metrics across taxonomic ranks and functional
-#   groups, restricted to the env_cycl model so the panels are legible (the
-#   previous version overplotted all three predictor sets).
+#   groups, restricted to the env_cycl model so the panels are legible.
 # Panel B: Spearman correlations among the metrics (also env_cycl), showing they
 #   fall into a few families — the absolute-error metrics are redundant, while
 #   the R-squared family and nRMSE measure separate things.
@@ -368,8 +367,8 @@ rank_models_data <- scores_list$scoring_metrics_long %>%
   mutate(metric = factor(metric,
                          levels = c("CRPS_truncated", "RMSE.norm", "RSQ", "RSQ.1")))
 
-# 2x2 layout (metric facets) with the two kingdoms dodged within each panel —
-# far more compact than the previous 4x2 grid, so it balances the heatmap below.
+# 2x2 layout (metric facets) with the two kingdoms dodged within each panel,
+# balancing the metric-correlation heatmap below.
 rank_models <- ggplot(rank_models_data,
                       aes(x = pretty_name, y = score,
                           color = pretty_group, fill = pretty_group)) +
@@ -425,13 +424,13 @@ heat_plot <- ggplot(cdf, aes(m1, m2, fill = rho)) +
         legend.position = "right",
         plot.margin     = margin(0.2, 0.4, 0.4, 0.6, "cm"))
 
-figS1_combined <- ggpubr::ggarrange(rank_models, heat_plot,
-                                    nrow = 2, heights = c(1.55, 1),
-                                    labels = c("A", "B"),
-                                    font.label = list(size = 18))
-ggsave(file.path(out_dir, "figS1_forecast_metrics_rank.png"), figS1_combined,
+fig_metrics_rank <- ggpubr::ggarrange(rank_models, heat_plot,
+                                      nrow = 2, heights = c(1.55, 1),
+                                      labels = c("A", "B"),
+                                      font.label = list(size = 18))
+ggsave(file.path(out_dir, "forecast_metrics_rank.png"), fig_metrics_rank,
        width = 10, height = 13, dpi = 300, units = "in")
-cat("Saved: figures/figS1_forecast_metrics_rank.png\n")
+cat("Saved: figures/forecast_metrics_rank.png\n")
 
 # ============================================================================
 # RESIDUALIZED nRMSE: remove abundance confound
@@ -522,7 +521,7 @@ fig_resid <- ggarrange2(
 
 ggsave(file.path(out_dir, "figure_2_nrmse_residuals.png"), fig_resid,
        width = 12, height = 14, dpi = 300, units = "in")
-cat("Saved: figure_2_nrmse_residuals.png\n")
+cat("Saved: figures/figure_2_nrmse_residuals.png\n")
 
 # Print diagnostic summary
 cat("\n-- nRMSE residualization diagnostic --\n")

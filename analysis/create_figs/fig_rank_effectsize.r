@@ -111,7 +111,7 @@ p <- ggplot(plotting_df, aes(x = rank_only, y = effSize, color = pretty_group)) 
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-ggsave(file.path(out_dir, "figS2_parameter_estimates_rank.png"), p,
+ggsave(file.path(out_dir, "parameter_estimates_rank.png"), p,
        width = 14, height = 8, dpi = 200)
 
-cat("Saved: figures/figS2_parameter_estimates_rank.png\n")
+cat("Saved: figures/parameter_estimates_rank.png\n")

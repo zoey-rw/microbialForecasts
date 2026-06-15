@@ -4,8 +4,7 @@ source("source.R")
 
 
 # Scoring metrics aggregated by taxon/model
-scores_list = readRDS(here("data", paste0("summary/scoring_metrics_plsr2.rds")))
-converged = scores_list$converged_list
+scores_list = readRDS(here("data", "summary/scoring_metrics_plsr2.rds"))
 converged = scores_list$converged_strict_list
 
 
@@ -35,8 +34,7 @@ if ("taxon_name" %in% names(hindcast_data_df)) {
   stop("No taxon column found")
 }
 
-# Scatter: use all taxa so observed vs forecast spans the full range (single-taxon
-# filter was forcing one low-abundance taxon and clustering points near zero).
+# Scatter: use all taxa so observed vs forecast spans the full range.
 # Exclude rows with NA pretty_group so the figure only shows Bacteria/Fungi panels.
 scatter_data <- hindcast_data_df %>% filter(!is.na(pretty_group))
 
@@ -151,13 +149,13 @@ if (!is.null(scatter_overall)) {
     theme_classic(base_size = 18) +
     theme(plot.margin = unit(c(0.5, 1, 0.5, 1), "cm"))
 
-  # Composite Figure 4: scatter grid (A–F) over the per-taxon ΔR² panel (G).
-  fig4_composite <- ggpubr::ggarrange(scatter_overall, deltaR2_panel,
-                                      nrow = 2, heights = c(2, 1.1),
-                                      labels = c("", "G"),
-                                      font.label = list(size = 20))
+  # Composite figure: scatter grid (A–F) over the per-taxon ΔR² panel (G).
+  fig_composite <- ggpubr::ggarrange(scatter_overall, deltaR2_panel,
+                                     nrow = 2, heights = c(2, 1.1),
+                                     labels = c("", "G"),
+                                     font.label = list(size = 20))
   png(here("figures","model_r2_by_kingdom.png"), width = 1200, height = 1220)
-  print(fig4_composite)
+  print(fig_composite)
   dev.off()
 
   # Forecast horizon by model type (same layout as R²: kingdom x model type)
@@ -193,16 +191,6 @@ if (!is.null(scatter_overall)) {
     print(combined_fig)
     dev.off()
     cat("Saved: figures/model_r2_and_horizon_by_kingdom.png (R² + forecast horizon by model type)\n")
-  }
-
-  # Run "fig_horizon_by_seasonality.r" to generate fig3g (if available)
-  if (exists("fig3g")) {
-    fig3 = ggarrange(plotlist=list(scatter_overall, fig3g), nrow=2, heights=c(2,1), labels=c(NA, "(G)"))
-    png(here("figures","fig3.png"), width = 1600, height=1600)
-    print(fig3)
-    dev.off()
-  } else {
-    cat("Note: fig3g not available. Run fig_horizon_by_seasonality.r first to generate composite figure.\n")
   }
 } else {
   cat("Warning: scatter_overall plot not created - skipping figure generation\n")
@@ -339,30 +327,6 @@ if (has_skill_facet) {
 } else {
   cat("Skipping linear_model_skill_score - insufficient skill_scores or pretty_group for faceting\n")
 }
-
-# a1 <- ggplot(skill_scores,
-# 						 aes(x = model_name, y = skill_score,
-# 						 		shape = model_name, color = pretty_group)) +
-# 	geom_violin(draw_quantiles = c(.5), show.legend = F) +
-# 	geom_point(aes(x = model_name, y = skill_score),
-# 						 position = position_jitterdodge(jitter.height = 0, jitter.width = .2),
-# 						 alpha = .2, size=4, show.legend = F) +
-# 	ylab("Skill at new sites (% change in CRPS)") + xlab("Linear model components") +
-# 	theme_bw(base_size=18) + #ggtitle("Model transferability to new sites") +
-# 	theme(axis.text.x=element_text(angle = 320, vjust=.5, hjust = .2),
-# 				axis.title=element_text(size=16))  +
-# 	scale_x_discrete(labels= model.labs) +
-# 	geom_hline(yintercept = 0) +
-# 	#facet_grid(pretty_name~pretty_group) +
-# 	facet_grid(rows=vars(pretty_group)) +
-# 	scale_y_continuous(trans = pseudolog10_trans)  +
-# 	stat_compare_means(data = skill_scores,
-# 										 aes(x = model_name, y = skill_score, color = pretty_group),
-# 										 method = "anova", inherit.aes = F, size=5, label.y.npc = .3, label.x.npc = .7, show.legend = F) +
-# 	stat_compare_means(aes(label = after_stat(p.signif)),
-# 										 method = "t.test", ref.group = "cycl_only", label.y.npc = .4,
-# 										 show.legend = F, hide.ns = T, size=10)
-#
 
 skill_for_tukey <- skill_scores %>%
 	filter(model_name != "env_cov") %>%

@@ -321,12 +321,11 @@ class_cycl_only <- build_class("cycl_only")
 scatter_env_cycl <- make_marginal_scatter(
   class_env_cycl, "env_cycl (environmental + seasonal)")
 
-# Manuscript Figure S19. cycl_only data is still built above so the by-model
-# diagnostic figure below can use it; we just don't publish it as a separate
-# figure here.
-ggsave(file.path(fig_out_dir, "figS19_persistence_seasonality_env_cycl.png"),
+# Manuscript figure (env_cycl). The cycl_only data is also built above for the
+# by-model diagnostic figure below, which is not published as a separate figure.
+ggsave(file.path(fig_out_dir, "persistence_seasonality_env_cycl.png"),
        scatter_env_cycl$plot, width = 8, height = 6.5, dpi = 200)
-cat("Saved: figures/figS19_persistence_seasonality_env_cycl.png\n")
+cat("Saved: figures/persistence_seasonality_env_cycl.png\n")
 
 report_tests <- function(scatter, label) {
   t <- scatter$tests

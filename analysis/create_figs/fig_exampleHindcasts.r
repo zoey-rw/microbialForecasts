@@ -230,4 +230,4 @@ if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 ggsave(file.path(out_dir, "fig_exampleHindcasts.png"), fig_labeled,
        width = 10, height = 10, dpi = 200)
 
-cat("Saved: data/figures/fig_exampleHindcasts.png\n")
+cat("Saved: figures/fig_exampleHindcasts.png\n")

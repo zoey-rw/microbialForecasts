@@ -65,8 +65,9 @@ pA <- ggplot(to_plot,
   geom_smooth(method = "glm", formula = y ~ x,
               method.args = list(family = Gamma(link = "log")),
               se = FALSE, linewidth = 1.2) +
+  # Data cloud is dense upper-left; place labels in the empty upper-right
   stat_cor(aes(label = paste(after_stat(rr.label), after_stat(p.label), sep = "~")),
-           label.x.npc = 0.05, label.y.npc = 0.9, size = 3.5) +
+           label.x.npc = 0.45, label.y.npc = 0.97, size = 3.5) +
   scale_x_sqrt() +
   scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(
@@ -82,8 +83,9 @@ pB <- ggplot(to_plot,
   geom_smooth(method = "glm", formula = y ~ x,
               method.args = list(family = Gamma(link = "log")),
               se = FALSE, linewidth = 1.2) +
+  # Bacteria (~0.8) and Fungi (~1.7) clusters leave a clear mid gap; place labels there
   stat_cor(aes(label = paste(after_stat(rr.label), after_stat(p.label), sep = "~")),
-           label.x.npc = 0.05, label.y.npc = 0.9, size = 3.5) +
+           label.x.npc = 0.05, label.y.npc = 0.60, size = 3.5) +
   scale_x_sqrt() +
   scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(
@@ -98,8 +100,9 @@ pC <- ggplot(to_plot,
   geom_point(alpha = 0.35, size = 2) +
   geom_smooth(method = "lm", formula = y ~ x,
               se = FALSE, linewidth = 1.2) +
+  # Both clouds decline, opening a wide empty band through the center; place labels there
   stat_cor(aes(label = paste(after_stat(rr.label), after_stat(p.label), sep = "~")),
-           label.x.npc = 0.05, label.y.npc = 0.9, size = 3.5) +
+           label.x.npc = 0.38, label.y.npc = 0.60, size = 3.5) +
   scale_x_sqrt() +
   scale_color_manual(values = kingdom_colors, name = NULL) +
   labs(
@@ -109,7 +112,7 @@ pC <- ggplot(to_plot,
   base_theme
 
 # ── Combine and save ──────────────────────────────────────────────────────────
-fig3 <- ggarrange(
+fig <- ggarrange(
   pA, pB, pC,
   ncol          = 3,
   labels        = c("A", "B", "C"),
@@ -117,10 +120,10 @@ fig3 <- ggarrange(
   legend        = "bottom"
 )
 
-print(fig3)
+print(fig)
 
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-ggsave(file.path(out_dir, "fig3_f_b_seasonality.png"), fig3, width = 13, height = 5, dpi = 200)
-cat("Saved: data/figures/fig3_f_b_seasonality.png\n")
+ggsave(file.path(out_dir, "f_b_seasonality.png"), fig, width = 13, height = 5, dpi = 200)
+cat("Saved: figures/f_b_seasonality.png\n")

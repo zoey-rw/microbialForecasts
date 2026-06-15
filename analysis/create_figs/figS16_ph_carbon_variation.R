@@ -20,8 +20,8 @@ if (!file.exists(core_path)) {
 core <- readRDS(core_path)
 
 # Use BART (northeast forest), NIWO (alpine), TALL (southeastern forest):
-# the trio shown in the previous manuscript revision. All three have enough
-# plots and core-level measurements to make boxplots informative.
+# three sites with enough plots and core-level measurements to make the
+# boxplots informative.
 example_sites <- c("BART", "NIWO", "TALL")
 
 ph_sub <- core %>%
@@ -69,9 +69,9 @@ p <- plot_grid(panel_pH, panel_pC, ncol = 1, align = "v", rel_heights = c(1, 1))
 
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
-ggsave(file.path(out_dir, "figS16_ph_carbon_variation.png"), p,
+ggsave(file.path(out_dir, "ph_carbon_variation.png"), p,
        width = 11, height = 8, dpi = 200, bg = "white")
-cat("Saved: figures/figS16_ph_carbon_variation.png\n")
+cat("Saved: figures/ph_carbon_variation.png\n")
 cat("Example sites:", paste(example_sites, collapse = ", "), "\n")
 cat(sprintf("pH measurements: %d across %d plots; %%C measurements: %d across %d plots\n",
             nrow(ph_sub), length(unique(ph_sub$plotID)),
