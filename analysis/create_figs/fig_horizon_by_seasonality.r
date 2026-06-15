@@ -298,9 +298,7 @@ if (!is.null(panel_g)) {
 out_dir <- here("figures")
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-ggsave(file.path(out_dir, "fig_horizon_by_seasonality.pdf"), fig_all,
-       width = 12, height = if (!is.null(panel_g)) 16 else 12)
 ggsave(file.path(out_dir, "fig_horizon_by_seasonality.png"), fig_all,
        width = 12, height = if (!is.null(panel_g)) 16 else 12, dpi = 200)
 
-cat("Saved: figures/fig_horizon_by_seasonality.pdf / .png\n")
+cat("Saved: figures/fig_horizon_by_seasonality.png\n")

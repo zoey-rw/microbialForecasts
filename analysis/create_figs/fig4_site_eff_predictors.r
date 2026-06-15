@@ -186,16 +186,8 @@ f_b_category <- ggplot(group_vals_plot,
 		axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9)
 	)
 
-# -- Composite figure --
-supp_fig <- ggarrange(overall_importance, f_b_category,
-	widths = c(1.6, 1), align = "h",
-	common.legend = TRUE, legend = "top")
-
-ggsave(here("figures", "figS12_plsr_importance.png"), supp_fig,
-	width = 11, height = 5.5, dpi = 300, bg = "white")
-
-ggsave(here("figures", "site_effect_f_b_category.png"), f_b_category,
-	width = 5, height = 5.5, dpi = 300, bg = "white")
+# Panels A and B are also published together with Panel C below, as the
+# site-effect figure cited in the manuscript.
 
 # ── Panel C: ECDF of variogram p-values (env_cycl, before/after PLSR) ────────
 variograms <- readRDS(here("data/summary/site_effect_variograms.rds"))

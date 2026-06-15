@@ -43,7 +43,7 @@ guild_labels <- pretty_names_vec[featured_guilds]   # labels for the examples
 # typography, same latitude palette. Latitude is encoded redundantly
 # (color + linetype + point shape) so the figure stays readable for
 # colorblind viewers and in greyscale.
-BASE_SIZE <- 15
+BASE_SIZE <- 20
 base_theme <- theme_bw(base_size = BASE_SIZE) +
   theme(
     strip.background   = element_rect(fill = "grey92", color = NA),
@@ -119,10 +119,10 @@ fg_profiles <- abun_data %>%
 profile_layers <- function() {
   list(
     geom_errorbar(aes(ymin = mean_abun - se_abun, ymax = mean_abun + se_abun),
-                  width = 0.13, linewidth = 0.45, linetype = "solid",
+                  width = 0.16, linewidth = 0.8, linetype = "solid",
                   alpha = 0.9, show.legend = FALSE),
-    geom_line(linewidth = 1.0),
-    geom_point(size = 3.4, stroke = 1.1, fill = "white"),
+    geom_line(linewidth = 1.6),
+    geom_point(size = 4.8, stroke = 1.6, fill = "white"),
     scale_color_manual(values = lat_colors,    name = "Latitude"),
     scale_linetype_manual(values = lat_linetypes, name = "Latitude"),
     scale_shape_manual(values = lat_shapes,    name = "Latitude"),
@@ -130,7 +130,8 @@ profile_layers <- function() {
       color    = guide_legend(
         override.aes = list(linetype = unname(lat_linetypes),
                             shape    = unname(lat_shapes),
-                            fill     = "white", stroke = 1.0, size = 3)),
+                            fill     = "white", stroke = 1.6, size = 4.5,
+                            linewidth = 1.2)),
       linetype = "none", shape = "none"),
     labs(x = "Plant phenophase", y = "Mean relative abundance (modeled)"),
     base_theme,
@@ -191,8 +192,8 @@ survey_fig <- ggplot(survey_df,
   facet_wrap(~facet_label, scales = "free_y", ncol = 5) +
   theme(legend.position  = "bottom",
         legend.key.width = unit(1.6, "lines"),
-        strip.text       = element_text(size = BASE_SIZE - 3, face = "bold"),
-        axis.text        = element_text(size = BASE_SIZE - 4)) +
+        strip.text       = element_text(size = 10, face = "bold"),
+        axis.text        = element_text(size = 8)) +
   labs(title = "Seasonal abundance profile by latitude band — all functional groups",
        subtitle = "Ordered by seasonal swing (largest first); featured guilds appear as the example profiles")
 
@@ -236,7 +237,10 @@ fg_meta <- abun_data %>%
   filter(model_name == "env_cycl", fcast_type == "Functional") %>%
   distinct(model_id, taxon, pretty_group)
 
-N_TOP <- 20   # show only the most-seasonal groups; the survey figure has all 33
+# Show only the most-seasonal groups; the survey figure has the full set, and
+# the "top 20" framing belongs in the caption (the total guild count differs
+# from the count used elsewhere in the manuscript, so it is left off the panel).
+N_TOP <- 20
 fg_cv <- seasonal_cv_tax %>%
   inner_join(fg_meta, by = "model_id") %>%
   filter(is.finite(seasonal_cv)) %>%
@@ -247,7 +251,6 @@ fg_cv <- seasonal_cv_tax %>%
     label_md = ifelse(taxon %in% featured_guilds,
                       paste0("**", label, "**"), label)
   )
-n_total <- nrow(fg_meta %>% distinct(model_id))
 
 # Kingdom is encoded by color (the Bacteria/Fungi palette used throughout the
 # manuscript) plus a redundant point shape. This legend is specific to Panel A
@@ -257,24 +260,21 @@ pCV <- ggplot(fg_cv,
               aes(x = seasonal_cv, y = reorder(label_md, seasonal_cv),
                   color = pretty_group, shape = pretty_group)) +
   geom_segment(aes(xend = 0, yend = reorder(label_md, seasonal_cv)),
-               color = "grey80", linewidth = 0.5) +
-  geom_point(size = 3.4) +
+               color = "grey75", linewidth = 0.9) +
+  geom_point(size = 5.2) +
   scale_color_manual(values = kingdom_colors, name = NULL) +
   scale_shape_manual(values = c(Bacteria = 16, Fungi = 17), name = NULL) +
   scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
-  guides(color = guide_legend(override.aes = list(size = 4))) +
-  labs(x = "Seasonal CV (SD / mean of monthly climatology)", y = NULL,
-       subtitle = paste0("Top ", N_TOP, " of ", n_total,
-                         " functional groups by seasonal magnitude")) +
+  guides(color = guide_legend(override.aes = list(size = 5.5))) +
+  labs(x = "Seasonal CV (SD / mean of monthly climatology)", y = NULL) +
   base_theme +
   theme(axis.text.y        = ggtext::element_markdown(size = BASE_SIZE - 2),
-        plot.subtitle      = element_text(size = BASE_SIZE - 3, color = "grey30"),
         panel.grid.major.y = element_line(color = "grey92", linewidth = 0.3),
         panel.grid.major.x = element_blank(),
         legend.position      = c(0.98, 0.04),
         legend.justification = c(1, 0),
         legend.background    = element_rect(fill = "white", color = "grey80"),
-        legend.margin        = margin(3, 5, 3, 5))
+        legend.margin        = margin(4, 7, 4, 7))
 
 # =============================================================================
 # Panel D — Proportion of skilled groups per site vs latitude
@@ -314,13 +314,13 @@ site_avg <- site_hz[, .(prop_skilled = mean(site_horizon > 0)),
 
 pD <- ggplot(site_avg,
              aes(x = latitude, y = prop_skilled)) +
-  geom_smooth(aes(group = 1), method = "lm", se = TRUE, linewidth = 0.8,
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE, linewidth = 1.4,
               color = "grey30", fill = "grey80") +
   geom_point(aes(color = latitude_category, shape = latitude_category),
-             size = 3.4, stroke = 1.1, fill = "white") +
-  geom_text_repel(aes(label = siteID), size = 3.0, alpha = 0.85,
+             size = 4.6, stroke = 1.6, fill = "white") +
+  geom_text_repel(aes(label = siteID), size = 4.0, alpha = 0.85,
                   color = "grey25", max.overlaps = 16,
-                  segment.color = "grey65", segment.size = 0.25,
+                  segment.color = "grey65", segment.size = 0.3,
                   show.legend = FALSE) +
   scale_color_manual(values = lat_colors, name = "Latitude") +
   scale_shape_manual(values = lat_shapes, name = "Latitude") +
@@ -349,7 +349,7 @@ tryCatch({
                        round(cor_prop$p.value, 3))
   pD <- pD + annotate("text", x = max(site_avg$latitude) - 2, y = 0.73,
                       label = prop_label, parse = TRUE,
-                      size = 4.6, hjust = 1)
+                      size = 6, hjust = 1)
 }, error = function(e) cat("Latitude correlation failed:", e$message, "\n"))
 
 # =============================================================================
