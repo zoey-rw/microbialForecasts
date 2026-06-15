@@ -252,7 +252,7 @@ sig_plot <- ggplot(sig_summary, aes(x = fcast_type, y = sig_rate, fill = fcast_t
   base_theme +
   theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1)) +
   scale_fill_manual(values = func_tax_colors) +
-  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2))
+  scale_y_continuous(limits = c(0, 1.1), breaks = seq(0, 1, 0.2))
 
 ggsave(here("figures", "significance_tax_vs_func.png"), sig_plot,
        width = 12, height = 5, dpi = 300)
@@ -307,7 +307,7 @@ sig_bf_plot <- ggplot(sig_summary_bf,
   base_theme +
   theme(axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1)) +
   scale_fill_manual(values = kingdom_colors) +
-  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2))
+  scale_y_continuous(limits = c(0, 1.1), breaks = seq(0, 1, 0.2))
 
 ggsave(here("figures", "parameter_violin.png"), sig_bf_plot,
        width = 14, height = 5, dpi = 300)
@@ -362,7 +362,7 @@ make_prop_plot <- function(data, threshold_col, ylab_text, fill_col, fill_values
     base_theme +
     theme(axis.text.x = element_text(angle = 0, hjust = 0.5)) +
     scale_fill_manual(values = fill_values) +
-    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2))
+    scale_y_continuous(limits = c(0, 1.1), breaks = seq(0, 1, 0.2))
 }
 
 # ── >=2 sig predictors, Functional vs Taxonomic ──────────────────────────────
