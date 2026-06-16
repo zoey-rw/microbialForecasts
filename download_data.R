@@ -57,7 +57,7 @@ files <- list(
 	list(name = "fcast_horizon_input.rds",     dest = here("data", "summary", "fcast_horizon_input.rds"),
 			 md5 = "3873f5ab1b48e57865e7564f6479f214", note = "forecast horizon input; skill-driver figures"),
 	list(name = "site_effects_dredged.rds",    dest = here("data", "summary", "site_effects_dredged.rds"),
-			 md5 = "4bf39f5c888b290fe0ad292cae351852", note = "PLSR site effects; fig4_site_eff_predictors / biplot"),
+			 md5 = "4bf39f5c888b290fe0ad292cae351852", note = "PLSR site effects; site_eff_predictors / biplot"),
 	list(name = "site_effects.rds",            dest = here("data", "summary", "site_effects.rds"),
 			 md5 = "c8fc3a4d2c74e947e7fb8f4daa794609", note = "site effects; steps 05-06"),
 	list(name = "weak_converged_taxa_list.rds", dest = here("data", "summary", "weak_converged_taxa_list.rds"),

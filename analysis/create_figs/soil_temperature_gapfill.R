@@ -1,7 +1,7 @@
 source("source.R")
 pacman::p_load(ggplot2, dplyr, tidyr, cowplot, ggpubr)
 
-# Soil temperature gap-fill (sibling of figS15_soil_moisture_gapfill.R).
+# Soil temperature gap-fill (sibling of soil_moisture_gapfill.R).
 # A: monthly series per site, coloured by source (NEON, gap-filled with DAYMET).
 # B: DAYMET calibration fit against NEON observations.
 # Input monthly_soil_temperature.rds is built by

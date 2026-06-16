@@ -252,7 +252,7 @@ if (nrow(seas_vals) > 0) {
   seas_vals_long <- merge(seas_vals_long, max_vals, all=T)
 
   # Saved as a named list to make slot meanings explicit. Positional access still works,
-  # so existing consumers (fig3_f_b_seasonality.r uses [[6]], etc.) continue to function.
+  # so existing consumers (f_b_seasonality.r uses [[6]], etc.) continue to function.
   # Slot 2 is env_cycl (sin/cos AFTER env covariates) — i.e. the "residual seasonal trend".
   # Slot 3 is cycl_only (pure seasonal model). env_cov has no sin/cos and is not present.
   saveRDS(list(

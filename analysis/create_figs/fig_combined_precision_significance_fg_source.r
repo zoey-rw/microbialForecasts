@@ -1,8 +1,8 @@
 # Main figure: Precision parameter (A), Proportion significant predictors (B).
 # Forecast error by functional group evidence source is saved as a separate
 # supplementary figure (fg_evidence_source.png).
-# Fungal guild phenology is in fig6_seasonality_and_skill.r.
-# Related scripts: compare_core_sd_rho.r, fig5_eff_size.r, fig_compareFunctionalCategories.r
+# Fungal guild phenology is in seasonality_and_skill.r.
+# Related scripts: compare_core_sd_rho.r, eff_size.r, fig_compareFunctionalCategories.r
 
 source("source.R")
 library(ggallin)
@@ -460,7 +460,7 @@ p_fg_source <- ggplot(fg_source_data, aes(x = x_jit, y = as.numeric(score),
 
 # =============================================================================
 # Assemble main figure: A (precision violin) and B (predictor significance) side
-# by side. Fungal guild phenology lives in fig6_seasonality_and_skill.r.
+# by side. Fungal guild phenology lives in seasonality_and_skill.r.
 # tag_levels = "A" letters the panels A, B in patchwork order.
 # =============================================================================
 combined <- pA + pB +
