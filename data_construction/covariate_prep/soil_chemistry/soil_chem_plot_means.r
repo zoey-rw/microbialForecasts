@@ -16,6 +16,9 @@ dat_sequenceMetadata <- read.csv(file.path(raw_data_dir, "mmg_soilMetadata_all_2
 # Read in soil sample data
 dat_soil <- readRDS(here::here("data/raw/soilSample_data_allsites.rds"))
 
+# Plot/horizon coverage from the ITS alpha-diversity table, a product of the
+# upstream microbial-sequence pipeline (data_construction/microbe); not committed
+# here (see Methods/Zenodo).
 div_dat <- readRDS(here::here("data/clean/alpha_div_ITS.rds"))$full %>% select(siteID, plotID, horizon) %>% distinct()
 
 # plot(dat_soil$pH, dat_soil$CNratio)
@@ -116,36 +119,3 @@ soil.chem.out.plot <- soil.chem.out %>% distinct(siteID, plotID, final_pH, final
 
 #save output.----
 saveRDS(soil.chem.out.plot, here::here("data/clean/soilChemPlot.rds"))
-
-
-
-
-
-
-
-
-
-# Plot the sample pH and the plot-date-pH
-p1 <- ggplot(soil.chem.out.plot[soil.chem.out.plot$siteID %in%  c("BART","NIWO","TALL"),]) + 
-	geom_boxplot(aes(x = plotID, y = pH)) +
-	geom_point(aes(x = plotID, y = pH)) + facet_grid(~siteID, scales = "free_x") + 
-	ggtitle("pH at 3 representative NEON sites", "Plot-level means were treated as constant over time.") +
-	ylab("pH in CaCl, soil core") + xlab("Plot ID") + theme(axis.text.x = element_text(angle = 310))
-
-# Plot the sample pC and corresponding plot pC
-p2 <- ggplot(soil.chem.out.plot[soil.chem.out.plot$siteID %in% c("BART","NIWO","TALL"),]) + 
-	geom_boxplot(aes(x = plotID, y = pC)) +
-	geom_point(aes(x = plotID, y = pC)) + facet_grid(~siteID, scales = "free_x", drop = T) + 
-	ggtitle("Percent carbon at 3 representative NEON sites", "Plot-level means were treated as constant over time.") +
-	ylab("%C, soil core") + xlab("Plot ID") + theme(axis.text.x = element_text(angle = 310))
-
-library(ggpubr)
-ggarrange(p1, p2, nrow=2, labels = c("A","B"))
-
-
-
-chem_df <- dat_soil %>% select(siteID, plotID, soilInCaClpH, organicCPercent, year)
-ggplot(chem_df[chem_df$siteID %in% c("CPER"),]) + 
-	geom_point(aes(x = plotID, y = organicCPercent)) + 
-	#facet_grid(~siteID, scales = "free_x", drop = T) + 
- theme(axis.text.x = element_text(angle = 310))

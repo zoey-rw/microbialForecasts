@@ -35,3 +35,9 @@ install.packages(cran_pkgs, dependencies = NA)
 # Pinned to spectratrait v1.2.6 for reproducible rebuilds.
 remotes::install_github("plantphys/spectratrait@d159c5dda9d6739105d95b357e48f7754daf4978",
                         upgrade = "never", dependencies = NA)
+
+# speedyseq: faster phyloseq accessors (e.g. psmelt) used by the phylogeny scripts.
+# The scripts fall back to phyloseq when it is absent, but it is installed here for
+# the faster path. Pinned to v0.2.0 for reproducible rebuilds.
+remotes::install_github("mikemc/speedyseq@66c527e6e90f70de4a02e4ae5fbb08996ad2febf",
+                        upgrade = "never", dependencies = NA)
