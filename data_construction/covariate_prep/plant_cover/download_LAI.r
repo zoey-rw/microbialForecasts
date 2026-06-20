@@ -22,8 +22,10 @@ get_LAI <- function(
 	library(furrr)
 	library(tictoc)
 	
-	#modis code
-	source("/projectnb/dietzelab/dongchen/Multi-site/download_500_sites/call_MODIS.R")
+	# MODIS download helper from the PEcAn multi-site download project; not included
+	# in this repo (see Methods/Zenodo). Set MF_CALL_MODIS to the path of call_MODIS.R.
+	call_modis_path <- Sys.getenv("MF_CALL_MODIS", "")
+	source(call_modis_path)
 	cat(paste0("Downloading for site ", siteID, "\n"))
 	
 	#convert year to YEARDOY
@@ -54,14 +56,9 @@ get_LAI <- function(
 	return(output)
 }
 
-results <- Download_LAI(settings, start_year = 2013, 
-												end_year = 2020, 
-												out_dir = here::here("data/raw/modis/"))
-
-
 con <- read.csv("https://www.neonscience.org/sites/default/files/NEON_Field_Site_Metadata_20210928.csv")
 con <- con %>% dplyr::filter(field_site_type %in% c("Relocatable Terrestrial", "Core Terrestrial", "Gradient Terrestrial")) 
-for (s in 27:length(con$field_site_id)){
+for (s in seq_along(con$field_site_id)){
 	siteID <- con[s,]$field_site_id
 	if(siteID=="NIWO") next()
 	print(paste("Downloading LAI for ", siteID))
@@ -74,9 +71,6 @@ for (s in 27:length(con$field_site_id)){
 
 
 
-bart <- load(here::here("data/raw/modis_test/BART.rds"))
-load(here::here("data/raw/modis_test/BART.rds"))
-save(out, file = here::here("data/raw/modis_test/BART2.rds"))
 
 # Turns out the RDS files are actually rdata, hence the approach below
 library(miceadds)

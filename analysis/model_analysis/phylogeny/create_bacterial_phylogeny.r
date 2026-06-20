@@ -1,4 +1,3 @@
-#source("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/source.R")
 source("../../source.R")
 
 options(scipen=999)

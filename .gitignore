@@ -226,6 +226,8 @@ data/clean/phylum_name_mapping.rds
 analysis/create_figs/deprecated_figure_scripts/
 analysis/create_figs/archived_figure_scripts/
 microbialForecast/R_test/
+analysis/create_figs/fig_calibration_periods.r
+analysis/phylogeny/create_phylo_tree.r
 
 # Out-of-scope exploratory work (not part of this manuscript)
 analysis/mediation/

@@ -11,7 +11,7 @@ files <- list.files(smv_dir, full.names = T)
 # Get list of NEON fieldsites/locations
 fieldsites <- read.csv("https://www.neonscience.org/sites/default/files/NEON_Field_Site_Metadata_20220412.csv")
 
-# Loop through and figure out which site each one came from.
+# Loop through files and determine the site each one came from.
 df.list <- list()
 for (f in files){
   loc <- readLines(f, n = 3)[[3]]

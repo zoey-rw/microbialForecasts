@@ -130,9 +130,6 @@ if (is.null(component_df)) {
   }
   stop("Cannot proceed without plsr_scores data. Please regenerate site_effects_dredged.rds with updated script.")
 }
-# 5 is ok, 9 is interesting, 11 is clearest so far, maybe 45, 46, 47
-# 660
-# my fav is 643
 component_df$predictor_category = recode(rownames(component_df), !!!pred_cat_key)
 rownames(component_df) = recode(rownames(component_df), !!!pred_name_key)
 p1 <- ggplot(data=component_df, aes(x = `Comp 1`,y = `Comp 2`))+

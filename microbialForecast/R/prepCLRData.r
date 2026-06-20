@@ -1,19 +1,20 @@
-## NOTE: removed crib_fun step because my rowSums are ending up >1 (need to fix probably)
+## NOTE: the crib_fun step is omitted here because row sums can exceed 1.
 #
+# Example argument values for interactive testing:
 # k <- 1
 # j <- 1
 #
 # # Read in covariate data
-# chem_in <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/soilChemPlot.rds")
-# dom_soil_horizons <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/dominantHorizonsSite.rds")
-# predictor_data <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/all_predictor_data.rds")
+# chem_in <- readRDS("data/clean/soilChemPlot.rds")
+# dom_soil_horizons <- readRDS("data/clean/dominantHorizonsSite.rds")
+# predictor_data <- readRDS("data/clean/all_predictor_data.rds")
 # #
 # min.prev = 3;
 # min.date = "20151101"
 # min.date = "20130601"
 # max.date = "20180101"
-# dom_soil_horizons <- readRDS("/projectnb/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/dominantHorizonsSite.rds")
-# predictor_data <- readRDS("/projectnb2/talbot-lab-data/zrwerbin/temporal_forecast/data/clean/all_predictor_data.rds")
+# dom_soil_horizons <- readRDS("data/clean/dominantHorizonsSite.rds")
+# predictor_data <- readRDS("data/clean/all_predictor_data.rds")
 # full_timeseries = F
 # s = "acidobacteriota"
 

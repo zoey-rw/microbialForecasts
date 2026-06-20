@@ -3,8 +3,10 @@
 ## call relevant packages
 library(daymetr)
 library(dplyr)
+library(tidyr)
+library(lubridate)
 
-sites_locs <- read.csv(here::here("data_construction/field-sites.csv"))
+sites_locs <- read.csv(here::here("data_construction/misc/field-sites.csv"))
 
 output.path.monthly <- here::here("data/clean/daymet_monthly.rds")
 output.path.weekly <- here::here("data/clean/daymet_weekly.rds")
@@ -37,7 +39,6 @@ daymet_data <- download_daymet_batch(file_location = paste0(tempdir(),
 
 file.remove(paste0(tempdir(), "/locations.csv"))
 temp = list.files(tempdir(), pattern="*.csv", full.names = T)
-#temp = list.files("/scratch/Rtmpf4GoGH", pattern="*.csv", full.names = T)
 site_names <- substr(basename(temp), 1, 4)
 
 alldfs <-list()
@@ -105,4 +106,4 @@ daymet.monthly <- all_daymet %>%
               values_from = c(mean), 
               names_glue = "{variable}_{.value}")
 # SAVE
-saveRDS(daymet_out, output.path)
+saveRDS(daymet.monthly, output.path.monthly)

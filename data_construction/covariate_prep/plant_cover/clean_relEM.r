@@ -8,11 +8,15 @@ output.path <- here::here("data/raw/NEON_relEM_plot.level.rds")
 #load tree data
 dat <- readRDS(here::here("data/raw/NEON_treedata_allsites.rds"))
 
-em_traits.path <- "/projectnb/talbot-lab-data/NEFI_data/ITS/pecan_gen/reference_data/ecto_genus_traits_hobbie_Jan2018.csv"
-em_species.path <- "/projectnb/talbot-lab-data/NEFI_data/ITS/pecan_gen/reference_data/myc_assignments.rds"
-poa_genera.path <- "/projectnb/talbot-lab-data/NEFI_data/ITS/pecan_gen/reference_data/poaceae_genera_wikipedia.rds"
-em_genera.path <- "/projectnb/talbot-lab-data/NEFI_data/ITS/pecan_gen/reference_data/tedersoo_2017_genera.csv"
-NEON_plantStatus_codes.path <- "/projectnb/talbot-lab-data/NEFI_data/ITS/pecan_gen/reference_data/NEON_DP1.10098.plantStatus_decode.csv"
+# Mycorrhizal/plant reference data from the predecessor NEFI project; not included
+# in this repo (see Methods/Zenodo). Set MF_REFERENCE_DATA_DIR to the directory
+# holding the reference files below.
+reference_data_dir <- Sys.getenv("MF_REFERENCE_DATA_DIR", "")
+em_traits.path <- file.path(reference_data_dir, "ecto_genus_traits_hobbie_Jan2018.csv")
+em_species.path <- file.path(reference_data_dir, "myc_assignments.rds")
+poa_genera.path <- file.path(reference_data_dir, "poaceae_genera_wikipedia.rds")
+em_genera.path <- file.path(reference_data_dir, "tedersoo_2017_genera.csv")
+NEON_plantStatus_codes.path <- file.path(reference_data_dir, "NEON_DP1.10098.plantStatus_decode.csv")
 
 #1. Assign mycorrhizal associations.----
 #load lookup table for legacy plantStatus codes provided by Katie Jones at NEON.
@@ -25,7 +29,7 @@ myc.spp$genus_spp <- myc.spp$Species
 poa.gen <- readRDS(poa_genera.path)
 
 #known US AM genera.
-#AM genera based on searching Colin's super mycorrhizal database. 
+#AM genera assigned from a reference mycorrhizal association database.
 #If there are at least 5 records and all are AM, then it gets assigned AM at the genus level.
 #if a ton of AM and one AM_ECM, still count as AM.
 am_genera <- c('Thuja','Fraxinus','Nyssa','Celtis','Cornus','Diospyros','Ilex','Lonicera','Magnolia','Viburnum', as.character(poa.gen$genus))

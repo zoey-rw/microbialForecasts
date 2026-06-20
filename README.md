@@ -42,6 +42,36 @@ the numbered pipeline in `analysis/model_analysis/` and the figure scripts in
 `analysis/create_figs/`. The full MCMC fits (step 01, ~100k iterations) require
 an HPC cluster; the downstream steps and figures run on a workstation.
 
+## Analysis pipeline (run order)
+
+Input construction (`data_construction/`) builds the cleaned model inputs in
+`data/clean/` from NEON amplicon abundances and environmental covariates; the raw
+NEON downloads are external (NEON Data Portal) and the large derived inputs are on
+Zenodo (`download_data.R`). The model-analysis pipeline then runs in numbered
+order from `analysis/model_analysis/` (each script begins with
+`source("../../source.R")`):
+
+| Step | Script | Purpose |
+|------|--------|---------|
+| 00 | `00_createInputDF.r` | Assemble per-group input data frames |
+| 01 | `01_fitModels.R` | Fit the hierarchical state-space models (primary cloglog Beta; HPC, ~100k iterations) |
+| 02 | `02_combineModelChains.r` | Combine MCMC chains across runs |
+| 03 | `03_summarizeModelOutputs.r` | Convergence diagnostics (Gelman–Rubin) and parameter summaries |
+| 04 | `04_tidyEffectSizes.r` | Extract and tidy predictor effect sizes |
+| 05 | `05_predictSiteEffects.r` | Predict site-level random effects for unobserved sites |
+| 06 | `06_createHindcasts_observed.r`, `06_createHindcasts_newsites.r` | Generate hindcasts at observed and new sites |
+| 07 | `07_tidyHindcasts.r` | Tidy hindcast outputs |
+| 08 | `08_calculateScoringMetrics.r` | Scoring metrics (CRPS, nRMSE, R²) |
+| 09 | `09_assignPeakPhenophase.r` | Assign peak phenophase from MODIS land-cover dynamics |
+| 10 | `10_calculateFcastHorizon.r` | Estimate per-taxon forecast horizon |
+| 11 | `11_siteEffectVariogram.r` | Test residual spatial autocorrelation in site effects |
+
+Scripts with a `_CLR`, `_dirichlet`, or `_truncNorm` suffix repeat a step for the
+alternative observation models compared in Appendix S3; the unsuffixed scripts are
+the primary (Beta-regression) pipeline. The figure scripts in
+`analysis/create_figs/` (run from the repo root) produce the manuscript and
+supplement figures once the pipeline outputs exist.
+
 ## Data availability
 
 Small inputs and all committed results are in this repository. The larger inputs

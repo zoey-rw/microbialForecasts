@@ -5,7 +5,10 @@
 library(dplyr)
 
 # Read in microbial data
-dat_sequenceMetadata <- read.csv("/projectnb/dietzelab/zrwerbin/NEON_soil_microbe_processing/data/NEON/sequence_metadata/mmg_soilMetadata_all_2020-09-26.csv") %>% select(siteID, plotID) %>% distinct()
+# NEON soil sequence metadata from the upstream soil-microbe processing project; not
+# included in this repo (see Methods/Zenodo). Set MF_RAW_DATA_DIR to its directory.
+raw_data_dir <- Sys.getenv("MF_RAW_DATA_DIR", "")
+dat_sequenceMetadata <- read.csv(file.path(raw_data_dir, "mmg_soilMetadata_all_2020-09-26.csv")) %>% select(siteID, plotID) %>% distinct()
 # # # get rid of duped dnaSampleIDs.
 # dat_sequenceMetadata$geneticSampleID <- gsub("-DNA[1234]","",dat_sequenceMetadata$dnaSampleID)
 # dat_sequenceMetadata <- dat_sequenceMetadata[!duplicated(dat_sequenceMetadata$geneticSampleID),]
