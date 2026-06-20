@@ -12,7 +12,7 @@ Zenodo-hosted inputs are fetched at runtime.
 - **Baked-in data:** all git-committed inputs under `data/clean` and
   `data/summary` (see `.dockerignore`). Heavy/uncommitted trees
   (`data/model_outputs`, `data/hindcasts`, the hindcast parquet, megapit dumps)
-  and non-runtime dirs (`manuscript/`, `archive3/`, `.claude/`) are excluded.
+  and non-runtime dirs (`manuscript/`, `archive3/`, local tooling configs) are excluded.
 
 ## Build (from the repository root)
 

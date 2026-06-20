@@ -191,7 +191,7 @@ config.R
 cache/
 .cache/
 
-# Claude / AI agent files
+# Local tooling/config files
 .claude/
 .cursorrules
 
