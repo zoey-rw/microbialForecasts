@@ -222,6 +222,11 @@ data/new_neon_microbe/
 data/clean/new_neon_*
 data/clean/phylum_name_mapping.rds
 
+# Superseded / local-only scripts (kept locally, not part of the public pipeline)
+analysis/create_figs/deprecated_figure_scripts/
+analysis/create_figs/archived_figure_scripts/
+microbialForecast/R_test/
+
 # Out-of-scope exploratory work (not part of this manuscript)
 analysis/mediation/
 analysis/explore_new_neon_data.r
